@@ -1,0 +1,152 @@
+rules_version = '2';
+
+// =============================================================================
+// HARDENED RULESET — PROPOSAL ONLY. *** NOT VERIFIED AGAINST LIVE AUTH ***
+// -----------------------------------------------------------------------------
+// DO NOT blind-publish this. Test it first in:
+//   Firebase Console > Firestore > Rules > "Rules playground"
+// with (a) the owner email, (b) a staff email, (c) an unauthenticated request,
+// running read / create / update / delete against each collection. Only publish
+// once every case behaves as expected. If the owner ever loses access, revert to
+// the previous rules (keep a copy) and re-test.
+//
+// WHAT THIS CHANGES vs the current `request.auth != null`-everywhere ruleset:
+//
+//  1. PRIVILEGE-ESCALATION FIX (highest value): appSettings is now WRITABLE ONLY
+//     BY ADMINS. Under the old rules any signed-in staff member could edit
+//     appSettings/roles via the REST API / console and add their own email to
+//     `admins[]`, promoting themselves. That hole is closed here.
+//
+//  2. DESTRUCTIVE OPS ARE ADMIN-ONLY: delete on parts/suppliers/categories/
+//     vehicles and on the ledgers is restricted to admins, matching what the UI
+//     already enforces — so a staff token can't delete via console/REST.
+//
+//  3. Ledgers stay append-only (update: false) exactly as before.
+//
+// ASSUMPTIONS (verify before publishing):
+//  - The owner email below matches BOOTSTRAP_ADMINS in context/AuthContext.js.
+//  - appSettings/roles stores `admins` as an array of LOWERCASE emails (the app
+//    normalizes with norm() on read; confirm the Settings WRITE path also stores
+//    lowercase, or these comparisons can miss). request.auth.token.email.lower()
+//    is compared against that list.
+//  - Every signed-in user is trusted to READ all shop data (single-shop model).
+//    If you later need multi-tenant isolation, reads must also be scoped.
+//
+// COST NOTE: isAdmin() does a get() on appSettings/roles, which is billed as one
+// document read per evaluated write. For this app's volume that is negligible.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userEmail() {
+      return signedIn() && request.auth.token.email != null
+        ? request.auth.token.email.lower()
+        : '';
+    }
+
+    // Permanent owner — always admin, mirrors BOOTSTRAP_ADMINS so the owner can
+    // never be locked out even if appSettings/roles is empty or missing.
+    function ownerEmail() {
+      return 'konabhargav2003@gmail.com';
+    }
+
+    function rolesDoc() {
+      return get(/databases/$(database)/documents/appSettings/roles).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        userEmail() == ownerEmail() ||
+        (
+          exists(/databases/$(database)/documents/appSettings/roles) &&
+          'admins' in rolesDoc() &&
+          userEmail() in rolesDoc().admins
+        )
+      );
+    }
+
+    // ---- Catalog data: any signed-in user reads/creates/updates; only admins delete.
+    match /parts/{partId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+    match /suppliers/{supplierId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+    match /categories/{categoryId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+    match /vehicles/{vehicleId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+
+    // ---- History ledgers: append-only. Records can never be EDITED.
+    // delete is admin-only (used by the owner-only "Reset All Data", which
+    // snapshots to the Recovery Vault first).
+    match /sales/{saleId} {
+      allow read, create: if signedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+    match /salesRollups/{month} {
+      allow read, create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+    match /restocks/{restockId} {
+      allow read, create: if signedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+    match /stockAdjustments/{adjId} {
+      allow read, create: if signedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+    match /auditLog/{logId} {
+      allow read, create: if signedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ---- Reorder requests / purchase tracking: status changes over time.
+    match /reorderRequests/{reqId} {
+      allow read, create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+
+    // ---- App settings (admin/staff lists). READ by any signed-in user (the app
+    // needs it to resolve roles), but WRITE is ADMIN-ONLY. This is the
+    // privilege-escalation fix: staff can no longer grant themselves admin.
+    match /appSettings/{docId} {
+      allow read: if signedIn();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ---- Recovery Vault — owner-only snapshot/restore surface.
+    match /recoveryVault/{id} {
+      allow read, create, delete: if isAdmin();
+      allow update: if false;
+    }
+    match /recoveryMeta/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
