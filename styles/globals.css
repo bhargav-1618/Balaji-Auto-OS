@@ -1,0 +1,388 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Montserrat:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --gold: #d4af37;
+  --gold-light: #e8c84a;
+  --gold-muted: rgba(212, 175, 55, 0.15);
+  --gold-border: rgba(212, 175, 55, 0.3);
+  --carbon-950: #0a0a0a;
+  --carbon-900: #111111;
+  --carbon-800: #1a1a1a;
+  --carbon-700: #222222;
+  --carbon-600: #2b2b2b;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: var(--carbon-900);
+  color: #e5e5e5;
+  font-family: 'Montserrat', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* `clip` prevents sideways scroll WITHOUT turning body into a scroll container.
+     Using `hidden` (on html/body) forces overflow-y to `auto`, creating two
+     competing scroll contexts → the "scroll stops, scroll again" wheel bug.
+     With `clip` the viewport stays the single vertical scroll context. */
+  overflow-x: clip;
+  max-width: 100%;
+}
+html {
+  overflow-x: clip;
+  /* scroll-behavior is deliberately NOT `smooth`. The body-scroll lock restores
+     position with window.scrollTo() when a modal closes; with smooth scrolling
+     that restore ANIMATES, which feels like the page is stuck or drifting.
+     Instant restore = the page is exactly where you left it. */
+  scroll-behavior: auto;
+  -webkit-overflow-scrolling: touch;  /* momentum scroll on iOS */
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: var(--carbon-800);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--gold-border);
+  border-radius: 2px;
+}
+
+/* Gold divider line */
+.gold-divider {
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--gold-border), transparent);
+}
+
+/* Pulse animation for order-now badges */
+@keyframes pulse-order {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+}
+.animate-pulse-order {
+  animation: pulse-order 1.5s ease-in-out infinite;
+}
+
+/* Touch-friendly min targets */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Gold gradient text */
+.text-gold-gradient {
+  background: linear-gradient(135deg, #d4af37, #f5e084, #d4af37);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Scanner overlay */
+#html5-qrcode-button-camera-permission,
+#html5-qrcode-button-camera-start,
+#html5-qrcode-button-camera-stop {
+  background: var(--gold) !important;
+  color: #111 !important;
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 8px 16px !important;
+  font-family: 'Montserrat', sans-serif !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+}
+
+#html5-qrcode-anchor-scan-type-change {
+  color: var(--gold) !important;
+}
+
+/* PWA install banner */
+.pwa-banner {
+  background: var(--carbon-700);
+  border: 1px solid var(--gold-border);
+  border-radius: 12px;
+}
+
+/* Skeleton loader */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #1a1a1a 25%, #2b2b2b 50%, #1a1a1a 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+
+/* Real-device: keep bottom-sheet modals & sticky bars clear of the iPhone home
+   indicator and Android gesture bar. Applied to mobile bottom sheets. */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.safe-bottom-pad {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem);
+}
+/* Prevent iOS auto-zoom when focusing inputs (font-size < 16px triggers zoom). */
+@media (max-width: 640px) {
+  input, select, textarea { font-size: 16px; }
+}
+
+/* Mobile bottom-sheet height: vh includes the area behind the address bar on
+   phones, so 90vh overflows the visible screen and the form bottom becomes
+   unreachable in portrait. dvh (dynamic viewport height) accounts for the
+   address bar AND the on-screen keyboard. Older browsers keep the 90vh line
+   (they ignore the dvh line they don't understand); modern phones use dvh. */
+.modal-sheet {
+  max-height: 90vh;
+  max-height: 88dvh;
+  overscroll-behavior: contain;
+}
+
+/* Full-screen modal scroll layer. On iOS Safari `position:fixed; inset:0`
+   resolves to the LARGE viewport (taller than what's visible behind the URL
+   bar), so the bottom of a scrollable overlay ends up off-screen and the last
+   fields are unreachable. Pinning the height to the DYNAMIC viewport (dvh) makes
+   the scroll container exactly the visible area, so it scrolls to the true end. */
+.modal-vp {
+  top: 0;
+  bottom: auto;
+  height: 100vh;   /* fallback for older browsers */
+  height: 100dvh;  /* visible viewport on modern mobile */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Accessibility (WCAG 2.3.3): honor the OS "reduce motion" setting. Users prone
+   to motion sickness/vestibular issues get a near-instant, animation-free UI
+   while everything stays fully functional. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Dark-themed scrollbar for custom dropdowns / scroll areas */
+.dark-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.dark-scroll::-webkit-scrollbar-track { background: transparent; }
+.dark-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 8px; }
+.dark-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.28); }
+.dark-scroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
+
+/* User preference: Reduce Animations (class-based, toggled from Settings) */
+html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ===== v5.5 Theme engine ===== */
+/* Every translucent surface/border/inline-text uses rgba(var(--fg-rgb), …). In the
+   dark family --fg-rgb stays 255,255,255 so output is IDENTICAL to before (zero
+   regression). Light flips --fg-rgb to near-black, correctly darkening surfaces,
+   borders and inline text at once. Solid dark surface hexes use --surface-* tokens. */
+:root, :root[data-theme="dark"] {
+  --app-bg-from: #1f2937; --app-bg-via: #0a0a0a; --app-bg-to: #000000;
+  --fg-rgb: 255,255,255;
+  --surface-0: #0a0a0a; --surface-1: #121212; --surface-2: #141414; --surface-3: #0f0f0f;
+  --accent: #d4af37; --accent-2: #aa801e;
+}
+:root[data-theme="darkplus"] {
+  --app-bg-from: #151a22; --app-bg-via: #080a0d; --app-bg-to: #000000;
+  --fg-rgb: 255,255,255;
+  --surface-0: #080a0d; --surface-1: #0f1115; --surface-2: #121418; --surface-3: #0c0e11;
+}
+:root[data-theme="balanced"] {
+  --app-bg-from: #1b1b22; --app-bg-via: #0c0c10; --app-bg-to: #050507;
+  --fg-rgb: 255,255,255;
+  --surface-0: #0c0c10; --surface-1: #141418; --surface-2: #17171c; --surface-3: #101014;
+}
+:root[data-theme="warm"] {
+  --app-bg-from: #2b2016; --app-bg-via: #140d08; --app-bg-to: #0a0503;
+  --fg-rgb: 255,248,240;
+  --surface-0: #140d08; --surface-1: #1c130c; --surface-2: #22170e; --surface-3: #180f09;
+}
+:root[data-theme="light"] {
+  --app-bg-from: #ebe8e1; --app-bg-via: #e4e1d9; --app-bg-to: #dcd9ce;
+  --fg-rgb: 34,31,25;
+  --surface-0: #fbfaf6; --surface-1: #fbfaf6; --surface-2: #f1efe8; --surface-3: #e8e5db;
+}
+.app-shell-bg {
+  background: radial-gradient(ellipse at top right, var(--app-bg-from), var(--app-bg-via) 55%, var(--app-bg-to));
+}
+/* Light mode: flip Tailwind text-white utilities (which aren't token-based) to dark. */
+:root[data-theme="light"] .text-white,
+:root[data-theme="light"] [class*="text-white/"] { color: #1a1a20 !important; }
+:root[data-theme="light"] .text-white\/25,
+:root[data-theme="light"] .text-white\/30,
+:root[data-theme="light"] .text-white\/35,
+:root[data-theme="light"] .text-white\/40,
+:root[data-theme="light"] .text-white\/45,
+:root[data-theme="light"] .text-white\/50,
+:root[data-theme="light"] .text-white\/55 { color: #6b7280 !important; }
+:root[data-theme="light"] .placeholder-white\/30::placeholder { color: #9ca3af !important; }
+/* Smooth backdrop morph while switching (kept off individual elements to avoid jank). */
+.app-shell-bg { transition: background 260ms ease; }
+
+/* Theme slider track — visualises the Dark → Light progression */
+.theme-slider {
+  -webkit-appearance: none; appearance: none;
+  height: 8px; border-radius: 8px; outline: none; cursor: pointer;
+  background: linear-gradient(90deg, #0a0a0a 0%, #12131a 25%, #1b1b22 50%, #2b2016 72%, #e6e9ed 100%);
+}
+.theme-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #d4af37; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+.theme-slider::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #d4af37; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+
+/* Light mode: promote faint translucent surfaces to elevated WHITE cards with a
+   soft shadow (Chrome-like), so cards pop off the gray backdrop instead of
+   blending into one white sheet. Dark themes are unaffected. */
+:root[data-theme="light"] [style*="--fg-rgb),0.02"],
+:root[data-theme="light"] [style*="--fg-rgb), 0.02"],
+:root[data-theme="light"] [style*="--fg-rgb),0.03"],
+:root[data-theme="light"] [style*="--fg-rgb), 0.03"],
+:root[data-theme="light"] [style*="--fg-rgb),0.04"],
+:root[data-theme="light"] [style*="--fg-rgb),0.05"],
+:root[data-theme="light"] [style*="--fg-rgb), 0.05"] {
+  background: #fefdfa !important;
+  box-shadow: 0 1px 2px rgba(40,35,20,0.06), 0 3px 10px rgba(40,35,20,0.07) !important;
+}
+/* Warm, visible borders in light mode */
+:root[data-theme="light"] [style*="--fg-rgb),0.06"],
+:root[data-theme="light"] [style*="--fg-rgb),0.07"],
+:root[data-theme="light"] [style*="--fg-rgb),0.08"],
+:root[data-theme="light"] [style*="--fg-rgb),0.1"] {
+  border-color: #e6ddcd !important;
+}
+
+/* Light mode: Tailwind white surface/border utilities (bg-white/x, border-white/x)
+   would be invisible on a light backdrop. Re-map them to subtle warm dark tints so
+   surfaces, inputs, dividers and borders stay visible. Dark themes untouched. */
+:root[data-theme="light"] [class*="bg-white/"] { background-color: rgba(38,34,28,0.055) !important; }
+:root[data-theme="light"] [class*="hover:bg-white"]:hover { background-color: rgba(38,34,28,0.10) !important; }
+:root[data-theme="light"] [class*="border-white/"] { border-color: rgba(60,48,28,0.14) !important; }
+:root[data-theme="light"] [class*="divide-white"] > * { border-color: rgba(60,48,28,0.10) !important; }
+/* Keep placeholders readable in light */
+:root[data-theme="light"] input::placeholder, :root[data-theme="light"] textarea::placeholder { color: #9a917f !important; }
+
+/* Continuous login→app arrival: fade the whole shell in gently. Opacity only —
+   transforming children re-rasterizes decorative layers and exposes grid lines. */
+.arrival-bloom {
+  background: radial-gradient(ellipse at 50% 44%, rgba(250,236,205,0.92), rgba(238,224,190,0.85) 45%, rgba(15,14,12,0.9));
+  animation: arrivalFade 0.9s ease forwards;
+}
+.app-arriving { animation: arrivalSettle 0.7s ease both; }
+@keyframes arrivalFade { from { opacity: 1; } to { opacity: 0; } }
+@keyframes arrivalSettle { from { opacity: 0.4; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .arrival-bloom, .app-arriving { animation: none !important; } }
+
+/* ---- Responsive audit: touch ergonomics + safe areas ---- */
+/* Expand tap area of compact icon buttons on touch devices to ≥44px without
+   changing their visual footprint (uses an invisible ::after hit-target). */
+@media (pointer: coarse) {
+  button, a[role="button"], [role="button"] { position: relative; }
+  .w-7.h-7 { position: relative; }
+  .w-7.h-7::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); min-width: 44px; min-height: 44px; }
+}
+/* Note: iOS zoom-on-focus (<16px inputs) is intentionally NOT force-overridden
+   globally here — a blanket 16px !important risks overflowing compact filters.
+   Revisit per-field if zoom-on-focus proves annoying on device testing. */
+/* Kill accidental horizontal page scroll without breaking position:sticky
+   (overflow:hidden would; overflow:clip does not). */
+html, body { max-width: 100%; overflow-x: clip; }
+/* Focus-visible ring for keyboard users across interactive elements. */
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid rgba(212,175,55,0.7); outline-offset: 1px; border-radius: 6px;
+}
+
+/* ---- Premium gold Toggle (components/common/Toggle.jsx) ----
+   The single switch style used across the entire app. Hover/focus/active states
+   live here because they can't be expressed with inline styles. */
+.premium-toggle:not(:disabled):hover {
+  filter: brightness(1.12);
+}
+.premium-toggle:not(:disabled):active {
+  transform: scale(0.96);
+}
+.premium-toggle:focus-visible {
+  box-shadow: 0 0 0 2px #0a0a0a, 0 0 0 4px rgba(212, 175, 55, 0.85);
+}
+.premium-toggle {
+  transition: filter 180ms ease, transform 120ms ease, background 200ms ease,
+    box-shadow 200ms ease, border-color 200ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .premium-toggle,
+  .premium-toggle > span {
+    transition: none !important;
+  }
+  .premium-toggle:not(:disabled):active {
+    transform: none;
+  }
+}
+
+/* ---- Scrolling hygiene -------------------------------------------------
+   Every nested scroll region (dropdowns, tables, modal bodies) contains its
+   own scroll chain, so reaching the end of a list doesn't start scrolling the
+   page behind it — the main cause of "scroll feels stuck / jumps". The page
+   itself keeps native momentum scrolling on touch devices. */
+.dark-scroll {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---- Cross-device hardening ------------------------------------------------
+   1. No accidental horizontal page scroll on phones.
+      IMPORTANT: this uses `clip`, NOT `hidden`. On html/body, `overflow-x: hidden`
+      forces overflow-y to compute as `auto`, which turns <body> into a SECOND
+      scroll container competing with the viewport — that is precisely the
+      "scroll stops / won't reach the bottom / gets stuck" bug. `clip` blocks the
+      sideways pan without creating a scroll container. Wide tables are unaffected;
+      they scroll inside their own .overflow-x-auto wrappers. */
+html, body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+/* 2. Long unbroken strings (SKUs, OEM numbers, emails, URLs) must wrap rather
+      than force the layout wider than the screen. */
+body {
+  overflow-wrap: break-word;
+}
+
+/* 3. Comfortable tap targets on touch devices. Small icon buttons are fine with a
+      mouse but frustrating with a thumb; give every button a 44px-ish hit area on
+      coarse pointers without changing how it looks on desktop. */
+@media (pointer: coarse) {
+  button, [role="button"], a.btn, select {
+    touch-action: manipulation;
+  }
+}
+
+/* 4. iOS zooms the page in when a focused input's font-size is under 16px. Force
+      the minimum on touch devices so tapping a billing field never zooms/jumps. */
+@media (max-width: 767px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}

@@ -1,0 +1,101 @@
+rules_version = '2';
+// firestore.rules — Firebase Console > Firestore > Rules > paste > Publish.
+// Single-shop model: any signed-in user can manage live data. Ledgers are
+// append-only (history must never change). reorderRequests is editable (status
+// transitions). Everything else is denied.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /parts/{partId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null;
+    }
+
+    match /suppliers/{supplierId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null;
+    }
+
+    match /categories/{categoryId} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+
+    match /vehicles/{vehicleId} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+
+    // Operational business records — customers (with nested vehicles), invoices,
+    // and job cards. Live, editable data in the single-trusted-shop model.
+    match /customers/{customerId} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+    match /invoices/{invoiceId} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+    match /jobCards/{jobCardId} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+
+    match /purchaseOrders/{poId} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+
+    // History ledgers. Records can never be EDITED (update: false) so individual
+    // entries can't be tampered with. delete is allowed only so the admin-only
+    // "Reset All Data" can wipe the shop (the data is snapshotted to the
+    // Recovery Vault first). Single-trusted-shop model.
+    match /sales/{saleId} {
+      allow read, create: if request.auth != null;
+      allow update: if false;
+      allow delete: if request.auth != null;
+    }
+    match /salesRollups/{month} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+    match /restocks/{restockId} {
+      allow read, create: if request.auth != null;
+      allow update: if false;
+      allow delete: if request.auth != null;
+    }
+    match /stockAdjustments/{adjId} {
+      allow read, create: if request.auth != null;
+      allow update: if false;
+      allow delete: if request.auth != null;
+    }
+    match /auditLog/{logId} {
+      allow read, create: if request.auth != null;
+      allow update: if false;
+      allow delete: if request.auth != null;
+    }
+
+    // Reorder requests / purchase tracking — status changes over time, so
+    // update is allowed; delete allowed for clearing completed requests.
+    match /reorderRequests/{reqId} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+
+    // App settings (e.g. the admin email list for Staff & Access). Any signed-in
+    // user can read it (AuthContext needs it to resolve roles); writes are how
+    // the Settings page grants/revokes admin. Single-trusted-shop model.
+    match /appSettings/{docId} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if false;
+    }
+
+    // Recovery Vault — snapshot copies of every record, created before a reset,
+    // kept for 7 days so the shop can be restored. Cleared on restore/expiry.
+    match /recoveryVault/{id} {
+      allow read, create, delete: if request.auth != null;
+      allow update: if false;
+    }
+    match /recoveryMeta/{id} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
