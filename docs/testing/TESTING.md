@@ -1,8 +1,7 @@
 # Testing — Balaji Auto OS
 
-> This file replaces the old `docs/RUN_TESTS.md`. Its original "reproducing the suite"
-> content is unchanged below; the sections after it summarize the QA coverage areas and the
-> environment's verification ceiling.
+How to run the test suites and scanners, what each covers, and where the Node/jsdom
+environment's verification ceiling falls.
 
 ## Reproducing the test suite
 

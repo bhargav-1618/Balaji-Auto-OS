@@ -1,7 +1,10 @@
 rules_version = '2';
 
 // =============================================================================
-// HARDENED RULESET — DEPLOYED to project balaji-auto-os-7 (default database).
+// HARDENED RULESET — this is the active security boundary. Deploy it to your
+// Firebase project ("firebase deploy --only firestore:rules"); rules do nothing
+// until published. (The reference deployment, project balaji-auto-os-7, has it
+// published.)
 // -----------------------------------------------------------------------------
 // If you change this file, re-verify in Firebase Console > Firestore > Rules >
 // "Rules playground" with (a) the owner email, (b) a staff email, (c) an

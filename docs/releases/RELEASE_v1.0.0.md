@@ -54,7 +54,7 @@ The application logic is production-quality; the DEPLOYMENT is not safe until:
    console, ANY signed-in staff user can delete every invoice. The role checks in the
    UI (isAdmin / canManage) are guards, not a security boundary — they are bypassable
    without database rules.
-2. CHANGE THE OWNER PASSWORD from 123456.
+2. SET A STRONG OWNER PASSWORD (never leave it at a weak default).
 
 ## KNOWN LIMITS (deferred, documented)
 
@@ -73,4 +73,4 @@ in a real browser or against live Firestore. Not covered here: actual rendering,
 layout, real Firestore round-trips, live concurrency, offline recovery, print/PDF
 output. A human must click through a deployed build before final sign-off.
 
-See RUN_TESTS.md to reproduce the entire suite yourself.
+See [docs/testing/TESTING.md](../testing/TESTING.md) to reproduce the entire suite yourself.

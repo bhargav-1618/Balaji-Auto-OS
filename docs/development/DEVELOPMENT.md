@@ -4,12 +4,6 @@ Local setup and day-to-day development workflow. For what the app does and how i
 out, see the root [README.md](../../README.md) and
 [docs/architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md).
 
-> This file replaces the old `docs/SETUP_GUIDE.md`. That version had drifted from the real
-> code — it told readers to edit a `ROLE_MAP` object in `context/AuthContext.js` that does not
-> exist, and shipped a sample Firestore ruleset covering only 2 of the app's 16+ collections
-> (already flagged in `docs/QA_AUDIT_SECTION1_FOUNDATION.md`, finding M-16). Both are corrected
-> below against the actual current code.
-
 ## 1. Prerequisites
 
 - **Node.js 18+** (built/tested on Node 22) — https://nodejs.org

@@ -3,16 +3,21 @@
 Honest disclosure of what is NOT covered by this release. None of these is a hidden
 defect; each is a documented boundary.
 
-## 🔴 Deployment security — MUST be done before go-live (not code)
+## 🔴 Deployment security — required per environment (not code)
 
-1. **Firestore security rules are not published.** `firestore.rules` is correct in the
-   repo but must be pasted into the Firebase console. Until then, any signed-in staff
-   user can delete every invoice. The UI role checks (`isAdmin` / `canManage`) are client
-   guards, NOT a security boundary — they are bypassable without database rules.
-2. **The bootstrap owner password is weak** if left at its default. Change it before
-   exposing the app publicly.
+1. **The Firestore security rules must be published to the target Firebase project.**
+   `firestore.rules` in the repo is the hardened, correct ruleset, but rules only take
+   effect once deployed (`firebase deploy --only firestore:rules`). Until then the
+   project runs whatever rules are live there — often permissive defaults under which
+   any signed-in user can delete records. The UI role checks (`isAdmin` / `canManage`)
+   are client guards, NOT a security boundary.
+2. **The owner account must have a strong password.** The bootstrap owner
+   (`BOOTSTRAP_ADMINS` in `context/AuthContext.js`) always has full access; a weak
+   password on it is a full-data-takeover risk.
 
-These are configuration, cannot be fixed in the codebase, and outrank everything else.
+These are configuration, cannot be fixed in the codebase, and must be verified for every
+deployment. *(The reference deployment — Firebase project `balaji-auto-os-7` — has the
+rules published.)*
 
 ## 🟠 Concurrency (single-location safe; fix before multi-terminal)
 

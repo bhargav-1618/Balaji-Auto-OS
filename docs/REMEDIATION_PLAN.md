@@ -1,36 +1,34 @@
 # Balaji Auto OS — Remediation Plan (what to fix / update / change)
 
-Version at time of writing: **3.9.2**. Each item lists: the problem, the exact
-change, files touched, who must do it (me vs you-in-console), effort, regression
-risk, and how to verify. Ordered by priority. Status legend:
+Outstanding engineering and deployment work, ordered by priority. Each item lists the
+problem, the change, files touched, who must do it (code change vs. Firebase/Vercel
+console), effort, regression risk, and how to verify. Status legend:
 
 - ✅ DONE — implemented + build-verified in this codebase
-- ⚠️ YOU — needs an action only you can take (Firebase console / Vercel / secrets)
+- ⚙️ DEPLOY — a Firebase/Vercel/secrets action a deployer must take per environment
 - 🔧 TODO — code change, not yet done (scoped below)
 
 ---
 
-## P0 — BLOCKERS (do before any real production use)
+## P0 — Deployment security (per environment, before real production use)
 
-### P0-1 ⚠️ Rotate the owner password + enable 2FA  ·  effort: 5 min  ·  risk: none
-**Problem:** the owner account `konabhargav2003@gmail.com` (hardcoded permanent
-admin in `context/AuthContext.js`) used `123456` and that password was exposed in
-chat. With the current Firestore rules (P0-2), guessing the owner password = full
-data takeover.
-**Change:** Firebase Console → Authentication → Users → reset that password to a
-long unique passphrase. Enable 2FA on the Google account. Change it anywhere it
-was reused.
-**Verify:** log in with the new password; old one fails.
+### P0-1 ⚙️ Set a strong owner password + enable 2FA  ·  effort: 5 min  ·  risk: none
+**Problem:** the owner account (hardcoded permanent admin in `context/AuthContext.js`
+via `BOOTSTRAP_ADMINS`) has full data access. A weak or reused password on that
+account = full data takeover.
+**Change:** Firebase Console → Authentication → Users → set a long unique passphrase
+for the owner account. Enable 2FA on the underlying Google account.
+**Verify:** log in with the new password; a weak/old one fails.
 
-### P0-2 ⚠️ Publish hardened Firestore rules  ·  effort: 20 min  ·  risk: med (test first)
-**Problem (CRITICAL C1/C2):** live `firestore.rules` grant every signed-in user
-full read/write/**delete** on all collections, and let any signed-in user write
-`appSettings/roles` — i.e. **any staff account can self-promote to admin** via the
-console/REST. UI role gating (`canDelete`, `canManageData`) is cosmetic; it never
-reaches the database.
-**Change:** publish `firestore.rules.hardened` (already in repo). It makes
-`appSettings` writes and all destructive deletes **admin-only**, keeps ledgers
-append-only.
+### P0-2 ⚙️ Publish the Firestore rules to your project  ·  effort: 10 min  ·  risk: med (test first)
+**Problem:** `firestore.rules` is the security boundary, but rules only take effect
+once published to a Firebase project. Until then the project uses whatever rules are
+live there (often permissive defaults), and UI role gating (`canDelete`,
+`canManageData`) is cosmetic — it never reaches the database.
+**Change:** publish the repo's `firestore.rules` (already the hardened ruleset:
+`appSettings` writes and all destructive deletes are admin-only, ledgers append-only).
+Run `firebase deploy --only firestore:rules` or paste it in the console.
+*(The reference deployment — project `balaji-auto-os-7` — has this ruleset published.)*
 **Steps:**
 1. Firebase Console → Firestore → Rules.
 2. Open **Rules Playground**. Test, for each collection, with: the owner email,
@@ -72,7 +70,7 @@ list reads are small in the Network tab.
 virtualize. Behavior at 1k–10k rows is unverified (no infra / no live browser).
 **Change:** wrap the inventory and sales lists in `react-window`
 (`FixedSizeList`) or TanStack Virtual; render only visible rows. Lazy image attrs
-already added (3.9.1).
+are already present.
 **Verify:** seed 5k demo parts; scroll stays smooth; DOM node count stays bounded.
 
 ### P1-3 🔧 Composite indexes for any compound query  ·  effort: 1 hr  ·  risk: low
@@ -102,8 +100,8 @@ behavior — violates "no breaking changes." Tests must come first.
 **Verify:** tests pass; build green; app behaves identically.
 
 ### P2-2 🔧 Accessibility pass (WCAG AA)  ·  effort: 1 day  ·  risk: low
-**Problem (M3):** `prefers-reduced-motion` added (3.9.1), but icon-only buttons
-largely lack `aria-label`; keyboard order, visible focus, screen-reader naming,
+**Problem (M3):** `prefers-reduced-motion` is respected, but some icon-only buttons
+still lack `aria-label`; keyboard order, visible focus, screen-reader naming,
 and 200% zoom are unverified.
 **Change:** add `aria-label` to every icon-only button (archive/restore/delete/
 edit/reorder/WhatsApp); ensure `:focus-visible` rings on all interactive

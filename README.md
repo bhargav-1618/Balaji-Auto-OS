@@ -1,5 +1,7 @@
 # Balaji Auto OS
 
+[![CI](https://github.com/bhargav-1618/Balaji-Auto-OS/actions/workflows/ci.yml/badge.svg)](https://github.com/bhargav-1618/Balaji-Auto-OS/actions/workflows/ci.yml)
+
 Version 1.0.0 · An offline-first auto-parts and garage ERP for Indian workshops.
 
 ## Project Overview
@@ -37,28 +39,34 @@ relationships, see **[docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHI
 
 ```
 Balaji-Auto-OS/
-├── components/          UI components and feature modules
-├── pages/               Next.js routes (login, verify, index)
-├── services/            Business logic (billing engine, analytics)
-├── repositories/        Data-access layer
-├── context/             React Context providers (auth, roles, demo)
-├── lib/                 Shared utilities (format, search, firebase, exports)
-├── constants/           Design tokens, status colours
-├── public/              Static assets
+├── components/          UI components and feature modules (per business area)
+├── pages/               Next.js routes (/, /login, /verify, 404, _app, _document)
+├── services/            Business logic (billing engine, analytics, workflows)
+├── repositories/        Firestore data-access layer
+├── context/             React Context providers (auth / roles / demo)
+├── hooks/               Reusable React hooks (barcode scanner, etc.)
+├── lib/                 Shared utilities (format, search, Firebase init, exports, PDF/QR)
+├── constants/           Design tokens, collection names, limits, status colours
+├── public/              Static assets (icons, manifest, service worker)
 ├── styles/              Global + module CSS
-├── tests/               Automated test suites (Node/jsdom)
+├── tests/               Automated test suites (Node/jsdom) + tests/rules (emulator)
 ├── bench/               Performance micro-benchmarks
-├── tools/               Dev scripts (scanners)
-├── docs/                Documentation, guides, release notes
+├── tools/               Dev scripts (static scanners)
+├── scripts/             One-off maintenance/generation scripts
+├── firebase/            Firebase artefacts (rules backups)
+├── docs/                Documentation, guides, release notes, archived audits
 │   ├── architecture/    ARCHITECTURE.md — layers, data flow, subsystems, business workflows
 │   ├── development/     DEVELOPMENT.md — local setup, dev workflow, demo modes
 │   ├── testing/         TESTING.md — running suites, QA coverage, verification ceiling
 │   ├── deployment/      DEPLOYMENT.md — build, env, Firebase rules, rollback
-│   └── releases/        Per-version release/fix notes
-├── firebase.json        Firestore deploy config
+│   ├── releases/        The 1.0.0 release record
+│   └── archive/         Pre-1.0 audit reports and RC fix notes (historical)
+├── .github/workflows/   CI (lint · build · test)
+├── firebase.json        Firestore rules + indexes deploy config
+├── .firebaserc          Default Firebase project for the CLI
 ├── firestore.rules      Security rules (the security boundary)
 ├── firestore.indexes.json
-├── next.config.js       Next config + security headers
+├── next.config.js       Next config + security headers + CSP
 ├── tailwind.config.js
 ├── postcss.config.js
 ├── package.json
@@ -70,7 +78,7 @@ Every major folder contains its own `README.md` describing its purpose.
 
 ## Installation
 
-Requires Node.js 18+.
+Requires Node.js 18+ (tested on Node 22; CI runs Node 22).
 
 ```bash
 npm install
@@ -140,14 +148,19 @@ node tools/scan-tdz.cjs .          # temporal-dead-zone scan
 
 See [docs/testing/TESTING.md](docs/testing/TESTING.md) for details.
 
-## Production Deployment
+## Deployment
 
-1. Deploy the app (e.g. Vercel), setting the `NEXT_PUBLIC_FIREBASE_*` environment variables.
-2. **Publish the Firestore security rules** — required before go-live:
+The app is a standard Next.js build and is hosted on **Vercel**, backed by the
+**Firebase** project pinned in `.firebaserc`. Pushes to `main` deploy automatically.
+
+To stand up a new environment:
+
+1. Deploy the app (Vercel), setting the six `NEXT_PUBLIC_FIREBASE_*` environment variables.
+2. **Publish the Firestore security rules** to your Firebase project — required before go-live:
    ```bash
    firebase deploy --only firestore:rules
    ```
-3. Ensure the owner account uses a strong password.
+3. Enable **Email/Password** authentication and create the owner account with a strong password.
 
 See [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) for details and
 [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the verification ceiling.
@@ -157,10 +170,15 @@ See [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) for details a
 Next.js 14 · React 18 · Tailwind CSS · Firebase (Firestore + Auth) · lucide-react ·
 react-hot-toast · jsPDF · qrcode · SheetJS (xlsx).
 
-## Version History
+## Status & Version History
 
-See [docs/CHANGELOG.md](docs/CHANGELOG.md) and [docs/releases/](docs/releases/).
-Current version: **1.0.0**.
+Current version: **1.0.0** — first production release, targeting single-location
+workshops. The transaction/billing engine is covered by an executable test suite;
+multi-terminal concurrency and a few operational items are open and tracked in
+[docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
+
+See [docs/CHANGELOG.md](docs/CHANGELOG.md) and
+[docs/releases/RELEASE_v1.0.0.md](docs/releases/RELEASE_v1.0.0.md) for release detail.
 
 ## Browser Support
 

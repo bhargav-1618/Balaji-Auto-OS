@@ -44,7 +44,7 @@ balaji-auto-os/
 ├── constants/       TAB_KEYS, collection names, limits, UI tokens
 ├── styles/          Global CSS + design tokens
 ├── public/          Static assets
-├── tests/           46 suites / 996 assertions
+├── tests/           Node/jsdom suites (109 files, run by `npm test`)
 ├── tools/           Static scanners (undef, TDZ)
 ├── bench/           Micro-benchmarks
 ├── docs/            Guides, audits, release notes, this file

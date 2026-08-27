@@ -107,7 +107,7 @@ panel lands in the wrong place. Grep found none. A grep is not a pixel.
 1. **Firestore rules are NOT PUBLISHED.** Any signed-in staff user can delete every
    invoice. firestore.rules is correct in the repo; it must be pasted into the
    Firebase console.
-2. **The owner password is `123456`** on a live public app.
+2. **The owner password is a weak default** on a live public app.
 3. Invoice numbering is not concurrency-safe (needs a server-side counter).
 4. Concurrent stock oversell (needs runTransaction).
 

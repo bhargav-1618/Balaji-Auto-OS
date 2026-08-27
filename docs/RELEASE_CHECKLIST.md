@@ -1,10 +1,11 @@
-# RELEASE CHECKLIST — Version 1.0
+# RELEASE CHECKLIST — v1.0.0
 
-**Product:** Balaji Auto OS · **Current version:** 12.3.0
-**Status:** 🟠 APPROVED AFTER MAJOR FIXES · **Production readiness ~80%**
+**Product:** Balaji Auto OS · **Version:** 1.0.0
 
-> Only **release blockers** appear in Part A. Nothing optional. If it is not a blocker,
-> it is in the v2.0 roadmap at the bottom.
+> This is the gate checklist that governed the 1.0.0 release. Part A items are
+> release blockers; items still open after 1.0.0 (e.g. the server-side invoice
+> counter, multi-terminal concurrency) are carried in
+> [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md). Part C is the forward roadmap.
 
 ---
 
@@ -26,7 +27,7 @@ admin-gated deletes, append-only ledgers, no self-promotion).
 - [ ] **Publish**
 - [ ] **Test an admin login immediately** — confirm you can still delete/edit as owner
 - [ ] Test a staff login — confirm delete is now blocked
-- [ ] Rollback available at `firestore.rules.permissive.bak` if anything breaks
+- [ ] Rollback available at `firebase/backups/firestore.rules.permissive.bak` if anything breaks
 
 > ⚠️ Do not publish and walk away. Verify an admin can still work.
 

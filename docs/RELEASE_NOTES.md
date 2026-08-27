@@ -3,18 +3,17 @@
 Offline-first auto-parts and garage ERP for Indian workshops.
 Next.js 14 · React 18 · Firebase Firestore.
 
-## Release gate (all green on the frozen build)
+## Release gate (all green)
 
     next build            ✓ compiled successfully
     undefined-identifier  0 real (4 known false positives: CSS/self/caches, all guarded)
     TDZ scan              0
+    npm test              109/109 test files passing (Node/jsdom)
     ─────────────────────────────────────
-    218 automated assertions, 0 failures
+    CI (.github/workflows/ci.yml)  lint · build · test — green
 
-    overpayment     7    dropdowns      14    export         15
-    regression     46    scrolllock     10    settings-dirty 14
-    statcards      18    vehiclestats   33    perf           20
-    ui-consistency 15    certification  26
+See [testing/TESTING.md](testing/TESTING.md) for what each suite covers and the
+verification ceiling.
 
 ## What this release certifies (executable, against real code)
 
@@ -45,6 +44,7 @@ build before final sign-off. See KNOWN_LIMITATIONS.md.
 
 ## Before you go live — REQUIRED, not code
 
-See DEPLOYMENT_GUIDE.md § "Security — do this first". Two configuration steps
-(publishing Firestore rules, changing the owner password) gate whether this deployment
-is safe, and neither can be fixed in the codebase.
+See [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) § 1 "Security — DO THIS FIRST".
+Two configuration steps (publishing the Firestore rules to your Firebase project and
+setting a strong owner password) gate whether a deployment is safe, and neither can be
+fixed in the codebase.

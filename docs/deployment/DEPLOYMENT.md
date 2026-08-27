@@ -1,17 +1,15 @@
 # Deployment — Balaji Auto OS v1.0.0
 
-> This file replaces the old `docs/DEPLOYMENT_GUIDE.md`. Section 4 below has been corrected
-> to match the real, current test tooling (see [docs/testing/TESTING.md](../testing/TESTING.md))
-> — the old version referenced a `scan-undef.cjs .` path missing its `tools/` prefix and a
-> hand-picked list of ~11 test names with a stale "218 passed" count, predating the
-> `npm test` script that now runs the full current suite (109 files).
+Build, environment, Firebase setup, and the pre-go-live security steps. For what to
+verify after each release, see [docs/testing/TESTING.md](../testing/TESTING.md).
 
 ## 0. Requirements
 
 - Node.js 18+ (build tested on Node 22)
 - A Firebase project with Authentication (Email/Password) and Firestore enabled
-- The `.env.local` in this package already contains the project's public Firebase
-  `NEXT_PUBLIC_*` keys (these ship in the client bundle by design; they are not secrets).
+- The six `NEXT_PUBLIC_FIREBASE_*` values for that project (Firebase Console → Project
+  Settings → Your Apps → Web App). These are public client keys — they ship in the
+  client bundle by design and are not secrets; the security boundary is `firestore.rules`.
 
 ## 1. Security — DO THIS FIRST (not optional)
 
@@ -42,14 +40,17 @@ styled-jsx pipeline is harmless and expected.
 
 ## 3. Environment
 
-`.env.local` (included) holds:
+`.env.local` is gitignored and is **not** in the repo — create it from the template:
+
+    cp .env.local.example .env.local     # then fill in the six NEXT_PUBLIC_FIREBASE_* values
 
     NEXT_PUBLIC_FIREBASE_API_KEY=...
     NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
     NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
     (and the remaining NEXT_PUBLIC_FIREBASE_* keys)
 
-To deploy against a different Firebase project, replace these values.
+On Vercel (or any host), set these six as environment variables instead of a file. The
+app fails fast with an actionable error if any is missing.
 
 ## 4. Verify the build (optional but recommended)
 
@@ -78,7 +79,9 @@ Automated tests run in Node, not a browser. After deploying, manually verify:
 - Mark-as-Paid → confirm → close, then scroll. The page must scroll (old freeze).
 - Run Lighthouse on `/login` and `/`.
 
-## 6. Rollback
+## 6. Hosting & rollback
 
-This is a static Next.js build. Redeploy the previous build artifact to roll back; no
-database migration is involved in this release.
+The app is a standard Next.js build hosted on Vercel, with `main` set to auto-deploy.
+To roll back, promote the previous deployment in the Vercel dashboard (or redeploy the
+previous build artifact on any other host). No database migration is involved in this
+release, so a rollback is code-only.

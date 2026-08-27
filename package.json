@@ -5,11 +5,21 @@
   "description": "Offline-first auto-parts and garage ERP for Indian workshops — customers, vehicles, job cards, billing, inventory, suppliers, and analytics. Built with Next.js and Firebase.",
   "author": "Sri Baba Balaji Maruti Care",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bhargav-1618/Balaji-Auto-OS.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bhargav-1618/Balaji-Auto-OS/issues"
+  },
+  "homepage": "https://github.com/bhargav-1618/Balaji-Auto-OS#readme",
   "keywords": [
     "erp",
     "garage-management",
+    "workshop-management",
     "auto-parts",
-    "inventory",
+    "inventory-management",
+    "invoicing",
     "billing",
     "nextjs",
     "react",

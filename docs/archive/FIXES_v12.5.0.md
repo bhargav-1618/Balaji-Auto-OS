@@ -72,7 +72,7 @@ Check this first.
 ## Still open (unchanged, from RELEASE_CHECKLIST)
 
 1. **Firestore rules NOT PUBLISHED** — any signed-in staff user can delete every invoice.
-2. **Owner password is `123456`** on a live public app.
+2. **Owner password is a weak default** on a live public app.
 3. Invoice numbering not concurrency-safe (needs server-side counter).
 4. Concurrent stock oversell (needs `runTransaction`).
 
