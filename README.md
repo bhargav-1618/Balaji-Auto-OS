@@ -53,14 +53,11 @@ Balaji-Auto-OS/
 ├── bench/               Performance micro-benchmarks
 ├── tools/               Dev scripts (static scanners)
 ├── scripts/             One-off maintenance/generation scripts
-├── firebase/            Firebase artefacts (rules backups)
-├── docs/                Documentation, guides, release notes, archived audits
+├── docs/                Documentation, guides, release notes, roadmap
 │   ├── architecture/    ARCHITECTURE.md — layers, data flow, subsystems, business workflows
 │   ├── development/     DEVELOPMENT.md — local setup, dev workflow, demo modes
 │   ├── testing/         TESTING.md — running suites, QA coverage, verification ceiling
-│   ├── deployment/      DEPLOYMENT.md — build, env, Firebase rules, rollback
-│   ├── releases/        The 1.0.0 release record
-│   └── archive/         Pre-1.0 audit reports and RC fix notes (historical)
+│   └── deployment/      DEPLOYMENT.md — build, env, Firebase rules, rollback
 ├── .github/workflows/   CI (lint · build · test)
 ├── firebase.json        Firestore rules + indexes deploy config
 ├── .firebaserc          Default Firebase project for the CLI
@@ -175,10 +172,11 @@ react-hot-toast · jsPDF · qrcode · SheetJS (xlsx).
 Current version: **1.0.0** — first production release, targeting single-location
 workshops. The transaction/billing engine is covered by an executable test suite;
 multi-terminal concurrency and a few operational items are open and tracked in
-[docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
+[docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) and
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 See [docs/CHANGELOG.md](docs/CHANGELOG.md) and
-[docs/releases/RELEASE_v1.0.0.md](docs/releases/RELEASE_v1.0.0.md) for release detail.
+[docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md) for release detail.
 
 ## Browser Support
 

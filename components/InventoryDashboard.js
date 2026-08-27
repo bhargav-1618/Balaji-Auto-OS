@@ -8275,7 +8275,7 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
             <div className={SETTINGS_CARD_MAX}>
               <Card title="About">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-sm">
-                  {[['Version', `v${APP_VERSION}`], ['Product', 'Balaji Auto OS'], ['Database', demoMode ? 'Demo (local)' : 'Firebase Firestore'], ['Connection', online ? 'Connected' : 'Offline'], ['Total records', totalRecords.toLocaleString('en-IN')], ['Support', 'support@balajiautos.com']].map(([k, v]) => (
+                  {[['Version', `v${APP_VERSION}`], ['Product', 'Balaji Auto OS'], ['Database', demoMode ? 'Demo (local)' : 'Firebase Firestore'], ['Connection', online ? 'Connected' : 'Offline'], ['Total records', totalRecords.toLocaleString('en-IN')], ['Support', 'support@balajiautoos.com']].map(([k, v]) => (
                     <div key={k} className="flex justify-between rounded-lg px-3 py-2" style={{ background: 'rgba(var(--fg-rgb),0.03)' }}><span className="text-white/45">{k}</span><span className="text-white/85">{v}</span></div>
                   ))}
                 </div>

@@ -1,9 +1,7 @@
 /**
  * tests/customers-vehicles-toolbar-redesign.test.cjs
  *
- * CUSTOMERS & VEHICLES DASHBOARD SEARCH/FILTER TOOLBAR LAYOUT — explicitly authorized
- * redesign (unlike every other review this session, this one was a deliberate request
- * to restructure the layout, not just fix a bug).
+ * CUSTOMERS & VEHICLES DASHBOARD SEARCH/FILTER TOOLBAR LAYOUT.
  *
  * Before: a single row held the search box AND every filter/sort/export/action
  * control together. That forced a running tug-of-war between the search box's width
