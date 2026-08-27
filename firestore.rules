@@ -1,16 +1,15 @@
 rules_version = '2';
 
 // =============================================================================
-// HARDENED RULESET — PROPOSAL ONLY. *** NOT VERIFIED AGAINST LIVE AUTH ***
+// HARDENED RULESET — DEPLOYED to project balaji-auto-os-7 (default database).
 // -----------------------------------------------------------------------------
-// DO NOT blind-publish this. Test it first in:
-//   Firebase Console > Firestore > Rules > "Rules playground"
-// with (a) the owner email, (b) a staff email, (c) an unauthenticated request,
-// running read / create / update / delete against each collection. Only publish
-// once every case behaves as expected. If the owner ever loses access, revert to
-// the previous rules (keep a copy) and re-test.
+// If you change this file, re-verify in Firebase Console > Firestore > Rules >
+// "Rules playground" with (a) the owner email, (b) a staff email, (c) an
+// unauthenticated request, running read / create / update / delete against each
+// collection before publishing. If the owner ever loses access, revert to the
+// previous ruleset from the Rules history and re-test.
 //
-// WHAT THIS CHANGES vs the current `request.auth != null`-everywhere ruleset:
+// WHAT THIS CHANGES vs a plain `request.auth != null`-everywhere ruleset:
 //
 //  1. PRIVILEGE-ESCALATION FIX (highest value): appSettings is now WRITABLE ONLY
 //     BY ADMINS. Under the old rules any signed-in staff member could edit
@@ -23,7 +22,7 @@ rules_version = '2';
 //
 //  3. Ledgers stay append-only (update: false) exactly as before.
 //
-// ASSUMPTIONS (verify before publishing):
+// ASSUMPTIONS (still true; re-verify if you touch the role model):
 //  - The owner email below matches BOOTSTRAP_ADMINS in context/AuthContext.js.
 //  - appSettings/roles stores `admins` as an array of LOWERCASE emails (the app
 //    normalizes with norm() on read; confirm the Settings WRITE path also stores
