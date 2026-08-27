@@ -4,6 +4,19 @@ on:
   push:
   pull_request:
 
+# The NEXT_PUBLIC_FIREBASE_* values are the web app's public client config, not
+# secrets — security is enforced by the Firestore rules, not key secrecy (see
+# docs/deployment/DEPLOYMENT.md and .env.local.example). `next build` imports
+# lib/firebase.js during "Collecting page data", which throws if these are unset,
+# so they must be present for the build and test steps to run in CI.
+env:
+  NEXT_PUBLIC_FIREBASE_API_KEY: AIzaSyB0s8JauzZUBrNwQhmt6R1wkIO-3SEJqVY
+  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: balaji-auto-os-7.firebaseapp.com
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID: balaji-auto-os-7
+  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: balaji-auto-os-7.firebasestorage.app
+  NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "611419924027"
+  NEXT_PUBLIC_FIREBASE_APP_ID: "1:611419924027:web:72d4f142eef4bc3ee65e1e"
+
 jobs:
   verify:
     name: Lint, build & test
@@ -15,7 +28,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
