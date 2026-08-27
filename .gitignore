@@ -1,0 +1,51 @@
+# dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# env files — NEVER commit these
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+
+# debug / logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+firebase-debug.log*
+firestore-debug.log*
+*.log
+
+# build output / caches
+/dist
+/cache
+.cache/
+
+# generated dev-only output (regenerate with the scripts/ tool that produced it)
+/scratch/
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts

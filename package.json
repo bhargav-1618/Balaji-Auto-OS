@@ -1,0 +1,56 @@
+{
+  "name": "balaji-auto-os",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline-first auto-parts and garage ERP for Indian workshops — customers, vehicles, job cards, billing, inventory, suppliers, and analytics. Built with Next.js and Firebase.",
+  "author": "Sri Baba Balaji Maruti Care",
+  "license": "UNLICENSED",
+  "keywords": [
+    "erp",
+    "garage-management",
+    "auto-parts",
+    "inventory",
+    "billing",
+    "nextjs",
+    "react",
+    "firebase",
+    "firestore"
+  ],
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "node tests/run-all.cjs",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-rules-test \"node tests/rules/firestore.rules.test.cjs\""
+  },
+  "dependencies": {
+    "firebase": "^10.12.0",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^0.383.0",
+    "next": "14.2.35",
+    "qrcode": "^1.5.4",
+    "react": "^18",
+    "react-dom": "^18",
+    "react-hot-toast": "^2.4.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.0.1",
+    "@babel/preset-env": "^8.0.2",
+    "@babel/preset-react": "^8.0.1",
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.0.1",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.3",
+    "firebase-tools": "^15.24.0",
+    "jsdom": "^30.0.0",
+    "postcss": "^8",
+    "tailwindcss": "^3.4.1"
+  }
+}

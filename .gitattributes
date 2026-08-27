@@ -1,0 +1,14 @@
+# Pin line endings to LF regardless of the checking-out machine's git config
+# (core.autocrlf). Several tests/*.test.cjs source-assertion suites read real
+# component files and match LF-based literals/regexes against their content
+# (e.g. multi-line `indexOf('...\n...')` block extraction) — a CRLF checkout
+# silently breaks those matches without touching any actual application
+# behavior. See docs/testing/TESTING.md.
+* text=auto eol=lf
+
+# Binary assets: never touched by line-ending normalization.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.ico binary
