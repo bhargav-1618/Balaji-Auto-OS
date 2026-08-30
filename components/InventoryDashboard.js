@@ -4061,6 +4061,13 @@ function AuditRow({ e }) {
     delete_part: 'Deleted part', delete_supplier: 'Deleted supplier', price_change: 'Price change',
     below_floor_sale: 'Below-floor sale', stock_adjustment: 'Stock adjustment',
     archive_part: 'Archived part', restore_part: 'Restored part',
+    // BUG-LIVE-006: the real audit writers (writeAudit / pushAudit) also emit these
+    // machine keys — without a mapping they rendered as raw "create_part" etc.
+    create_part: 'Created part', update_part: 'Updated part', sell_part: 'Recorded sale',
+    quick_restock: 'Received stock', create_supplier: 'Added supplier', update_supplier: 'Updated supplier',
+    archive_supplier: 'Archived supplier', restore_supplier: 'Restored supplier',
+    po_create: 'Purchase order created', po_status: 'Purchase order updated',
+    category_rename: 'Category renamed', category_delete: 'Category deleted',
   };
   const label = labelMap[e.action] || e.action;
   const color = e.action === 'price_change' ? '#d4af37'
@@ -5799,7 +5806,7 @@ function OverviewView({ inventory, sales, suppliers, auditLog, restocks, stockAd
   const lowStock = useMemo(() => active.filter((p) => (p.stock || 0) > 0 && (p.stock || 0) <= (p.minStock || 5)).sort((a, b) => (a.stock || 0) - (b.stock || 0)), [active]);
 
   // --- Recent activity (audit logs only) ---
-  const ACT_LABEL = { delete_part: 'Part deleted', delete_supplier: 'Supplier deleted', price_change: 'Price changed', below_floor_sale: 'Below-floor sale', stock_adjustment: 'Stock adjusted', archive_part: 'Part archived', restore_part: 'Part restored' };
+  const ACT_LABEL = { delete_part: 'Part deleted', delete_supplier: 'Supplier deleted', price_change: 'Price changed', below_floor_sale: 'Below-floor sale', stock_adjustment: 'Stock adjusted', archive_part: 'Part archived', restore_part: 'Part restored', create_part: 'Part created', update_part: 'Part updated', sell_part: 'Sale recorded', quick_restock: 'Stock received', create_supplier: 'Supplier added', update_supplier: 'Supplier updated', po_create: 'Purchase order created', po_status: 'Purchase order updated' };
   const recent = useMemo(() => auditLog.slice(0, 6).map((e) => ({ id: e.id, label: ACT_LABEL[e.action] || e.action, name: e.name || '', when: tsToDate(e.createdAt) })), [auditLog]);
 
   // --- Top selling (from sales ledger within the selected range) ---

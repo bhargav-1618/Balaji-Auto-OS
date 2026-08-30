@@ -478,6 +478,11 @@ const deriveStatus = (inv) => {
   if (inv.status === 'Cancelled' || inv.status === 'Refunded' || inv.status === 'Returned') return inv.status;
   if (inv.isEstimate) return 'Estimate';
   const t = totalsOf(inv);
+  // BUG-LIVE-002: an OVERPAID invoice's books do not balance — `t.balance` is floored
+  // to 0 by Math.max(0, …), which used to read as "Paid" (and then locked the invoice).
+  // Overpayment is an error state, never "Paid"; the excess is surfaced separately as
+  // "Overpaid by ₹X". 0.5 slack absorbs rounding.
+  if (t.grand > 0 && t.paid > t.grand + 0.5) return 'Partially Paid';
   if (t.balance <= 0 && t.grand > 0) return 'Paid';
   if (t.paid > 0) return 'Partially Paid';
   return inv.status === 'Draft' ? 'Draft' : 'Unpaid';
@@ -745,8 +750,13 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   const fullyPaid = t.balance <= 0.5 && t.grand > 0 && !paymentsInvalid;
   // A saved, fully-paid (or cancelled/refunded) invoice is locked — read-only
   // history. Estimates and unpaid/partially-paid invoices stay editable.
-  const savedStatus = inv.invNo ? deriveStatus(inv) : null;
-  const locked = !inv.isEstimate && !!inv.invNo && ['Paid', 'Cancelled', 'Refunded', 'Returned'].includes(savedStatus);
+  // BUG-LIVE-002/004: lock on ACTUAL persistence, not on `inv.invNo`. Every entry
+  // point (New Invoice, Job Card prefill) pre-allocates an invoice NUMBER before this
+  // modal opens, so `inv.invNo` is truthy for a brand-new unsaved invoice — which made
+  // a new-but-overpaid invoice render "Paid · Locked" and freeze the editor. `isPersisted`
+  // (already computed above) is the real "this invoice has a saved copy" signal.
+  const savedStatus = isPersisted ? deriveStatus(inv) : null;
+  const locked = !inv.isEstimate && isPersisted && ['Paid', 'Cancelled', 'Refunded', 'Returned'].includes(savedStatus);
   const [newCust, setNewCust] = useState(null); // {name,phone,email,gst} when adding inline
   const [newVeh, setNewVeh] = useState(null); // {regNo,make,model,fuel} when adding inline
   // Show a generous result set — the dropdown is scrollable (max-h + overflow-y),
@@ -1146,7 +1156,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
         <div className={`${SHELL_WIDTH_CLS} mx-auto flex items-center justify-between`}>
         <div className="flex items-center gap-3 min-w-0">
           <button onClick={guardedClose} className="w-9 h-9 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
-          <div className="min-w-0"><h3 className="text-base font-bold text-white truncate">{inv.invNo ? `Edit ${inv.invNo}` : 'New Invoice'}</h3><p className="text-[11px] text-white/45 truncate">{inv.customer || 'No customer selected'}</p></div>
+          <div className="min-w-0"><h3 className="text-base font-bold text-white truncate">{isPersisted ? `Edit ${inv.invNo}` : (inv.invNo ? `New Invoice · ${inv.invNo}` : 'New Invoice')}</h3><p className="text-[11px] text-white/45 truncate">{inv.customer || 'No customer selected'}</p></div>
         </div>
         <div className="hidden sm:flex items-center gap-2">
           <div className="text-right mr-1"><p className="text-[9px] uppercase tracking-wide text-white/45 leading-none">Total</p><p className="text-base font-bold leading-tight" style={{ color: '#d4af37' }}>{inr(t.grand)}</p></div>

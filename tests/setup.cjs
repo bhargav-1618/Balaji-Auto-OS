@@ -110,7 +110,11 @@ const EXTRA_EXPORTS = {
   // InvoiceModal is a private function in BillingModule; expose it for testing
   // WITHOUT editing the shipped file.
   [path.resolve(__dirname, '../components/billing/BillingModule.jsx')]:
-    '\nexport { InvoiceModal, deriveStatus, nextInvNo };\n',
+    '\nexport { InvoiceModal, deriveStatus, nextInvNo, emptyInvoice };\n',
+  // CustomerWizard is a private function in CustomersModule; expose it for testing
+  // WITHOUT editing the shipped file.
+  [path.resolve(__dirname, '../components/customers/CustomersModule.jsx')]:
+    '\nexport { CustomerWizard, emptyCustomer };\n',
 };
 
 const origJs = require.extensions['.js'];

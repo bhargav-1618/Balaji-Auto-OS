@@ -18,6 +18,8 @@ const KNOWN = new Set([
   'ArrayBuffer','DataView','Int8Array','Float32Array','Float64Array','Uint16Array','Uint32Array',
   'TextEncoder','TextDecoder','performance','history','screen','getComputedStyle','matchMedia',
   'HTMLElement','Node','Element','DOMParser','XMLHttpRequest','WebSocket','Notification','scrollTo',
+  // Standard web globals (Fetch API + Service Worker scope) — used by public/sw.js.
+  'self','caches','Response','Request','Headers','ServiceWorkerGlobalScope','clients','skipWaiting',
 ]);
 
 function walk(dir, out = []) {

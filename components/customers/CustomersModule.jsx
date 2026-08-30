@@ -520,6 +520,36 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
     if (badYear) { setStep(1); return `Vehicle year "${badYear.year}" looks incorrect — enter a year between 1980 and ${thisYear + 1}`; }
     return null;
   };
+  // BUG-LIVE-003: "Next" used to be a bare setStep(s + 1) with no validation, so an
+  // empty Basic Info silently advanced to Vehicles. Gate the Basic-Info step: it holds
+  // the only hard-required fields (name, mobile) plus the manual-ID checks — the same
+  // conditions validate() checks first on Save. Later steps stay freely navigable
+  // (Save still runs the full validate()); this only stops the required step being
+  // skipped past.
+  const validateBasic = () => {
+    if (f.name.trim().length < 3) return 'Customer name must be at least 3 characters';
+    if (!f.phone || phoneErr) return 'A valid 10-digit primary mobile is required';
+    if (dupPhone) return 'A customer with this mobile number already exists';
+    if (emailErr) return emailErr;
+    if (idMode === 'manual') {
+      if (!f.code.trim()) return 'Enter a customer ID or use Auto Generate';
+      if (existing.some((c) => c.id !== f.id && c.code === f.code.trim())) return 'This customer ID already exists';
+    }
+    return null;
+  };
+  const goNext = () => {
+    if (step === 0) {
+      const err = validateBasic();
+      if (err) {
+        setAttemptedSave(true); // reveal the field-level red errors on Basic Info
+        if (f.name.trim().length < 3) nameInputRef.current?.focus();
+        else if (!f.phone || phoneErr || dupPhone) phoneInputRef.current?.focus();
+        toast.error(err);
+        return;
+      }
+    }
+    setStep((s) => Math.min(s + 1, STEPS.length - 1));
+  };
   const save = async () => {
     if (saving) return; // already in flight — a second Enter/Ctrl+S/click is a no-op, not a second write
     const err = validate();
@@ -896,7 +926,7 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
           <button onClick={onClose} disabled={saving} className="py-3 px-5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 disabled:opacity-40 disabled:cursor-not-allowed">Cancel</button>
           <div className="flex gap-2">
             {step > 0 && <button onClick={() => setStep((s) => s - 1)} disabled={saving} className="py-3 px-5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 disabled:opacity-40 disabled:cursor-not-allowed">Back</button>}
-            {step < STEPS.length - 1 ? <button onClick={() => setStep((s) => s + 1)} className="py-3 px-6 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]">Next</button>
+            {step < STEPS.length - 1 ? <button onClick={goNext} className="py-3 px-6 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]">Next</button>
               : <button onClick={save} disabled={saving} aria-busy={saving} className="py-3 px-6 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] disabled:opacity-60 disabled:cursor-wait">{saving ? 'Saving…' : 'Save Customer'}</button>}
           </div>
         </div>
