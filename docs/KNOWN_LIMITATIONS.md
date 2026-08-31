@@ -24,6 +24,12 @@ rules published.)*
 - **Invoice numbering is not concurrency-safe.** Two devices creating an invoice in the
   same second can collide. Needs a server-side counter (`runTransaction`). Low risk for a
   single-counter workshop.
+- **A new invoice saved as a draft keeps its preview `INV-` number instead of a
+  `DRF-` one.** The editor pre-allocates the next `INV-` number for display; "Save Draft"
+  persists it as-is (`status: "Draft"` but `invNo: "INV-XXXX"`), so deleting that draft
+  later leaves a gap in the `INV-` sequence. Same root cause as the item above — a proper
+  fix belongs with the server-side counter, not a client-side patch. Low impact for a
+  single-counter workshop; drafts are normally converted, not deleted.
 - **Concurrent stock decrement** has the same class of race.
 
 ## 🟡 Performance (fine at current scale)
