@@ -39,5 +39,14 @@ ok('part drafts are namespaced by mode', /maruti_part_draft_v1_\$\{demoMode \? '
 ok('demo exit clears business caches (no demo data bleeds into prod)',
   /clearBusinessCaches\(\)/.test(auth));
 
+// 5. BUG-QA-001: the demo banner must not claim changes "automatically reset after
+//    reload" — applyDemoData('all') on mount reads the persisted (modified) snapshot
+//    unless {fresh:true} (only the Demo-Admin "Restore Original Demo Dataset" button),
+//    so demo edits actually SURVIVE a reload.
+ok('demo banner does not falsely claim auto-reset on reload',
+  !/automatically reset after reload/.test(dash));
+ok('a normal reload re-applies the persisted demo snapshot (fresh only on explicit reset)',
+  /applyDemoData\('all'\)/.test(dash) && /if \(fresh\) return null;/.test(dash));
+
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

@@ -13144,7 +13144,7 @@ export default function InventoryDashboard() {
           className="flex-none flex items-center justify-center gap-3 px-4 py-2 text-center z-[90]" style={{ background: 'linear-gradient(90deg,#d4af37,#aa801e)', color: '#1a1a1a' }}>
           <span className="text-xs sm:text-sm font-bold">{demoAdmin
             ? 'Demo Admin Mode — Managing isolated demo inventory. Production data remains fully protected.'
-            : 'Demo Mode — Safe sandbox. Changes affect demo data only and automatically reset after reload.'}</span>
+            : 'Demo Mode — Safe sandbox. Changes stay in this browser and never touch real data.'}</span>
         </div>
       )}
       <ScrollToTop />
