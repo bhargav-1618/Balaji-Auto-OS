@@ -14,6 +14,7 @@ import LocalCapacityBanner from '../common/LocalCapacityBanner';
 import { getLocalCapacityStatus } from '../../services/localCapacityService';
 import { SEMANTIC } from '../../constants/ui';
 import { useTranslation } from '../../lib/i18n';
+import { isIndianMobile, MOBILE_ERROR } from '../../lib/format';
 
 const inputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
@@ -315,13 +316,13 @@ function AddReminderModal({ customers, onAdd, onClose }) {
           <input value={f.detail} onChange={set('detail')} placeholder="Detail / note" className={inputCls} />
           <div className="grid grid-cols-2 gap-2">
             <input value={f.customer} onChange={set('customer')} placeholder="Customer (optional)" className={inputCls} />
-            <input value={f.phone} onChange={(e) => setF((s) => ({ ...s, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} placeholder="Phone (optional)" className={inputCls} />
+            <input value={f.phone} onChange={(e) => setF((s) => ({ ...s, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} placeholder="Phone (optional)" className={`${inputCls} ${f.phone && !isIndianMobile(f.phone) ? 'border-red-500/60' : ''}`} />
           </div>
           <div><label className="text-[11px] text-white/45">Due date</label><input type="date" value={f.due} onChange={set('due')} className={inputCls} style={{ colorScheme: 'dark' }} /></div>
         </div>
         <div className="flex gap-2 px-5 py-4" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.08)', background: 'var(--surface-2)', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
           <button onClick={onClose} className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80">Cancel</button>
-          <button onClick={() => { if (!f.title.trim()) { toast.error('Enter a title'); return; } onAdd(f); }} className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]">Add Reminder</button>
+          <button onClick={() => { if (!f.title.trim()) { toast.error('Enter a title'); return; } if (f.phone && !isIndianMobile(f.phone)) { toast.error(MOBILE_ERROR); return; } onAdd(f); }} className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]">Add Reminder</button>
         </div>
       </div>
     </div>

@@ -115,6 +115,10 @@ const EXTRA_EXPORTS = {
   // WITHOUT editing the shipped file.
   [path.resolve(__dirname, '../components/customers/CustomersModule.jsx')]:
     '\nexport { CustomerWizard, emptyCustomer };\n',
+  // Sidebar is a private function in InventoryDashboard; expose it so the brand →
+  // home navigation can be asserted behaviourally WITHOUT editing the shipped file.
+  [path.resolve(__dirname, '../components/InventoryDashboard.js')]:
+    '\nexport { Sidebar };\n',
 };
 
 const origJs = require.extensions['.js'];

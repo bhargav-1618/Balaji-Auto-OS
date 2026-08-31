@@ -49,7 +49,7 @@ import { lockBody, unlockBody, assertBodyUnlockedIfNoModals } from './Modal';
 import BillingModule from './billing/BillingModule';
 import { getGarageSeed } from '../lib/demoGarageSeed';
 import { computeRange, ratingFor, computeInventoryHealth, computeWorkshopScore, computeAlerts, computeInsights, computeAchievements, computeWorkshopProgress } from '../services/analyticsService';
-import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, toIndianPhone, isValidIndianPhone, phoneInput, waNumber, tsToDate, isSameDay, trendPct } from '../lib/format';
+import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, toIndianPhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, isSameDay, trendPct, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
 import { buildPO, poCreateDoc, poAdvanceDoc, poReceiveDoc, poCancelDoc, nextPOStatus } from '../services/purchaseOrderService';
 import {
   catMatches, remapCatFields, renameCategoryDocs, deleteCategoryDocs,
@@ -2299,7 +2299,7 @@ export function SupplierPicker({ suppliers, row, onChange, onRemove, onSaveSuppl
       .map((p) => ({ number: tenDigits(p.number), label: (p.label || 'Primary').trim() || 'Primary' }))
       .filter((p) => p.number && !seen.has(p.number) && seen.add(p.number));
     // Task 3: reject invalid numbers before saving.
-    const bad = phones.find((p) => !isValidIndianPhone(p.number));
+    const bad = phones.find((p) => !isIndianMobile(p.number));
     if (bad) {
       toast.error(`“${bad.number}” isn’t a valid Indian mobile (10 digits starting 6–9).`);
       return;
@@ -2453,7 +2453,7 @@ export function SupplierPicker({ suppliers, row, onChange, onRemove, onSaveSuppl
               </div>
             ))}
             <p className="text-[10px] text-white/45">Select the radio to set the preferred number for reorders. Saved with the part.</p>
-            {(row.phoneNumbers || []).some((p) => p.number && !isValidIndianPhone(p.number)) && (
+            {(row.phoneNumbers || []).some((p) => p.number && !isIndianMobile(p.number)) && (
               <p className="text-[10px] text-red-400 font-semibold">✕ Invalid number — must be 10 digits starting 6–9. The part can’t be saved until this is fixed.</p>
             )}
           </div>
@@ -2490,7 +2490,7 @@ export function SupplierPicker({ suppliers, row, onChange, onRemove, onSaveSuppl
                   </div>
                 ))}
               </div>
-              {(draft.phones || []).some((p) => p.number && !isValidIndianPhone(p.number)) && (
+              {(draft.phones || []).some((p) => p.number && !isIndianMobile(p.number)) && (
                 <p className="text-[10px] text-red-400 font-semibold mt-1.5">✕ Invalid number — must be 10 digits starting 6–9. Save is blocked until fixed.</p>
               )}
             </div>
@@ -2918,7 +2918,7 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
     // Add Part / Save if any attached supplier has an invalid Indian mobile.
     const badPhone = (form.suppliers || []).some((s) => {
       const nums = (s.phoneNumbers && s.phoneNumbers.length ? s.phoneNumbers.map((p) => p.number) : [s.phone]).filter(Boolean);
-      return nums.some((n) => !isValidIndianPhone(n));
+      return nums.some((n) => !isIndianMobile(n));
     });
     if (badPhone) {
       toast.error('A supplier has an invalid phone number. Use a 10-digit Indian mobile starting 6–9 before saving.');
@@ -3756,7 +3756,7 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
     }
     // Task 3 (Task 6): validate every entered phone number (Add/Edit + alternates).
     const entered = (form.phoneNumbers || []).filter((p) => digitsOnly(p.number).length > 0);
-    const bad = entered.find((p) => !isValidIndianPhone(p.number));
+    const bad = entered.find((p) => !isIndianMobile(p.number));
     if (bad) {
       toast.error(`“${bad.number}” isn’t a valid Indian number. Use a 10-digit mobile starting 6–9 (e.g. 9876543210).`);
       return;
@@ -3784,7 +3784,7 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
       const detected = GST_STATE_CODES[g.slice(0, 2)];
       if (detected && !form.state) stateFromGst = detected;
     }
-    if (form.email && !/^\S+@\S+\.\S+$/.test(form.email)) { toast.error('Enter a valid email or leave it blank.'); return; }
+    if (form.email && !isValidEmail(form.email)) { toast.error(`${EMAIL_ERROR}, or leave it blank.`); return; }
     clearSupDraft();
     onSave({ ...form, gst: (form.gst || '').trim().toUpperCase(), state: stateFromGst });
   }
@@ -7825,8 +7825,14 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
   // Business GST is optional, but if entered it must be a real GSTIN — same canonical
   // rule as Customers/Suppliers/Billing (lib/gst.js), not a separate check.
   const bizGstErr = biz.bizGst && !isValidGstin(biz.bizGst) ? GSTIN_ERROR : null;
+  // Same canonical contact rules as Customers/Suppliers/Job Cards — only checked
+  // when a value is present (neither field is being newly made mandatory here).
+  const bizPhoneErr = biz.bizPhone && !isIndianMobile(biz.bizPhone) ? MOBILE_ERROR : null;
+  const bizEmailErr = biz.bizEmail && !isValidEmail(biz.bizEmail) ? EMAIL_ERROR : null;
   const saveBiz = () => {
     if (bizGstErr) { toast.error(bizGstErr); return; }
+    if (bizPhoneErr) { toast.error(bizPhoneErr); return; }
+    if (bizEmailErr) { toast.error(bizEmailErr); return; }
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(biz)); window.dispatchEvent(new CustomEvent('maruti-settings')); } catch {}
     setBizSaved(biz); // new baseline → dirty recomputes to false
     toast.success(t('toast.settingsSaved', 'Settings saved'));
@@ -7996,8 +8002,8 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
               <Card title={t('settings.businessIdentity.title', 'Business Identity')} desc={t('settings.businessIdentity.desc', 'Shown on invoices, estimates and reports. GST is optional.')}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <SetTxt biz={biz} bset={bset} label={t('settings.field.workshopName', 'Workshop Name')} k="bizName" placeholder={SHOP_NAME} />
-                  <SetTxt biz={biz} bset={bset} label={t('settings.field.phone', 'Phone')} k="bizPhone" placeholder="10-digit phone" />
-                  <SetTxt biz={biz} bset={bset} label={t('settings.field.email', 'Email')} k="bizEmail" placeholder="info@…" optional />
+                  <SetTxt biz={biz} bset={bset} label={t('settings.field.phone', 'Phone')} k="bizPhone" placeholder="10-digit phone" error={bizPhoneErr} />
+                  <SetTxt biz={biz} bset={bset} label={t('settings.field.email', 'Email')} k="bizEmail" placeholder="info@…" optional error={bizEmailErr} />
                   <SetTxt biz={biz} bset={bset} label={t('settings.field.gstNumber', 'GST Number')} k="bizGst" placeholder="36ABCDE1234F1Z5" optional upper error={bizGstErr} />
                   <div className="sm:col-span-2"><SetTxt biz={biz} bset={bset} label={t('settings.field.address', 'Address')} k="bizAddress" placeholder="Street, city, PIN" /></div>
                 </div>
@@ -8496,12 +8502,17 @@ function Sidebar({ activeTab, setActiveTab, collapsed, setCollapsed, mobileOpen,
   };
   const inner = (
     <div className="flex flex-col h-full" style={{ width }}>
-      <div className="flex items-center gap-2 px-4 py-4 border-b border-white/8">
+      {/* Brand → app home (the Dashboard/Overview tab). Uses the same go() the nav
+          items use, so it follows the app's tab + #hash routing with no page reload;
+          a real <button> keeps Enter/Space activation and focus styling for free. */}
+      <button type="button" onClick={() => go('overview')} aria-label="Go to Dashboard home"
+        aria-current={activeTab === 'overview' ? 'page' : undefined}
+        className="flex items-center gap-2 w-full text-left px-4 py-4 border-b border-white/8 transition-colors hover:bg-white/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37]/50 focus-visible:ring-inset">
         <span className="flex items-center justify-center w-9 h-9 rounded-lg flex-shrink-0 overflow-hidden bg-gradient-to-br from-[#e8c84a] to-[#aa801e]">
           <img src="/icons/icon-512.png" alt="Sri Baba Balaji Maruti Care" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
         </span>
         {!collapsed && <span className="min-w-0"><span className="block text-xs font-bold text-[#d4af37] leading-tight truncate">SRI BABA BALAJI</span><span className="block text-[10px] text-white/45 truncate">MARUTI CARE</span></span>}
-      </div>
+      </button>
       <nav className="flex-1 overflow-y-auto dark-scroll px-2 py-3 space-y-0.5" aria-label="Main navigation">
         {NAV_GROUPS.map((group) => {
           const items = group.items.filter((it) => !it.admin || isAdmin);
@@ -11178,7 +11189,7 @@ export default function InventoryDashboard() {
   async function addStaffEmail(rawEmail) {
     if (demoMode || !isAdmin) { notify.permissionDenied('Not available in demo.'); return false; }
     const email = (rawEmail || '').trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast.error('Enter a valid email address.'); return false; }
+    if (!isValidEmail(email)) { toast.error(EMAIL_ERROR); return false; }
     if (bootstrapAdmins.map((e) => e.toLowerCase()).includes(email) || dbAdmins.includes(email)) { toast.error('That email is already an admin.'); return false; }
     if (staffPerms[email]) { toast.error('That staff member already exists.'); return false; }
     const t = toast.loading('Adding staff…');
@@ -11212,7 +11223,7 @@ export default function InventoryDashboard() {
   async function addAdminEmail(rawEmail) {
     if (demoMode || !isAdmin) { notify.permissionDenied('Not available in demo.'); return false; }
     const email = (rawEmail || '').trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast.error('Enter a valid email address.'); return false; }
+    if (!isValidEmail(email)) { toast.error(EMAIL_ERROR); return false; }
     if (bootstrapAdmins.map((e) => e.toLowerCase()).includes(email) || dbAdmins.includes(email)) { toast.error('That email is already an admin.'); return false; }
     const t = toast.loading('Granting admin…');
     try {
@@ -14196,7 +14207,7 @@ export default function InventoryDashboard() {
 
         {activeTab === 'billing' && (
           <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoice} onDelete={deleteInvoice} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onRestoreStock={(iv) => { const restore = invoicePartQtys(iv); if (Object.keys(restore).length) applyStockDelta(restore); }}
-            onQuickCustomer={(data) => { const id = `c_${Date.now()}`; const c = { id, createdAt: Date.now(), ...withCustomerDefaults(data, customers) }; setCustomers((prev) => [...prev, c]).then(() => pushAudit({ action: 'Customer Created', entity: 'Customer', entityId: c.code || c.id, detail: `${c.code || ''} · ${c.name || ''}` })); return c; }}
+            onQuickCustomer={(data) => { if (data?.phone && !isIndianMobile(data.phone)) { toast.error(MOBILE_ERROR); return null; } if (data?.email && !isValidEmail(data.email)) { toast.error(EMAIL_ERROR); return null; } const id = `c_${Date.now()}`; const c = { id, createdAt: Date.now(), ...withCustomerDefaults({ ...data, phone: data?.phone ? mobileInput(data.phone) : '' }, customers) }; setCustomers((prev) => [...prev, c]).then(() => pushAudit({ action: 'Customer Created', entity: 'Customer', entityId: c.code || c.id, detail: `${c.code || ''} · ${c.name || ''}` })); return c; }}
             onQuickVehicle={(customerId, veh) => { const id = `v_${Date.now()}`; const v = { id, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === customerId ? { ...c, vehicles: [...(c.vehicles || []), v] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: v.regNo || v.id, detail: `${v.regNo || ''} ${v.model || ''}`.trim() })); return v; }}
             initialStatusFilter={pendingBillingStatusFilter}
             onInitialStatusFilterHandled={() => setPendingBillingStatusFilter(null)}

@@ -10,7 +10,7 @@ import { lockBody, unlockBody } from '../Modal';
 import { buildQrPayload, makeQrDataUrl, QR_PT } from '../../lib/pdfQr';
 import { PDF_PAGE, PDF_RULE, SHOP, maskShop, liveShop, drawPdfHeader, drawPdfPageNumber } from '../../lib/pdfTheme';
 import { renderWorkshopInvoicePdf } from '../../lib/workshopInvoicePdf';
-import { tsToDate, localDateStr, displayDate , num } from '../../lib/format';
+import { tsToDate, localDateStr, displayDate , num, isIndianMobile, isValidEmail, MOBILE_ERROR, EMAIL_ERROR } from '../../lib/format';
 import SearchSelect from '../common/SearchSelect';
 import MiniSelect from '../common/MiniSelect';
 import VehicleMakeModelSelect from '../common/VehicleMakeModelSelect';
@@ -876,7 +876,8 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   // Inline "New Customer": create instantly via parent, auto-select, keep editing.
   const saveNewCustomer = () => {
     if (!newCust?.name?.trim()) return toast.error('Customer name required.');
-    if (newCust.phone && !/^\d{10}$/.test(newCust.phone)) return toast.error('Enter a valid 10-digit number.');
+    if (newCust.phone && !isIndianMobile(newCust.phone)) return toast.error(MOBILE_ERROR);
+    if (newCust.email && !isValidEmail(newCust.email)) return toast.error(EMAIL_ERROR);
     if (newCust.gst && !isValidGstin(newCust.gst)) return toast.error(GSTIN_ERROR);
     if (!onQuickCustomer) return toast.error('Cannot create customer here.');
     const c = onQuickCustomer({ name: newCust.name.trim(), phone: newCust.phone || '', email: newCust.email || '', gst: newCust.gst || '' });
@@ -955,6 +956,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
       return toast.error('Customer name required — even for a draft.');
     }
     if (inv.gstNo && !isValidGstin(inv.gstNo)) return toast.error(GSTIN_ERROR);
+    if (inv.phone && !isIndianMobile(inv.phone)) return toast.error(MOBILE_ERROR);
     const billItems = inv.lines.filter((l) => l.desc.trim());
     if (!asDraft && billItems.length === 0) return toast.error('Add at least one bill item.');
     // blank / negative / zero validation per line
@@ -1274,7 +1276,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
                   )}
                 </div>
                 <Field label="Date"><input type="date" value={inv.date} onChange={(e) => set({ date: e.target.value })} className={inputCls} style={{ colorScheme: 'dark' }} /></Field>
-                <Field label="Phone"><input value={inv.phone} onChange={(e) => set({ phone: e.target.value.replace(/\D/g, '').slice(0, 10) })} placeholder="10-digit" className={inputCls} /></Field>
+                <Field label="Phone" error={inv.phone && !isIndianMobile(inv.phone) ? MOBILE_ERROR : null}><input value={inv.phone} onChange={(e) => set({ phone: e.target.value.replace(/\D/g, '').slice(0, 10) })} placeholder="10-digit" className={inputCls} /></Field>
                 <Field label="GST No. (optional)" error={gstNoErr}><input value={inv.gstNo} onChange={(e) => set({ gstNo: e.target.value.toUpperCase() })} placeholder="Customer GSTIN" className={`${inputCls} ${gstNoErr ? 'border-red-500/60 focus:border-red-500/80' : ''}`} /></Field>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-6 gap-3 mt-3">
@@ -1338,10 +1340,10 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
                   <div className="p-5 space-y-3">
                     <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Name<span className="text-red-400"> *</span></label><input autoFocus value={newCust.name} onChange={(e) => setNewCust({ ...newCust, name: e.target.value })} placeholder="Customer name" className={inputCls} /></div>
                     <div className="grid grid-cols-2 gap-2">
-                      <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Phone</label><input value={newCust.phone} onChange={(e) => setNewCust({ ...newCust, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })} placeholder="10-digit" className={inputCls} /></div>
+                      <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Phone</label><input value={newCust.phone} onChange={(e) => setNewCust({ ...newCust, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })} placeholder="10-digit" className={`${inputCls} ${newCust.phone && !isIndianMobile(newCust.phone) ? 'border-red-500/60 focus:border-red-500/80' : ''}`} />{newCust.phone && !isIndianMobile(newCust.phone) && <p className="text-[10px] text-red-400 mt-1">{MOBILE_ERROR}</p>}</div>
                       <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">GST (optional)</label><input value={newCust.gst} onChange={(e) => setNewCust({ ...newCust, gst: e.target.value.toUpperCase() })} placeholder="GSTIN" className={`${inputCls} ${newCust.gst && !isValidGstin(newCust.gst) ? 'border-red-500/60 focus:border-red-500/80' : ''}`} />{newCust.gst && !isValidGstin(newCust.gst) && <p className="text-[10px] text-red-400 mt-1">{GSTIN_ERROR}</p>}</div>
                     </div>
-                    <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Email (optional)</label><input value={newCust.email} onChange={(e) => setNewCust({ ...newCust, email: e.target.value })} placeholder="email@…" className={inputCls} /></div>
+                    <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Email (optional)</label><input value={newCust.email} onChange={(e) => setNewCust({ ...newCust, email: e.target.value })} placeholder="email@…" className={`${inputCls} ${newCust.email && !isValidEmail(newCust.email) ? 'border-red-500/60 focus:border-red-500/80' : ''}`} />{newCust.email && !isValidEmail(newCust.email) && <p className="text-[10px] text-red-400 mt-1">{EMAIL_ERROR}</p>}</div>
                   </div>
                   <div className="flex gap-2 px-5 py-4" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.08)', background: 'var(--surface-2)', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
                     <button onClick={() => setNewCust(null)} className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80">Cancel</button>

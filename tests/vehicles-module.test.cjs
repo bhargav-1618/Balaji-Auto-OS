@@ -168,7 +168,8 @@ console.log(`\n  (phase 2 addendum)\n`);
   ok('Billing module consumes invoice list filter', /maruti_invoice_list_filter[\s\S]{0,120}setQ\(reg\)/.test(bill));
   // Inline Create New Customer — no navigate-away
   ok('wizard has inline quick-create customer', /const submitQuickCust = /.test(veh) && /setQuickCust\(/.test(veh));
-  ok('quickCreateCustomer creates + returns a customer', /const quickCreateCustomer = [\s\S]{0,700}return created;/.test(veh));
+  ok('quickCreateCustomer creates + returns a customer', /const quickCreateCustomer = [\s\S]{0,1000}return created;/.test(veh));
+  ok('quickCreateCustomer rejects an invalid Indian mobile at the boundary', /const quickCreateCustomer = [\s\S]{0,400}!isIndianMobile\(data\.phone\)/.test(veh));
   // Universal Notification Architecture review — quickCreateCustomer used to hand
   // back "created" (and this caller treated it as confirmed) the instant setCustomers
   // was CALLED, not after the write behind it actually resolved. Now awaited, same

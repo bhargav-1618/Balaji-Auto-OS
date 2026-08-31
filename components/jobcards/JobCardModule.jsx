@@ -38,7 +38,7 @@ import { statusColor, SEMANTIC, JOB_CARD_STATUSES, JOB_CARD_DRAFT_STATUS } from 
 import Badge from '../common/Badge';
 import { VEHICLES, FUELS } from '../../lib/vehicleCatalog';
 import notify from '../common/notify';
-import { num } from '../../lib/format';
+import { num, isIndianMobile, MOBILE_ERROR } from '../../lib/format';
 import { nextJobCardNumber } from '../../services/jobCardService';
 
 /* ================= constants ================= */
@@ -794,7 +794,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     if (!card.jobNo.trim()) return 'Job Card Number is required';
     if (card.jobNoMode === 'manual' && savedRef.current.some((c) => c.jobNo === card.jobNo)) return 'Job Card Number already exists';
     if (!card.customer.trim()) return 'Customer name is required';
-    if (!/^\d{10}$/.test(card.phone.replace(/\D/g, ''))) return 'Contact number must be a valid 10-digit number';
+    if (!isIndianMobile(card.phone)) return `Contact number: ${MOBILE_ERROR.toLowerCase()}`;
+    if (card.altPhone && !isIndianMobile(card.altPhone)) return `Alternate number: ${MOBILE_ERROR.toLowerCase()}`;
     if (!card.vehicle) return 'Select the vehicle make & model';
     if (!card.regNo.trim()) return 'Registration number is required';
     const engErr = engOk(card.engineNo);
@@ -1387,8 +1388,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
           <CustomerSearch customers={customers} onFill={(c) => { const v = (c.vehicles || [])[0] || {}; set({ customer: c.name || '', phone: c.phone || '', altPhone: c.altPhone || '', address: c.address || '', vehicle: v.vehicle || [v.make, v.model].filter(Boolean).join(' '), make: v.make || '', model: v.model || '', regNo: v.regNo || '', vin: v.vin || '', engineNo: v.engineNo || '', fuel: v.fuel || card.fuel }); toast.success(`Loaded ${c.name}`); }} />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Customer Name" req error={showErr('customer')} errorId="err-customer"><input value={card.customer} onChange={(e) => set({ customer: e.target.value })} onBlur={() => touch('customer')} aria-invalid={!!showErr('customer')} aria-describedby={showErr('customer') ? 'err-customer' : undefined} placeholder="Full name" className={`${inputCls} ${showErr('customer') ? 'border-red-500/70' : ''}`} /></Field>
-            <Field label="Contact Number" req error={card.phone && !/^\d{10}$/.test(card.phone.replace(/\D/g, '')) ? 'Enter a valid 10-digit number' : null}><input value={card.phone} inputMode="numeric" onChange={(e) => set({ phone: e.target.value.replace(/[^\d ]/g, '').slice(0, 12) })} placeholder="10-digit mobile" className={inputCls} /></Field>
-            <Field label="Alternate Number"><input value={card.altPhone} inputMode="numeric" onChange={(e) => set({ altPhone: e.target.value.replace(/[^\d ]/g, '').slice(0, 12) })} placeholder="Optional" className={inputCls} /></Field>
+            <Field label="Contact Number" req error={card.phone && !isIndianMobile(card.phone) ? MOBILE_ERROR : null}><input value={card.phone} inputMode="numeric" onChange={(e) => set({ phone: e.target.value.replace(/[^\d ]/g, '').slice(0, 13) })} placeholder="10-digit mobile" className={inputCls} /></Field>
+            <Field label="Alternate Number" error={card.altPhone && !isIndianMobile(card.altPhone) ? MOBILE_ERROR : null}><input value={card.altPhone} inputMode="numeric" onChange={(e) => set({ altPhone: e.target.value.replace(/[^\d ]/g, '').slice(0, 13) })} placeholder="Optional" className={inputCls} /></Field>
             <Field label="Full Address"><textarea value={card.address} onChange={(e) => set({ address: e.target.value })} rows={2} placeholder="House, street, area, city" className={`${inputCls} resize-none`} /></Field>
           </div>
         </Section>

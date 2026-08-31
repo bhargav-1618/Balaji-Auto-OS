@@ -37,7 +37,7 @@ import {
   Copy, Archive, MoreVertical, IndianRupee, Clock, Printer, MapPin,
 } from 'lucide-react';
 import { variantsFor, FUELS, TRANSMISSIONS, BODY_TYPES, DRIVE_TYPES, OWNERSHIP_TYPES } from '../../lib/vehicleCatalog';
-import { num } from '../../lib/format';
+import { num, isIndianMobile, mobileInput, MOBILE_ERROR } from '../../lib/format';
 
 const inputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
@@ -292,8 +292,11 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
   const submitQuickCust = async () => {
     const name = (quickCust.name || '').trim();
     if (!name) { toast.error('Customer name is required'); return; }
-    const phone = (quickCust.phone || '').trim();
-    if (phone && customers.some((c) => (c.phone || '').replace(/\D/g, '') === phone.replace(/\D/g, ''))) { toast.error('A customer with this phone already exists'); return; }
+    // Same Indian-mobile rule as the full Customer wizard. Phone is optional here;
+    // only validate (and normalize to a clean 10-digit number) when one is entered.
+    const phone = quickCust.phone ? mobileInput(quickCust.phone) : '';
+    if (phone && !isIndianMobile(phone)) { toast.error(MOBILE_ERROR); return; }
+    if (phone && customers.some((c) => (c.phone || '').replace(/\D/g, '') === phone)) { toast.error('A customer with this phone already exists'); return; }
     const created = await onQuickCustomer?.({ name, phone });
     if (created && created.id) { set({ customerId: created.id }); setQuickCust(null); setCustOpen(false); setCustQ(''); toast.success(`${name} added and selected`); }
   };
@@ -328,6 +331,7 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
     if (dupVin) { setStep(1); return 'This VIN already exists'; }
     if (odoErr) { setStep(1); return odoErr; }
     if (!f.customerId) { setStep(2); return 'Select an owner (or create a customer first)'; }
+    if (f.agentPhone && !isIndianMobile(f.agentPhone)) { setStep(3); return `Insurance agent phone: ${MOBILE_ERROR.toLowerCase()}`; }
     return null;
   };
   const save = async () => {
@@ -523,7 +527,7 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
                 <WField label="IDV (₹)"><input value={f.idv} inputMode="numeric" onChange={(e) => set({ idv: e.target.value.replace(/\D/g, '') })} className={inputCls} /></WField>
                 <WField label="Claim History"><input value={f.claimHistory} onChange={(e) => set({ claimHistory: e.target.value })} placeholder="e.g. 1 claim (2024)" className={inputCls} /></WField>
                 <WField label="Agent Name"><input value={f.agentName} onChange={(e) => set({ agentName: e.target.value })} className={inputCls} /></WField>
-                <WField label="Agent Phone"><input value={f.agentPhone} inputMode="numeric" onChange={(e) => set({ agentPhone: e.target.value.replace(/\D/g, '').slice(0, 10) })} className={inputCls} /></WField>
+                <WField label="Agent Phone" error={f.agentPhone && !isIndianMobile(f.agentPhone) ? MOBILE_ERROR : null}><input value={f.agentPhone} inputMode="numeric" onChange={(e) => set({ agentPhone: mobileInput(e.target.value) })} className={inputCls} /></WField>
                 <WField label="PUC Expiry"><input type="date" value={f.pucExpiry} onChange={(e) => set({ pucExpiry: e.target.value })} className={inputCls} style={{ colorScheme: 'dark' }} /></WField>
                 <WField label="Warranty Expiry"><input type="date" value={f.warrantyExpiry} onChange={(e) => set({ warrantyExpiry: e.target.value })} className={inputCls} style={{ colorScheme: 'dark' }} /></WField>
                 <div className="flex items-center gap-2.5"><Toggle on={!!f.roadside} onChange={(v) => set({ roadside: v })} aria-label="Roadside Assistance" /><span className="text-xs text-white/70">Roadside Assistance</span></div>
@@ -951,11 +955,14 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
   // so the catch here just returns null/no-op rather than duplicating that message.
   const quickCreateCustomer = async (data) => {
     if (!setCustomers) { toast.error('Cannot create in read-only mode'); return null; }
+    // Boundary guard — the UI already validates, but no customer is ever persisted
+    // with a phone that isn't a valid Indian mobile, whatever path called us.
+    if (data.phone && !isIndianMobile(data.phone)) { toast.error(MOBILE_ERROR); return null; }
     const seq = customers.reduce((m, c) => Math.max(m, Number((c.code || '').replace(/\D/g, '')) || 0), 0) + 1;
     const created = {
       id: `c_${Date.now()}_${Math.floor(Math.random() * 1e4)}`,
       code: `SBBMC${String(seq).padStart(2, '0')}`,
-      name: data.name, phone: data.phone || '',
+      name: data.name, phone: data.phone ? mobileInput(data.phone) : '',
       type: 'Individual', vehicles: [], createdAt: Date.now(),
     };
     try { await setCustomers((prev) => [created, ...prev]); } catch (e) { return null; }

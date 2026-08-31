@@ -17,7 +17,7 @@ import DetailsPanel from '../common/DetailsPanel';
 import DetailHero from '../common/DetailHero';
 import { appScrollTo, appScrollY } from '../../lib/appScroll';
 import VehicleMakeModelSelect from '../common/VehicleMakeModelSelect';
-import { num } from '../../lib/format';
+import { num, isIndianMobile, isValidEmail, mobileInput, MOBILE_ERROR, EMAIL_ERROR } from '../../lib/format';
 import { SEMANTIC } from '../../constants/ui';
 import { writeSheet, stamp } from '../../lib/exportSheet';
 import { exportReportPDF } from '../../lib/pdfTheme';
@@ -297,7 +297,8 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
   // savingRef, so the draft survives an abandoned edit for next time, same as Add Part.
   useEffect(() => () => { if (savingRef.current) clearDraft(); }, []);
 
-  const phoneErr = f.phone && !/^\d{10}$/.test(f.phone.replace(/\D/g, '')) ? 'Enter a valid 10-digit number' : null;
+  const phoneErr = f.phone && !isIndianMobile(f.phone) ? MOBILE_ERROR : null;
+  const altPhoneErr = f.altPhone && !isIndianMobile(f.altPhone) ? MOBILE_ERROR : null;
   // BUG-001 fix — field-level errors for the two save-blocking required fields
   // (matches validate()'s own two earliest checks), shown only after a failed save
   // attempt (attemptedSave) so a still-empty field mid-fill isn't flagged as wrong
@@ -305,7 +306,7 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
   const nameRequiredErr = attemptedSave && !f.name.trim() ? 'Customer name is required'
     : attemptedSave && f.name.trim().length < 3 ? 'Customer name must be at least 3 characters' : null;
   const phoneRequiredErr = attemptedSave && !f.phone ? 'Primary mobile is required' : null;
-  const emailErr = f.email && !/^\S+@\S+\.\S+$/.test(f.email) ? 'Enter a valid email' : null;
+  const emailErr = f.email && !isValidEmail(f.email) ? EMAIL_ERROR : null;
   const gstErr = f.gst && !isValidGstin(f.gst) ? GSTIN_ERROR : null;
   const pinErr = f.pincode && !/^\d{6}$/.test(f.pincode) ? 'PIN must be 6 digits' : null;
   // Phone and GST are genuinely unique identifiers in this business (one mobile per
@@ -490,8 +491,9 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
   const vehIsBlank = (v) => !v.regNo && !v.model;
   const validate = () => {
     if (f.name.trim().length < 3) { setStep(0); return 'Customer name must be at least 3 characters'; }
-    if (!f.phone || phoneErr) { setStep(0); return 'A valid 10-digit primary mobile is required'; }
+    if (!f.phone || phoneErr) { setStep(0); return MOBILE_ERROR; }
     if (dupPhone) { setStep(0); return 'A customer with this mobile number already exists'; }
+    if (altPhoneErr) { setStep(0); return `Alternate mobile: ${MOBILE_ERROR.toLowerCase()}`; }
     if (emailErr) { setStep(0); return emailErr; }
     // dupEmail is intentionally NOT a save-blocking condition — see the F warn note on
     // the Email field below. Format (emailErr) still is; a malformed email is a data
@@ -528,8 +530,9 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
   // skipped past.
   const validateBasic = () => {
     if (f.name.trim().length < 3) return 'Customer name must be at least 3 characters';
-    if (!f.phone || phoneErr) return 'A valid 10-digit primary mobile is required';
+    if (!f.phone || phoneErr) return MOBILE_ERROR;
     if (dupPhone) return 'A customer with this mobile number already exists';
+    if (altPhoneErr) return `Alternate mobile: ${MOBILE_ERROR.toLowerCase()}`;
     if (emailErr) return emailErr;
     if (idMode === 'manual') {
       if (!f.code.trim()) return 'Enter a customer ID or use Auto Generate';
@@ -619,7 +622,7 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
 
   const phone91 = (val, onCh, ph, opts = {}) => (
     <div className="flex gap-2"><span className="flex items-center px-3 rounded-xl text-sm text-white/60 bg-white/5 border border-white/10 flex-shrink-0">+91</span>
-      <input ref={opts.inputRef} value={val} inputMode="numeric" onChange={(e) => onCh(e.target.value.replace(/\D/g, '').slice(0, 10))} placeholder={ph} className={`${inputCls} ${opts.hasError ? 'border-red-500/70' : ''}`} /></div>
+      <input ref={opts.inputRef} value={val} inputMode="numeric" onChange={(e) => onCh(mobileInput(e.target.value))} placeholder={ph} className={`${inputCls} ${opts.hasError ? 'border-red-500/70' : ''}`} /></div>
   );
 
   // Defect #49 (reopened again) — the #49 fix below (h-[100dvh]/max-h-[calc(100dvh-2rem)])
@@ -716,7 +719,7 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
                     <MiniSelect value={f.type} placeholder="Select customer type" options={TYPES} onPick={(t) => set({ type: t })} />
                   </F>
                   <F label="Primary Mobile" req error={phoneRequiredErr || phoneErr || (dupPhone ? 'Already exists' : null)}>{phone91(f.phone, (v) => set({ phone: v }), 'Enter 10 digit number', { inputRef: phoneInputRef, hasError: !!(phoneRequiredErr || phoneErr || dupPhone) })}</F>
-                  <F label="Alternate Mobile">{phone91(f.altPhone, (v) => set({ altPhone: v }), 'Enter 10 digit number')}</F>
+                  <F label="Alternate Mobile" error={altPhoneErr}>{phone91(f.altPhone, (v) => set({ altPhone: v }), 'Enter 10 digit number', { hasError: !!altPhoneErr })}</F>
                   <F label="Email" error={emailErr} warn={!emailErr && dupEmail ? 'Already used by another customer — allowed (e.g. shared family/company inbox), just double-check' : null}><input value={f.email} onChange={(e) => set({ email: sanitizeSingleLine(e.target.value).trim() })} placeholder="Enter email address" className={inputCls} /></F>
                   <F label="Occupation"><input value={f.occupation} onChange={(e) => set({ occupation: sanitizeSingleLine(e.target.value) })} placeholder="Enter occupation" className={inputCls} /></F>
                   <F label="Reference By"><input value={f.referenceBy} onChange={(e) => set({ referenceBy: sanitizeSingleLine(e.target.value) })} placeholder="Select or enter reference" className={inputCls} /></F>
