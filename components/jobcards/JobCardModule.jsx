@@ -9,6 +9,7 @@
 // page numbers, demo masking), autosave 5s, Ctrl+S, unsaved-changes warning,
 // drag&drop + camera photo capture.
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import toast from '../../lib/toast';
 import { appScrollTo } from '../../lib/appScroll';
 import { confirmDialog } from '../common/ConfirmDialog';
@@ -2011,10 +2012,21 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             </div>
           </div>
         )}
-        {previewCard && (
+        {previewCard && createPortal((
+          // ROOT CAUSE of "the SBBMC… header + Close (X) sit below the app chrome
+          // instead of at the panel's own top": this drawer used to render inline,
+          // nested inside <main> (InventoryDashboard.js — `relative z-10`, a real
+          // stacking context). Its `fixed inset-0 z-[120]` was therefore compared at
+          // <main>'s z-10 — which loses to the app's demo banner (z-[90]) and mobile
+          // bottom-nav (z-[80]) that live OUTSIDE <main> — so the whole overlay,
+          // header included, painted underneath them. The internal flex layout
+          // (flex-shrink-0 header + flex-1 overflow-y-auto body) was already correct.
+          // Fix = portal to document.body so the overlay escapes <main>'s context and
+          // its z-[120] genuinely wins — the same fix already used for CustomerWizard,
+          // the Add-Vehicle modal and LedgerPage in this codebase.
           <div className="fixed inset-0 z-[120] flex justify-end" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={() => setPreviewCard(null)}>
             <div className="w-full max-w-md h-full flex flex-col" style={{ background: 'var(--surface-1)', borderLeft: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
-              {/* Sticky header — job number, status and Close stay visible while the body scrolls */}
+              {/* Fixed header — job number, status and Close stay pinned while the body scrolls */}
               <div className="flex-shrink-0 flex items-center justify-between gap-3 px-5 py-4" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)', background: 'var(--surface-1)' }}>
                 <div className="min-w-0">
                   <h3 className="text-base font-bold text-white truncate">{previewCard.jobNo}</h3>
@@ -2038,7 +2050,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
               </div>
             </div>
           </div>
-        )}
+        ), document.body)}
       </div>
 
       {/* -------- live preview column -------- */}
