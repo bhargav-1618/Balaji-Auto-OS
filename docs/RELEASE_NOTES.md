@@ -8,7 +8,7 @@ Next.js 14 · React 18 · Firebase Firestore.
     next build            ✓ compiled successfully
     undefined-identifier  0 real (4 known false positives: CSS/self/caches, all guarded)
     TDZ scan              0
-    npm test              109/109 test files passing (Node/jsdom)
+    npm test              119/119 test files passing (Node/jsdom)
     ─────────────────────────────────────
     CI (.github/workflows/ci.yml)  lint · build · test — green
 
