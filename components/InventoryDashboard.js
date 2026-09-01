@@ -7581,7 +7581,12 @@ function AlertsView({ alerts, readIds, archivedIds, onMarkRead, onMarkAllRead, o
           )}
         </>
       )}
-      {drawer && (
+      {drawer && typeof document !== 'undefined' && createPortal((
+        // Portal to <body>: AlertsView renders inside <main> (`relative z-10`, its
+        // own stacking context), so this `fixed inset-0` drawer was capped at
+        // <main>'s z-10 — its header hid under the demo banner (z-[90]) and its
+        // sticky Pin / Acknowledge / Resolve footer under the mobile bottom-nav
+        // (z-[80]). Same fix as the Job Card preview drawer.
         <div className="fixed inset-0 z-[120] flex justify-end" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }} onClick={() => setDrawer(null)}>
           <div className="w-full sm:max-w-md h-full overflow-y-auto dark-scroll" style={{ background: 'var(--surface-1)', borderLeft: '1px solid rgba(212,175,55,0.2)' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between p-5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
@@ -7611,7 +7616,7 @@ function AlertsView({ alerts, readIds, archivedIds, onMarkRead, onMarkAllRead, o
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
     </PageHeader>
   );
 }

@@ -3,6 +3,7 @@
 // (kept in sync automatically) PLUS user-created custom reminders persisted
 // locally. Actions: complete / snooze / WhatsApp / call. Demo users cannot delete.
 import React, { useMemo, useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import toast from '../../lib/toast';
 import notify from '../common/notify';
 import { BellRing, Search, ShieldAlert, FileClock, Wrench, IndianRupee, MessageCircle, PhoneCall, Plus, Check, Clock, X, ShieldCheck, Truck, PhoneOutgoing, Package, CalendarDays } from 'lucide-react';
@@ -291,7 +292,13 @@ export default function RemindersModule({ customers = [], invoices = [], jobCard
 function AddReminderModal({ customers, onAdd, onClose }) {
   const [f, setF] = useState({ title: '', kind: 'Custom', detail: '', customer: '', phone: '', due: '', priority: 1 });
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
-  return (
+  // Portal to <body>: this modal renders inside <main> (`relative z-10`, its own
+  // stacking context), so an inline `fixed inset-0 z-[130]` is still capped at
+  // <main>'s z-10 and loses to the mobile bottom-nav (z-[80]) — on a phone the
+  // sheet's Cancel / Add Reminder buttons ended up hidden behind the nav bar.
+  // Same fix already used for CustomerWizard, LedgerPage and the Job Card drawer.
+  if (typeof document === 'undefined') return null;
+  return createPortal(
     <div className="fixed inset-0 z-[130] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(3px)' }} onClick={onClose}>
       <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
@@ -325,6 +332,7 @@ function AddReminderModal({ customers, onAdd, onClose }) {
           <button onClick={() => { if (!f.title.trim()) { toast.error('Enter a title'); return; } if (f.phone && !isIndianMobile(f.phone)) { toast.error(MOBILE_ERROR); return; } onAdd(f); }} className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]">Add Reminder</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

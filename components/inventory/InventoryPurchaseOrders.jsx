@@ -4,6 +4,7 @@
 // `purchaseOrders` collection and, on "received", increments stock. Test on a
 // staging Firebase before trusting production writes.
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import DropdownPanel, { ModalBoundaryContext } from '../common/DropdownPanel';
 import MiniSelect from '../common/MiniSelect';
 import PageHeader from '../common/PageHeader';
@@ -413,7 +414,12 @@ function POCreateForm({ suppliers, inventory, formatINR, onClose, onSubmit }) {
 
   const fld = 'w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/60 transition';
 
-  return (
+  // Portal to <body>: this form renders inside <main> (`relative z-10`, its own
+  // stacking context), so an inline `fixed inset-0` overlay stays capped at
+  // <main>'s z-10 and the mobile bottom-nav (z-[80], a sibling of <main>) paints
+  // over the sheet's sticky Cancel / Save Draft / Create PO footer.
+  if (typeof document === 'undefined') return null;
+  return createPortal(
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
       <div ref={modalRef} data-modal-panel="" className="w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl" style={{ background: 'var(--surface-3)', border: '1px solid rgba(var(--fg-rgb),0.1)' }} onClick={(e) => e.stopPropagation()}>
       <ModalBoundaryContext.Provider value={modalRef}>
@@ -507,7 +513,8 @@ function POCreateForm({ suppliers, inventory, formatINR, onClose, onSubmit }) {
         </div>
       </ModalBoundaryContext.Provider>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -562,7 +569,10 @@ function ReceivePOForm({ po, inventory, formatINR, onClose, onSubmit }) {
     setSaving(false);
   };
 
-  return (
+  // Portal to <body> — same reason as NewPOForm above: escape <main>'s z-10
+  // stacking context so the sheet's footer clears the mobile bottom-nav.
+  if (typeof document === 'undefined') return null;
+  return createPortal(
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
       <div className="w-full sm:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl" style={{ background: 'var(--surface-3)', border: '1px solid rgba(var(--fg-rgb),0.1)' }} onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 flex items-center justify-between px-5 py-4" style={{ background: 'var(--surface-3)', borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
@@ -618,6 +628,7 @@ function ReceivePOForm({ po, inventory, formatINR, onClose, onSubmit }) {
           ><PackageCheck size={15} /> {saving ? 'Saving…' : 'Confirm Receipt'}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
