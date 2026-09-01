@@ -55,8 +55,8 @@ export function useEditLease(collectionName, docId) {
     const held = heldRef.current;
     heldRef.current = null;
     setMine(false);
-    if (held && canLease) await releaseLease(held.collectionName, held.docId);
-  }, [canLease, stopHeartbeat]);
+    if (held && canLease) await releaseLease(held.collectionName, held.docId, { uid, sessionId });
+  }, [canLease, stopHeartbeat, uid, sessionId]);
 
   const acquire = useCallback(async (targetId) => {
     const c = collectionName;
@@ -91,11 +91,11 @@ export function useEditLease(collectionName, docId) {
   useEffect(() => {
     const onHide = () => {
       const held = heldRef.current;
-      if (held && !held.degraded && canLease) releaseLease(held.collectionName, held.docId);
+      if (held && !held.degraded && canLease) releaseLease(held.collectionName, held.docId, { uid, sessionId });
     };
     window.addEventListener('pagehide', onHide);
     return () => window.removeEventListener('pagehide', onHide);
-  }, [canLease]);
+  }, [canLease, uid, sessionId]);
 
   // Release whatever we hold when this hook unmounts.
   useEffect(() => () => { release(); }, [release]);

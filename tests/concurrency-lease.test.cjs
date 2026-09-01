@@ -72,7 +72,11 @@ ok('acquire succeeds on a free OR expired OR own lease (takeover / re-acquire)',
 ok('expiresAt is capped by writing now + LEASE_MS (rules also reject a >3min expiry)',
   /Timestamp\.fromMillis\(Date\.now\(\) \+ LEASE_MS\)/.test(lib));
 ok('release is best-effort and never throws (expiry is the real backstop)',
-  /export async function releaseLease[\s\S]{0,200}try \{[\s\S]{0,80}await deleteDoc/.test(lib));
+  /export async function releaseLease\(collectionName, docId, owner\) \{[\s\S]{0,120}try \{[\s\S]{0,120}runTransaction/.test(lib));
+ok('release is session-aware — a stale same-user tab cannot delete a lease another tab took over',
+  /const mine = !!owner && d\.ownerUid === owner\.uid && d\.sessionId === owner\.sessionId;[\s\S]{0,120}if \(mine \|\| expired\) tx\.delete\(ref\)/.test(lib));
+ok('heartbeat renew is session-aware — a resumed stale tab cannot clobber a newer lease (lease/lost)',
+  /export async function renewLease[\s\S]{0,400}const mine = d\.ownerUid === uid && d\.sessionId === sessionId;[\s\S]{0,160}throw new LeaseError\('lease\/lost'/.test(lib));
 ok('observeLease is a live onSnapshot (viewers see lock/unlock without a refresh)',
   /export function observeLease[\s\S]{0,120}return onSnapshot\(/.test(lib));
 
@@ -85,6 +89,8 @@ ok('hook runs a heartbeat while a lease is held',
   /hbRef\.current = setInterval\(\(\) => \{[\s\S]{0,120}renewLease\(/.test(hook) && /HEARTBEAT_MS/.test(hook));
 ok('hook releases on unmount and (best-effort) on tab close',
   /useEffect\(\(\) => \(\) => \{ release\(\); \}, \[release\]\);/.test(hook) && /addEventListener\('pagehide'/.test(hook));
+ok('hook passes {uid, sessionId} to releaseLease so the session-ownership check can run',
+  /releaseLease\(held\.collectionName, held\.docId, \{ uid, sessionId \}\)/.test(hook));
 ok('a non-"held" acquire failure (offline / clock skew) still lets the user edit — _rev protects the save',
   /degraded: true/.test(hook));
 ok('hook exposes the three states: available / mine / held',
