@@ -9776,6 +9776,63 @@ export default function InventoryDashboard() {
     syncCustomerTotals(iv.customerId, next);
   };
 
+  // BUG-CONC-01 — concurrent payment collection.
+  // collectPayment() in BillingModule builds `payments: [...iv.payments, pay]` from the
+  // snapshot the modal opened with, then persists the WHOLE invoice. Two cashiers
+  // collecting on the same invoice each start from `payments: []`, so the second write
+  // replaces the array and the first payment is lost silently — the customer paid in
+  // full, the books show a balance.
+  //
+  // Fix: post the payment inside a Firestore transaction that RE-READS the invoice and
+  // appends to the server's current `payments`, so two legitimate concurrent payments
+  // are both preserved and paid/balance/status are recomputed from server truth. The
+  // realized-revenue / stock cascade (runInvoiceTransaction) is diff-based and
+  // idempotent, so it runs AFTER the atomic money write with no double-counting.
+  // Demo mode has one client and no server — it keeps the existing in-memory path.
+  const collectInvoicePayment = async (invoiceId, pay) => {
+    const invRef = doc(db, COLLECTIONS.INVOICES, invoiceId);
+    const fresh = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(invRef);
+      if (!snap.exists()) {
+        const err = new Error('This invoice was deleted by another user. Reload before collecting payment.');
+        err.code = 'conc/deleted';
+        throw err;
+      }
+      const data = snap.data();
+      if (data.isEstimate) {
+        const err = new Error('Convert this estimate to an invoice before collecting payment.');
+        err.code = 'conc/estimate';
+        throw err;
+      }
+      const payments = [...(Array.isArray(data.payments) ? data.payments : []), pay];
+      const merged = { ...data, id: invoiceId, payments };
+      const t = invTotals(merged);
+      const status = invStatus(merged);
+      tx.update(invRef, {
+        payments,
+        paid: t.paid,
+        grandTotal: t.grand,
+        balance: t.balance,
+        gstAmount: t.gst,
+        status,
+        history: [...(Array.isArray(data.history) ? data.history : []),
+          { at: Date.now(), action: `Payment ${pay.amount} (${pay.mode})`, by: user?.email || 'Staff' }],
+        updatedAt: serverTimestamp(),
+      });
+      return { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status };
+    });
+    // Money is committed atomically. Now run the (idempotent, diff-based) realized
+    // stock + sales/services ledger + audit cascade against the fresh invoice —
+    // WITHOUT re-persisting the invoice doc (that would re-open the race).
+    const prior = invoicesRef.current.find((x) => x.id === invoiceId) || null;
+    runInvoiceTransaction(prior, fresh, 'persist');
+    const next = [...invoicesRef.current.filter((x) => x.id !== invoiceId), fresh];
+    invoicesRef.current = next;
+    setInvoicesRaw(next);
+    syncCustomerTotals(fresh.customerId, next);
+    return fresh;
+  };
+
   const deleteInvoice = async (iv) => {
     const prior = invoicesRef.current.find((x) => x.id === iv.id) || iv;
     // Deleting a paid invoice must fully unwind it: stock back, ledgers reversed.
@@ -14211,7 +14268,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'billing' && (
-          <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoice} onDelete={deleteInvoice} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onRestoreStock={(iv) => { const restore = invoicePartQtys(iv); if (Object.keys(restore).length) applyStockDelta(restore); }}
+          <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoice} onDelete={deleteInvoice} onCollectPayment={demoMode ? undefined : collectInvoicePayment} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onRestoreStock={(iv) => { const restore = invoicePartQtys(iv); if (Object.keys(restore).length) applyStockDelta(restore); }}
             onQuickCustomer={(data) => { if (data?.phone && !isIndianMobile(data.phone)) { toast.error(MOBILE_ERROR); return null; } if (data?.email && !isValidEmail(data.email)) { toast.error(EMAIL_ERROR); return null; } const id = `c_${Date.now()}`; const c = { id, createdAt: Date.now(), ...withCustomerDefaults({ ...data, phone: data?.phone ? mobileInput(data.phone) : '' }, customers) }; setCustomers((prev) => [...prev, c]).then(() => pushAudit({ action: 'Customer Created', entity: 'Customer', entityId: c.code || c.id, detail: `${c.code || ''} · ${c.name || ''}` })); return c; }}
             onQuickVehicle={(customerId, veh) => { const id = `v_${Date.now()}`; const v = { id, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === customerId ? { ...c, vehicles: [...(c.vehicles || []), v] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: v.regNo || v.id, detail: `${v.regNo || ''} ${v.model || ''}`.trim() })); return v; }}
             initialStatusFilter={pendingBillingStatusFilter}

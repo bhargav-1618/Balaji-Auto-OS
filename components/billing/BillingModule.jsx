@@ -1841,7 +1841,7 @@ function BarPair({ parts, labour }) {
 const defaultBillView = () => ({ q: '', statusF: 'All', payModeF: 'All', dateF: 'All' });
 const billingViewState = defaultBillView();
 
-export default function BillingModule({ demoMode = false, demoCanDelete = false, demoCanEditPricing = true, demoCanExport = true, canManage = true, isAdmin = false, invoices, customers = [], inventory = [], jobCards = [], onPersist, onDelete, onRestoreStock, onQuickCustomer, onQuickVehicle, initialStatusFilter, onInitialStatusFilterHandled, actorEmail, onCapacityCleanup }) {
+export default function BillingModule({ demoMode = false, demoCanDelete = false, demoCanEditPricing = true, demoCanExport = true, canManage = true, isAdmin = false, invoices, customers = [], inventory = [], jobCards = [], onPersist, onDelete, onCollectPayment, onRestoreStock, onQuickCustomer, onQuickVehicle, initialStatusFilter, onInitialStatusFilterHandled, actorEmail, onCapacityCleanup }) {
   const { t } = useTranslation();
   const SETTINGS_KEY = demoMode ? 'maruti_settings_demo' : 'maruti_settings';
   const V = billingViewState;
@@ -2082,6 +2082,28 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     if (iv.isEstimate) { toast.error('Convert this estimate to an invoice before collecting payment.'); return; }
     if (num(amount) <= 0) { toast.error('Enter the amount received.'); return; }
     const pay = { ...emptyPayment(), mode, amount: num(amount), ref, notes: meta.notes || '', date: meta.paidOn || new Date().toISOString().slice(0, 10) };
+    // BUG-CONC-01 — in production, post the payment through the transactional path so
+    // two cashiers collecting on the same invoice at once cannot lose a payment. The
+    // handler re-reads the invoice server-side and appends to the CURRENT payments
+    // array (see collectInvoicePayment in InventoryDashboard). Demo mode (one client,
+    // no server) and any environment without the handler keep the in-memory flow below.
+    if (onCollectPayment) {
+      try {
+        await onCollectPayment(iv.id, pay);
+      } catch (e) {
+        toast.error(
+          e?.code === 'conc/deleted'
+            ? 'This invoice was changed or deleted by another user. Reload and try again.'
+            : e?.code === 'conc/estimate'
+            ? 'Convert this estimate to an invoice before collecting payment.'
+            : 'Payment not saved — please reload and try again.',
+        );
+        return;
+      }
+      setPayFor(null);
+      toast.success(`Payment of ${inr(amount)} recorded`);
+      return;
+    }
     const next = { ...iv, payments: [...(iv.payments || []), pay] };
     next.paid = next.payments.reduce((s, p) => s + num(p.amount), 0);
     // Refresh the persisted totals on the SAME object we hand to the engine. This was
