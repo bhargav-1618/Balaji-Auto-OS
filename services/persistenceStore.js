@@ -39,6 +39,7 @@
 import { where } from 'firebase/firestore';
 import { STORAGE } from '../constants';
 import * as repo from '../repositories/firestoreRepository';
+import { revState, conflictError } from '../lib/concurrency';
 
 /** Which localStorage/sessionStorage key backs each collection in demo mode. */
 const DEMO_KEY = {
@@ -100,6 +101,30 @@ export function createStore(demoMode) {
         if (idx >= 0) rows[idx] = record; else rows.unshift(record);
         writeAll(key, rows);
         return record.id;
+      },
+
+      /**
+       * GUARDED UPDATE of an existing record — optimistic concurrency (Phase 1a).
+       *
+       * Demo mode has a single in-memory client, so a real conflict is not
+       * reachable here; this exists so the SAME `_rev` bookkeeping and the SAME
+       * error contract (conc/deleted, conc/stale) run in both modes and the two
+       * backends cannot drift. It rejects if the row is gone or its `_rev` moved,
+       * and otherwise merges + increments `_rev` exactly once.
+       */
+      async saveGuarded(collectionName, record, expectedRev, { idField = 'id', label } = {}) {
+        const key = DEMO_KEY[collectionName];
+        if (!key) throw new Error(`[store] no demo backing key for "${collectionName}"`);
+        const rows = readAll(key) || [];
+        const idx = rows.findIndex((r) => r[idField] === record[idField]);
+        const state = revState(idx >= 0 ? rows[idx] : null, expectedRev);
+        const err = conflictError(state, label);
+        if (err) throw err;
+        const { [idField]: _dropId, _rev: _dropRev, ...clean } = record;
+        const merged = { ...rows[idx], ...clean, _rev: state.nextRev };
+        rows[idx] = merged;
+        writeAll(key, rows);
+        return merged;
       },
 
       /**
@@ -215,6 +240,17 @@ export function createStore(demoMode) {
     async save(collectionName, record) {
       const { id, ...data } = record;
       return id ? repo.upsert(collectionName, id, data) : repo.create(collectionName, data);
+    },
+
+    /**
+     * GUARDED UPDATE of an existing record — optimistic concurrency (Phase 1a).
+     * Delegates to the repository's transactional guardedSet: re-read, verify the
+     * document exists, verify `_rev` still matches what the editor captured, then
+     * merge + bump `_rev` atomically. Throws ConcurrencyError('conc/deleted' |
+     * 'conc/stale') — the caller surfaces a safe message and keeps the editor open.
+     */
+    async saveGuarded(collectionName, record, expectedRev, { idField = 'id', label } = {}) {
+      return repo.guardedSet(collectionName, record[idField], record, expectedRev, label);
     },
 
     async saveAll(collectionName, records) {

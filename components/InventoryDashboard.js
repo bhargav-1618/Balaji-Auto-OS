@@ -90,6 +90,7 @@ import { getDemoData } from '../lib/demoData';
 import { LIMITS, TAB_KEYS, COLLECTIONS, STORAGE } from '../constants';
 import { SEMANTIC, SHELL_WIDTH_CLS, statusColor } from '../constants/ui';
 import { createStore } from '../services/persistenceStore';
+import { isConcurrencyError, revOf, CONC_DELETED } from '../lib/concurrency';
 import { clearBusinessCaches } from '../lib/session';
 import { imageForPartName } from '../lib/partImages';
 import {
@@ -2971,6 +2972,9 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
       });
       out.vehicleNotes = pruned;
     }
+    // Phase 1a — carry the `_rev` this part had when the editor opened, so the
+    // guarded save can reject a stale overwrite. Concurrency metadata, not a form field.
+    out._rev = part?._rev;
     onSave(out);
   }
 
@@ -3786,7 +3790,8 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
     }
     if (form.email && !isValidEmail(form.email)) { toast.error(`${EMAIL_ERROR}, or leave it blank.`); return; }
     clearSupDraft();
-    onSave({ ...form, gst: (form.gst || '').trim().toUpperCase(), state: stateFromGst });
+    // Phase 1a — carry the `_rev` this supplier had when the editor opened.
+    onSave({ ...form, gst: (form.gst || '').trim().toUpperCase(), state: stateFromGst, _rev: supplier?._rev });
   }
 
   const fieldLabel = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1.5';
@@ -9221,6 +9226,17 @@ export default function InventoryDashboard() {
   // has had (fabricated demo ledger, re-seed race, audit lost in demo, ISO dates dropped).
   const store = useMemo(() => createStore(demoMode), [demoMode]);
 
+  // Phase 1a — surface a stale/deleted guarded-save rejection safely. The full
+  // "review / keep my changes" conflict UX is Phase 1c; here the editor stays
+  // open (so nothing typed is lost) and the user gets a plain instruction.
+  const concToast = useCallback((err, thing) => {
+    if (err && err.code === CONC_DELETED) {
+      toast.error(`This ${thing} was deleted by another user. Close it and start again.`, { duration: 6000 });
+    } else {
+      toast.error(`This ${thing} was changed by another user while you had it open. Reopen it to see the latest, then re-apply your change.`, { duration: 7000 });
+    }
+  }, []);
+
   // Job cards are keyed by jobNo (their natural id). Persist with per-doc diff.
   const jobCardsRef = useRef([]);
   useEffect(() => { jobCardsRef.current = jobCards; }, [jobCards]);
@@ -9294,6 +9310,19 @@ export default function InventoryDashboard() {
     setCustomersRaw(next);
     return persistDocsDiff(COLLECTIONS.CUSTOMERS, prev, next);   // adapter picks the backend
   }, [persistDocsDiff]);
+  // Phase 1a — the Customer WIZARD save (an edit of an existing customer, which
+  // also carries the nested vehicles[]) goes through the revision-guarded
+  // transaction. Every other setCustomers() mutation (add note, quick vehicle,
+  // bulk archive, billing's totals write-back) is unchanged — those touch narrow
+  // fields off the live listener state and must not start rejecting.
+  const saveCustomerEdit = useCallback(async (record, expectedRev) => {
+    const fresh = await store.saveGuarded(COLLECTIONS.CUSTOMERS, record, expectedRev, { label: 'This customer' });
+    const prev = customersRef.current;
+    const next = prev.map((c) => (c.id === record.id ? { ...c, ...record, _rev: fresh._rev } : c));
+    customersRef.current = next;
+    setCustomersRaw(next);
+    return fresh;
+  }, [store]);
   // Live subscription (prod). Customer docs carry their nested vehicles[] inline.
   useEffect(() => {
     if (demoMode) return;
@@ -9753,6 +9782,28 @@ export default function InventoryDashboard() {
     // Read prior from a ref, NOT from inside the updater, so the effects below run
     // exactly once regardless of how many times React re-invokes the updater.
     const prior = invoicesRef.current.find((x) => x.id === iv.id) || null;
+    // Phase 1a — editing an EXISTING invoice goes through the revision-guarded
+    // transaction FIRST. The realized stock/ledger cascade and the optimistic
+    // state update only run once that write is confirmed, so a rejected stale
+    // save moves no stock and posts no ledger row. (The payment path,
+    // collectInvoicePayment, has its own transaction and is unchanged here.)
+    if (prior && !demoMode) {
+      let fresh;
+      try {
+        fresh = await store.saveGuarded(COLLECTIONS.INVOICES, iv, revOf(iv), { label: 'This invoice' });
+      } catch (err) {
+        if (isConcurrencyError(err)) concToast(err, 'invoice');
+        throw err; // BillingModule's onSave wrapper catches and keeps the editor open
+      }
+      const merged = { ...iv, _rev: fresh._rev };
+      runInvoiceTransaction(prior, merged, 'persist');
+      const prevList = invoicesRef.current;
+      const nextList = [...prevList.filter((x) => x.id !== iv.id), merged];
+      invoicesRef.current = nextList;
+      setInvoicesRaw(nextList);
+      syncCustomerTotals(iv.customerId, nextList);
+      return;
+    }
     runInvoiceTransaction(prior, iv, 'persist');
     // E2E workflow QA fix: `prev` MUST be captured before invoicesRef.current is
     // overwritten. writeInvoices() used to re-read invoicesRef.current internally as
@@ -9808,6 +9859,10 @@ export default function InventoryDashboard() {
       const merged = { ...data, id: invoiceId, payments };
       const t = invTotals(merged);
       const status = invStatus(merged);
+      // Phase 1a — a payment also bumps `_rev`, so an invoice editor that was open
+      // when the payment landed is correctly rejected as stale on save (otherwise
+      // its stale `payments` copy could clobber this one).
+      const nextRev = revOf(data) + 1;
       tx.update(invRef, {
         payments,
         paid: t.paid,
@@ -9815,11 +9870,12 @@ export default function InventoryDashboard() {
         balance: t.balance,
         gstAmount: t.gst,
         status,
+        _rev: nextRev,
         history: [...(Array.isArray(data.history) ? data.history : []),
           { at: Date.now(), action: `Payment ${pay.amount} (${pay.mode})`, by: user?.email || 'Staff' }],
         updatedAt: serverTimestamp(),
       });
-      return { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status };
+      return { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status, _rev: nextRev };
     });
     // Money is committed atomically. Now run the (idempotent, diff-based) realized
     // stock + sales/services ledger + audit cascade against the fresh invoice —
@@ -9926,10 +9982,34 @@ export default function InventoryDashboard() {
   const persistJobCard = async (card) => {
     const prev = jobCardsRef.current;
     const prior = prev.find((c) => c.jobNo === card.jobNo);
-    // H-5A: reserveDelta from inventoryService (pure) replaces the inline diff.
-    applyReserveDelta(reserveDelta(prior, card));
     // preserve creation order for the Firestore orderBy('createdAt') subscription
     const stamped = prior ? card : { ...card, createdAt: card.createdAt || serverTimestamp(), createdAtMs: card.createdAtMs || Date.now() };
+    // Phase 1a — editing an EXISTING job card goes through the revision-guarded
+    // transaction. Nothing local (reserve delta, optimistic state) is applied
+    // until the write is confirmed, so a rejected stale save changes nothing.
+    if (prior && !demoMode) {
+      let fresh;
+      try {
+        fresh = await store.saveGuarded(COLLECTIONS.JOB_CARDS, card, revOf(card), { idField: 'jobNo', label: 'This job card' });
+      } catch (err) {
+        if (isConcurrencyError(err)) concToast(err, 'job card');
+        throw err; // JobCardModule's own catch leaves the editor untouched
+      }
+      applyReserveDelta(reserveDelta(prior, card));
+      const merged = { ...card, _rev: fresh._rev };
+      const next = [...prev.filter((c) => c.jobNo !== card.jobNo), merged];
+      jobCardsRef.current = next;
+      setJobCards(next);
+      const label = `${merged.jobNo} · ${merged.customer || ''}${merged.vehicle ? ` · ${merged.vehicle}` : ''}`;
+      if (prior.status !== merged.status) {
+        pushAudit({ action: 'Job Card Status Changed', entity: 'Job Card', entityId: merged.jobNo, detail: `${label} · ${prior.status || ''} → ${merged.status || ''}` });
+      } else {
+        pushAudit({ action: 'Job Card Updated', entity: 'Job Card', entityId: merged.jobNo, detail: label });
+      }
+      return;
+    }
+    // H-5A: reserveDelta from inventoryService (pure) replaces the inline diff.
+    applyReserveDelta(reserveDelta(prior, card));
     const next = [...prev.filter((c) => c.jobNo !== card.jobNo), stamped];
     jobCardsRef.current = next;
     setJobCards(next);
@@ -10850,6 +10930,7 @@ export default function InventoryDashboard() {
       // NOTE: partsSupplied is intentionally NOT stored — it is computed live.
     };
 
+    let concRejected = false;
     try {
       if (formData.id) {
         // Universal Notification Architecture review — this write used to be
@@ -10860,7 +10941,9 @@ export default function InventoryDashboard() {
         // outcome. The fan-out cascade to linked parts below stays background/
         // best-effort — it's a secondary sync (this supplier's own record is what
         // the toast is about), not something the user should wait on.
-        await updateDoc(doc(db, COLLECTIONS.SUPPLIERS, formData.id), payload);
+        // Phase 1a — revision-guarded: reject a stale overwrite / a resurrection
+        // of a supplier another user deleted.
+        await store.saveGuarded(COLLECTIONS.SUPPLIERS, { ...payload, id: formData.id }, revOf(formData), { label: 'This supplier' });
         writeAudit('update_supplier', { supplierId: formData.id, name: primaryName });
 
         // Issue 2 (cascade): push the new name/phone to every part linked to
@@ -10903,12 +10986,14 @@ export default function InventoryDashboard() {
       }
       toast.success(formData.id ? 'Supplier updated — synced to linked parts' : 'Supplier added');
     } catch (err) {
-      console.error('Supplier save failed:', err);
-      toast.error('Could not save supplier.');
+      if (isConcurrencyError(err)) { concRejected = true; concToast(err, 'supplier'); }
+      else {
+        console.error('Supplier save failed:', err);
+        toast.error('Could not save supplier.');
+      }
     } finally {
       setSupplierSaving(false);
-      setShowSupplierModal(false);
-      setEditSupplier(null);
+      if (!concRejected) { setShowSupplierModal(false); setEditSupplier(null); }
     }
   }
 
@@ -11693,21 +11778,20 @@ export default function InventoryDashboard() {
       updatedAt: serverTimestamp(),
     };
 
+    let concRejected = false;
     try {
       const copiedFrom = duplicateOriginRef.current || null; // Section 2: DB link
-      const writePromise = formData.id
-        ? updateDoc(doc(db, COLLECTIONS.PARTS, formData.id), payload) // stock & salesCount are managed by Sell/Receive, never overwritten here; copiedFrom is preserved (omitted here)
-        : addDoc(collection(db, COLLECTIONS.PARTS), { ...payload, stock: nonNegInt(formData.stock), salesCount: 0, copiedFrom, archived: !!copiedFrom, createdAt: serverTimestamp() });
+      // Phase 1a — editing an existing part goes through the revision-guarded
+      // transaction (re-read, verify it still exists, verify `_rev` hasn't moved
+      // under this editor, merge, bump `_rev`). stock & salesCount are not in
+      // `payload` so Sell/Receive's atomic counters are still never overwritten.
+      let writeResult = null;
+      if (formData.id) {
+        await store.saveGuarded(COLLECTIONS.PARTS, { ...payload, id: formData.id }, revOf(formData), { label: 'This part' });
+      } else {
+        writeResult = await addDoc(collection(db, COLLECTIONS.PARTS), { ...payload, stock: nonNegInt(formData.stock), salesCount: 0, copiedFrom, archived: !!copiedFrom, createdAt: serverTimestamp() });
+      }
       duplicateOriginRef.current = null;
-
-      // Universal Notification Architecture review — this used to fire success the
-      // instant the write was CALLED (writePromise.catch(...) only logged a failure
-      // to the console, it never surfaced to the user, and the outer catch below was
-      // dead code for any real write failure since the rejection never reached it).
-      // Awaiting here means the same catch block that was already written to handle
-      // this now actually can, and success only shows once Firestore has genuinely
-      // accepted the write.
-      const writeResult = await writePromise;
       const partId = formData.id || writeResult?.id;
 
       // ADD-06: record price changes (cost/margin edits are sensitive).
@@ -11726,12 +11810,15 @@ export default function InventoryDashboard() {
       if (copiedFrom) toast.success('Copy saved to Archive — restore it to activate');
       else smartSaveToast(formData.name, { isEdit: !!formData.id, hasSupplier: (formData.suppliers || []).some((r) => (r.name || '').trim()) });
     } catch (err) {
-      console.error('Save failed:', err);
-      toast.error('Could not save part. Please check the details and try again.');
+      if (isConcurrencyError(err)) { concRejected = true; concToast(err, 'part'); }
+      else {
+        console.error('Save failed:', err);
+        toast.error('Could not save part. Please check the details and try again.');
+      }
     } finally {
       setSaving(false);
-      setShowModal(false);
-      setEditPart(null);
+      // Keep the editor open on a concurrency rejection so nothing typed is lost.
+      if (!concRejected) { setShowModal(false); setEditPart(null); }
     }
   }
 
@@ -14245,7 +14332,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'customers' && (
-          <CustomersModule demoMode={demoMode} demoCanDelete={demoCan('deleteCustomers')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} jobCards={jobCards} invoices={invoices} customers={customers} setCustomers={setCustomers} onAudit={pushAudit}
+          <CustomersModule demoMode={demoMode} demoCanDelete={demoCan('deleteCustomers')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} jobCards={jobCards} invoices={invoices} customers={customers} setCustomers={setCustomers} onSaveCustomerEdit={saveCustomerEdit} onAudit={pushAudit}
             onOpenJobCard={(j) => { try { window.open(`/?open=jobcard:${encodeURIComponent(j.jobNo || '')}#jobcards`, '_blank'); } catch { setActiveTab('jobcards'); setSearch(j.jobNo || ''); } }}
             onOpenInvoice={(iv) => { try { window.open(`/?open=invoice:${encodeURIComponent(iv.invNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(iv.invNo || ''); } }}
             onCreateJobCard={(c) => { const tok = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`; writeJobCardDraft(c, tok); try { const w = window.open(`/?open=newjobcard:${tok}#jobcards`, '_blank'); if (!w) { writeJobCardDraft(c); setActiveTab('jobcards'); } toast.success(`Job card for ${c.name} opened in a new tab`); } catch { writeJobCardDraft(c); setActiveTab('jobcards'); } }}

@@ -17,10 +17,11 @@
 import {
   collection, doc, query, orderBy, where, limit, startAfter,
   onSnapshot, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc,
-  writeBatch, serverTimestamp, getCountFromServer,
+  writeBatch, serverTimestamp, getCountFromServer, runTransaction,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { COLLECTIONS, LIMITS } from '../constants/index';
+import { revState, conflictError } from '../lib/concurrency';
 
 /** Normalise a Firestore snapshot into plain objects with their id. */
 const mapSnap = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -147,6 +148,40 @@ export async function update(collectionName, id, patch) {
 
 export async function remove(collectionName, id) {
   await deleteDoc(doc(db, collectionName, id));
+}
+
+/**
+ * OPTIMISTIC-CONCURRENCY GUARDED WRITE (Phase 1a).
+ *
+ * Persist an edit to an EXISTING document only if it has not changed underneath
+ * the editor. Runs inside a Firestore transaction so the existence + revision
+ * check and the write cannot race:
+ *
+ *   1. re-read the current server document
+ *   2. if it no longer exists  -> throw ConcurrencyError('conc/deleted')
+ *      (an unconditional set() here would RESURRECT a deleted record — the exact
+ *       delete-vs-edit bug this closes)
+ *   3. if its `_rev` != the revision the editor captured on open
+ *                              -> throw ConcurrencyError('conc/stale')
+ *   4. otherwise merge the edit and set `_rev` to server._rev + 1
+ *
+ * `data` is written with { merge: true } — same as syncAll — so fields no form
+ * manages (e.g. stock/salesCount on a part, managed by Sell/Receive) are never
+ * clobbered. `_rev` and `updatedAt` are set by this function, not the caller.
+ *
+ * @returns the merged document as it now stands on the server (optimistic view)
+ */
+export async function guardedSet(collectionName, id, data, expectedRev, label) {
+  const ref = doc(db, collectionName, String(id));
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const state = revState(snap.exists() ? snap.data() : null, expectedRev);
+    const err = conflictError(state, label);
+    if (err) throw err;
+    const { id: _dropId, _rev: _dropRev, ...clean } = data || {};
+    tx.set(ref, { ...clean, _rev: state.nextRev, updatedAt: serverTimestamp() }, { merge: true });
+    return { ...snap.data(), ...clean, _rev: state.nextRev };
+  });
 }
 
 /**

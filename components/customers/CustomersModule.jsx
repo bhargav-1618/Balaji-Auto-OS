@@ -1031,7 +1031,7 @@ function VehicleModal({ initial, onSave, onClose }) {
 const defaultView = () => ({ q: '', typeF: 'All', statusF: 'All', page: 1, perPage: 10, selId: null, scrollY: 0, detailTab: 'Vehicles', drawerScrollY: 0 });
 const customersViewState = defaultView();
 
-export default function CustomersModule({ demoMode = false, demoCanDelete = false, demoCanExport = true, canManage = true, jobCards = [], invoices = [], customers, setCustomers, onCreateJobCard, onCreateInvoice, onOpenJobCard, onOpenInvoice, onAudit }) {
+export default function CustomersModule({ demoMode = false, demoCanDelete = false, demoCanExport = true, canManage = true, jobCards = [], invoices = [], customers, setCustomers, onSaveCustomerEdit, onCreateJobCard, onCreateInvoice, onOpenJobCard, onOpenInvoice, onAudit }) {
   const { t } = useTranslation();
   const V = customersViewState; // module-scoped cache; survives unmount on tab switch
   const [q, setQ] = useState(V.q);
@@ -1316,24 +1316,40 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
   // and only complete on confirmed success; the shared persistence layer already shows
   // its own error toast on failure, so no local error toast is added here.
   const saveCustomer = async (c) => {
-    const isNew = !customers.some((x) => x.id === c.id);
+    const existingCust = customers.find((x) => x.id === c.id);
+    const isNew = !existingCust;
     try {
-      await setCustomers((prev) => {
-        const exists = prev.some((x) => x.id === c.id);
-        if (exists) {
-          return prev.map((x) => {
-            if (x.id !== c.id) return x;
-            const hist = [...(x.history || [])];
-            const oldVehIds = new Set((x.vehicles || []).map((v) => v.id));
-            (c.vehicles || []).forEach((v) => { if (!oldVehIds.has(v.id)) hist.push(histEntry('Vehicle Added', `${v.regNo} ${v.model || ''}`.trim())); });
-            hist.push(histEntry('Customer Edited', c.name));
-            return { ...c, history: hist };
-          });
-        }
-        const hist = [histEntry('Customer Created', c.name), ...(c.vehicles || []).map((v) => histEntry('Vehicle Added', `${v.regNo} ${v.model || ''}`.trim()))];
-        return [...prev, { ...c, code: c.code || nextCode(prev), createdAt: Date.now(), history: hist }];
-      });
-    } catch (e) { return; }
+      if (existingCust && onSaveCustomerEdit) {
+        // Phase 1a — editing an existing customer (incl. its nested vehicles[])
+        // goes through the revision-guarded transaction. `_rev` is captured from
+        // the record the wizard opened with (it rides untouched through the form).
+        const hist = [...(existingCust.history || [])];
+        const oldVehIds = new Set((existingCust.vehicles || []).map((v) => v.id));
+        (c.vehicles || []).forEach((v) => { if (!oldVehIds.has(v.id)) hist.push(histEntry('Vehicle Added', `${v.regNo} ${v.model || ''}`.trim())); });
+        hist.push(histEntry('Customer Edited', c.name));
+        await onSaveCustomerEdit({ ...c, history: hist }, Number.isInteger(c._rev) && c._rev >= 0 ? c._rev : 0);
+      } else {
+        await setCustomers((prev) => {
+          const exists = prev.some((x) => x.id === c.id);
+          if (exists) {
+            return prev.map((x) => {
+              if (x.id !== c.id) return x;
+              const hist = [...(x.history || [])];
+              const oldVehIds = new Set((x.vehicles || []).map((v) => v.id));
+              (c.vehicles || []).forEach((v) => { if (!oldVehIds.has(v.id)) hist.push(histEntry('Vehicle Added', `${v.regNo} ${v.model || ''}`.trim())); });
+              hist.push(histEntry('Customer Edited', c.name));
+              return { ...c, history: hist };
+            });
+          }
+          const hist = [histEntry('Customer Created', c.name), ...(c.vehicles || []).map((v) => histEntry('Vehicle Added', `${v.regNo} ${v.model || ''}`.trim()))];
+          return [...prev, { ...c, code: c.code || nextCode(prev), createdAt: Date.now(), history: hist }];
+        });
+      }
+    } catch (e) {
+      // Phase 1a: on a stale/deleted rejection the parent already toasted; keep the
+      // wizard open so nothing typed is lost (the polished conflict UX is Phase 1c).
+      return;
+    }
     setEditCust(null);
     toast.success('Customer saved');
     onAudit?.({ action: isNew ? 'Customer Created' : 'Customer Updated', entity: 'Customer', entityId: c.code || c.id, detail: `${c.code || ''} · ${c.name || ''}${c.phone ? ` · ${c.phone}` : ''}` });
