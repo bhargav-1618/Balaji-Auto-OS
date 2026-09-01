@@ -13,10 +13,16 @@
  * Confirmed live on the deployed ?demo=1 build at 390x844:
  *   - Reminders  "Add Reminder"  — Cancel / Add Reminder hidden behind the nav
  *   - Inventory  "New PO"        — Cancel / Save Draft / Create PO behind the nav
+ *   - Alerts     detail drawer   — header under the banner, footer under the nav
  *
  * Fix (same one already used for CustomerWizard, the Add-Vehicle modal, LedgerPage
  * and the Job Card preview drawer): portal the overlay to document.body so it
  * escapes <main>'s stacking context and its own z-index genuinely applies.
+ *
+ * NOTE: the Billing "View Timeline" sheet uses the same `fixed inset-0` +
+ * `items-end` pattern but is NOT covered here — its only trigger lives in the
+ * `hidden md:block` desktop table, so it can never be opened while the
+ * `md:hidden` bottom-nav exists. No defect, left unchanged.
  */
 const fs = require('fs');
 const path = require('path');
@@ -67,14 +73,11 @@ ok('Alerts: the drawer keeps its right-side overlay + close-on-backdrop-click',
 ok('Alerts: the sticky Pin / Acknowledge / Resolve footer is still present',
   /sticky bottom-0/.test(alertsBlock) && /'Resolve'\)\}<\/button>/.test(alertsBlock) && /'Acknowledge'\)\}<\/button>/.test(alertsBlock));
 
-// ── Billing: invoice Timeline sheet ──────────────────────────────────────────
+// ── Billing: invoice Timeline sheet is deliberately NOT portaled ─────────────
 const bill = read('../components/billing/BillingModule.jsx');
-const tlBlock = slice(bill, '{timelineFor && (', 2600);
-ok('Billing: the invoice Timeline sheet is wrapped in <Portal> (escapes <main>)',
-  /\{timelineFor && \(\s*\n\s*<Portal>\s*\n\s*<div className="fixed inset-0 z-\[130\]/.test(tlBlock) &&
-  /<\/div>\s*\n\s*<\/Portal>\s*\n\s*\)\}/.test(tlBlock));
-ok('Billing: <Portal> helper still portals into document.body',
-  /function Portal\(\{[\s\S]{0,800}document\.body\.appendChild\(el\)[\s\S]{0,1200}return createPortal\(children, el\)/.test(bill));
+ok('Billing: the "View Timeline" trigger is desktop-only (hidden md:block) — no nav to hide it, so no portal needed',
+  /<div className="overflow-x-auto hidden md:block">[\s\S]*?onClick: \(\) => setTimelineFor\(iv\)[\s\S]*?<div className="md:hidden divide-y/.test(bill) &&
+  !/md:hidden divide-y[\s\S]{0,1500}setTimelineFor/.test(bill));
 
 // ── the shared root cause is still real (guard against a future regression) ───
 ok('<main> is still a stacking context (relative z-10) — the reason these need portals',

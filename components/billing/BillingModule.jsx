@@ -2859,7 +2859,6 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
 
       {payFor && <PaymentModal invoice={payFor} onCollect={collectPayment} onClose={() => setPayFor(null)} />}
       {timelineFor && (
-        <Portal>
         <div className="fixed inset-0 z-[130] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(3px)' }} onClick={() => setTimelineFor(null)}>
           <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
@@ -2880,7 +2879,6 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
             </div>
           </div>
         </div>
-        </Portal>
       )}
 
       {/* C-1 fix: onSave used to fire the success toast and close the modal the instant it
