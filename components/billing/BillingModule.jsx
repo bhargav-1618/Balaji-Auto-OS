@@ -17,6 +17,7 @@ import VehicleMakeModelSelect from '../common/VehicleMakeModelSelect';
 import DropdownPanel, { ModalBoundaryContext } from '../common/DropdownPanel';
 import ActionMenu from '../common/ActionMenu';
 import PageHeader from '../common/PageHeader';
+import { useEditLease } from '../../hooks/useEditLease';
 import { useTranslation } from '../../lib/i18n';
 import CapacityBanner from '../common/CapacityBanner';
 import CapacityCleanupModal from '../common/CapacityCleanupModal';
@@ -1860,6 +1861,21 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     onInitialStatusFilterHandled?.();
   }, [initialStatusFilter, onInitialStatusFilterHandled]);
   const [edit, setEdit] = useState(null);
+  // CONCURRENCY PHASE 1b — single active editor for an existing invoice. New /
+  // draft invoices (no persisted id yet) take no lease. Released on a real save
+  // or on close; a stale/deleted Phase 1a rejection keeps the editor + lease.
+  const isPersistedEdit = !!(edit && edit.id && (invoices || []).some((iv) => iv.id === edit.id));
+  const invoiceLease = useEditLease('invoices', isPersistedEdit ? edit.id : null);
+  useEffect(() => {
+    if (!isPersistedEdit) return undefined;
+    let cancelled = false;
+    invoiceLease.acquire(edit.id).then((r) => {
+      if (cancelled) return;
+      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this invoice. You can view it once they finish.`, { duration: 6000 }); setEdit(null); }
+    });
+    return () => { cancelled = true; };
+  }, [isPersistedEdit, edit && edit.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeInvoiceEditor = useCallback(() => { invoiceLease.release(); setEdit(null); }, [invoiceLease]);
   const [capacityBlockedOpen, setCapacityBlockedOpen] = useState(false);
   // Bumped by the cleanup wizard's onComplete so the capacity banner re-checks its
   // count immediately after a cleanup — NOT used to close the modal (see the wizard's
@@ -2909,7 +2925,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           the real outcome and only closes/toasts on confirmed success; on failure the modal
           stays open (so nothing typed is lost) and the shared persistence layer's own toast
           already told the user what happened. */}
-      {edit && <InvoiceModal initial={edit} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { try { await onPersist?.(iv); } catch (e) { return; } setEdit(null); toast.success(`${iv.isEstimate ? 'Estimate' : 'Invoice'} ${iv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(iv), 120); }} onClose={() => setEdit(null)} />}
+      {edit && <InvoiceModal initial={edit} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { try { await onPersist?.(iv); } catch (e) { return; } invoiceLease.release(); setEdit(null); toast.success(`${iv.isEstimate ? 'Estimate' : 'Invoice'} ${iv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(iv), 120); }} onClose={closeInvoiceEditor} />}
     </PageHeader>
   );
 }

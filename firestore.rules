@@ -171,6 +171,41 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // ---- Edit leases (CONCURRENCY PHASE 1b). A transient "one active editor per
+    // record" coordination lock. lockId = "<collection>__<docId>". This is a UX
+    // mechanism ONLY — the authoritative data-integrity layer is the Phase 1a
+    // `_rev` transaction on the record itself, which is unchanged. These rules
+    // exist so the lock cannot be stolen or corrupted from a raw client:
+    //
+    //   CREATE  — any signed-in user, but only for THEMSELVES, with a valid
+    //             expiry no more than 3 minutes out (a client can't claim a
+    //             record forever by writing a far-future expiresAt).
+    //   UPDATE  — the owner renewing their own lease (heartbeat), OR any
+    //             signed-in user taking over a lease that has already EXPIRED
+    //             (by server time) — and the requester must become the owner.
+    //   DELETE  — the owner releasing their own lease, OR anyone clearing an
+    //             already-expired lease. An active lease held by someone else
+    //             can never be deleted.
+    match /editLocks/{lockId} {
+      function ownedByMe() {
+        return signedIn() && resource.data.ownerUid == request.auth.uid;
+      }
+      function expired() {
+        return resource.data.expiresAt is timestamp && resource.data.expiresAt < request.time;
+      }
+      function incomingShapeOk() {
+        return request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.sessionId is string
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt > request.time
+          && request.resource.data.expiresAt < request.time + duration.value(3, 'm');
+      }
+      allow read:   if signedIn();
+      allow create: if signedIn() && incomingShapeOk();
+      allow update: if signedIn() && incomingShapeOk() && (ownedByMe() || expired());
+      allow delete: if signedIn() && (ownedByMe() || expired());
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -24,7 +24,7 @@
  *     the permanent owner admin even with no appSettings/roles doc at all.
  *   - the deny-by-default fallback for any unlisted path.
  */
-const { doc, getDoc, setDoc, updateDoc, deleteDoc } = require('firebase/firestore');
+const { doc, getDoc, setDoc, updateDoc, deleteDoc, Timestamp } = require('firebase/firestore');
 const { assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
 const { makeTestEnv, seedAdmins, seedDoc, OWNER_EMAIL, ADMIN_EMAIL, STAFF_EMAIL } = require('./helpers.cjs');
 
@@ -144,6 +144,64 @@ async function main() {
 
       ok('owner: delete parts allowed with NO appSettings/roles doc present', await allow(deleteDoc(doc(ownerDb, 'parts/p1'))));
       ok('non-owner staff: delete parts still denied with no roles doc', await deny(deleteDoc(doc(staffDb, 'parts/nonexistent'))));
+    }
+
+    // =========================================================================
+    // =========================================================================
+    // editLocks — CONCURRENCY PHASE 1b single-active-editor lease. A UX
+    // coordination lock; it must not be stealable or corruptible from a raw
+    // client (Phase 1a `_rev` stays the data-integrity authority regardless).
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      const future = () => Timestamp.fromMillis(Date.now() + 90 * 1000);   // valid 90s lease
+      const farFuture = () => Timestamp.fromMillis(Date.now() + 30 * 60 * 1000); // 30 min — too long
+      const past = () => Timestamp.fromMillis(Date.now() - 60 * 1000);      // already expired
+
+      const aDb = testEnv.authenticatedContext('uid-A', { email: STAFF_EMAIL }).firestore();
+      const bDb = testEnv.authenticatedContext('uid-B', { email: ADMIN_EMAIL }).firestore();
+      const lock = (db) => doc(db, 'editLocks/customers__c1');
+      const lockData = (uid, exp) => ({ ownerUid: uid, ownerEmail: 'x', sessionId: 's1', acquiredAt: Timestamp.now(), heartbeatAt: Timestamp.now(), expiresAt: exp });
+
+      ok('editLocks: read allowed for any signed-in user',
+        await allow(getDoc(lock(aDb))));
+      ok('editLocks: A creates a lease for itself with a valid expiry — allowed',
+        await allow(setDoc(lock(aDb), lockData('uid-A', future()))));
+
+      await testEnv.clearFirestore();
+      ok('editLocks: create with ownerUid != auth.uid — DENIED',
+        await deny(setDoc(lock(aDb), lockData('uid-SOMEONE-ELSE', future()))));
+      ok('editLocks: create with a past expiry — DENIED (must be an active lease)',
+        await deny(setDoc(lock(aDb), lockData('uid-A', past()))));
+      ok('editLocks: create with a >3-minute expiry — DENIED (cannot claim a record forever)',
+        await deny(setDoc(lock(aDb), lockData('uid-A', farFuture()))));
+
+      // Active lease held by A
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'editLocks/customers__c1', lockData('uid-A', future()));
+      ok('editLocks: A renews its OWN active lease (heartbeat) — allowed',
+        await allow(setDoc(lock(aDb), lockData('uid-A', future()))));
+      ok('editLocks: B updating A\'s ACTIVE lease (theft) — DENIED',
+        await deny(setDoc(lock(bDb), lockData('uid-B', future()))));
+      ok('editLocks: B deleting A\'s ACTIVE lease — DENIED',
+        await deny(deleteDoc(lock(bDb))));
+      ok('editLocks: A releases its own lease (delete) — allowed',
+        await allow(deleteDoc(lock(aDb))));
+
+      // Expired lease left by A
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'editLocks/customers__c1', lockData('uid-A', past()));
+      ok('editLocks: B takes over an EXPIRED lease, becoming the owner — allowed',
+        await allow(setDoc(lock(bDb), lockData('uid-B', future()))));
+      await seedDoc(testEnv, 'editLocks/customers__c1', lockData('uid-A', past()));
+      ok('editLocks: B taking over an expired lease but writing SOMEONE ELSE as owner — DENIED',
+        await deny(setDoc(lock(bDb), lockData('uid-C', future()))));
+      await seedDoc(testEnv, 'editLocks/customers__c1', lockData('uid-A', past()));
+      ok('editLocks: anyone may clear an EXPIRED lease (crash cleanup) — allowed',
+        await allow(deleteDoc(lock(bDb))));
+
+      ok('editLocks: unauthenticated create — DENIED',
+        await deny(setDoc(doc(testEnv.unauthenticatedContext().firestore(), 'editLocks/customers__c1'), lockData('uid-A', future()))));
     }
 
     // =========================================================================

@@ -23,13 +23,15 @@ import { writeSheet, stamp } from '../../lib/exportSheet';
 import { exportReportPDF } from '../../lib/pdfTheme';
 import { resolveSelectedRecords, countHiddenSelections } from '../../lib/selectionScope';
 import { useDeferredSearch, useSearchIndex, searchAndRank, indexBy, phoneKey } from '../../lib/useSearch';
+import { useEditLease } from '../../hooks/useEditLease';
+import EditLeaseBanner from '../common/EditLeaseBanner';
 import { variantsFor, FUELS, TRANSMISSIONS } from '../../lib/vehicleCatalog';
 import { INDIAN_STATES } from '../../lib/indianStates';
 import { INDIAN_DISTRICTS, CITY_MASTER_DATA } from '../../lib/indianDistricts';
 import { isValidGstin, GSTIN_ERROR } from '../../lib/gst';
 import { useTranslation } from '../../lib/i18n';
 import {
-  Users, UserCheck, Car, IndianRupee, Search, Plus, Eye, Edit3, Trash2,
+  Users, UserCheck, Car, IndianRupee, Search, Plus, Eye, Edit3, Trash2, Lock,
   X, Phone, Mail, MapPin, ChevronLeft, ChevronRight, FileDown, History, MoreVertical, AlertCircle, MessageCircle, PhoneCall, Archive, ClipboardList, Receipt, Camera, Upload, Star, ChevronDown, Check, Copy,
 } from 'lucide-react';
 
@@ -1041,6 +1043,17 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
   const [perPage, setPerPage] = useState(V.perPage);
   const [selId, setSelId] = useState(V.selId);
   const [editCust, setEditCust] = useState(null);
+  // CONCURRENCY PHASE 1b — one active editor per customer. Keyed to whichever
+  // customer's editor is open, else the one whose detail panel is selected (so a
+  // viewer's Edit button disables live when someone else starts editing).
+  const lease = useEditLease('customers', editCust && editCust.id ? editCust.id : selId);
+  const openCustomerEditor = useCallback(async (c) => {
+    if (!c || !c.id) { setEditCust(c); return; }          // new customer — no lease
+    const r = await lease.acquire(c.id);
+    if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this customer. You can view it, but editing is unavailable right now.`, { duration: 6000 }); return; }
+    setEditCust(c);
+  }, [lease]);
+  const closeCustomerEditor = useCallback(() => { lease.release(); setEditCust(null); }, [lease]);
   const [editVeh, setEditVeh] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [detailTab, setDetailTab] = useState(V.detailTab || 'Vehicles');
@@ -1350,6 +1363,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
       // wizard open so nothing typed is lost (the polished conflict UX is Phase 1c).
       return;
     }
+    lease.release();               // Phase 1b — hand the edit lease back after a real save
     setEditCust(null);
     toast.success('Customer saved');
     onAudit?.({ action: isNew ? 'Customer Created' : 'Customer Updated', entity: 'Customer', entityId: c.code || c.id, detail: `${c.code || ''} · ${c.name || ''}${c.phone ? ` · ${c.phone}` : ''}` });
@@ -1747,7 +1761,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
                     <td className="py-2.5 px-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-1 items-center">
                         <button onClick={() => setSelId(c.id)} title="View" className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 hover:bg-white/10"><Eye size={12} /></button>
-                        {canManage && <button onClick={() => setEditCust(c)} title="Edit" className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 hover:bg-white/10"><Edit3 size={12} /></button>}
+                        {canManage && <button onClick={() => openCustomerEditor(c)} disabled={c.id === selId && lease.status === 'held'} title={c.id === selId && lease.status === 'held' ? 'Being edited by another user' : 'Edit'} className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed">{c.id === selId && lease.status === 'held' ? <Lock size={12} /> : <Edit3 size={12} />}</button>}
                         <button ref={menuAnchorRef(c.id)} onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === c.id ? null : c.id); }} aria-label="More actions" aria-haspopup="menu" aria-expanded={menuFor === c.id} className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 hover:bg-white/10"><MoreVertical size={12} /></button>
                       </div>
                       {menuFor === c.id && (
@@ -1803,7 +1817,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
                   <span className="text-[10px] text-white/45">{(c.vehicles || []).length} {t('customers.vehicleCount', (c.vehicles || []).length === 1 ? 'vehicle' : 'vehicles')} · {billsOf(c)} {t('customers.bills', 'bills')} · {inr(c.totalSpent)}</span>
                   {num(c.outstanding) > 0 && <span className="text-[10px] text-red-400 font-semibold">{t('customers.due', 'Due')} {inr(c.outstanding)}</span>}
                   <div className="ml-auto flex gap-1.5" onClick={(e) => e.stopPropagation()}>
-                    {canManage && <button onClick={() => setEditCust(c)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><Edit3 size={13} /></button>}
+                    {canManage && <button onClick={() => openCustomerEditor(c)} disabled={c.id === selId && lease.status === 'held'} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-40 disabled:cursor-not-allowed">{c.id === selId && lease.status === 'held' ? <Lock size={13} /> : <Edit3 size={13} />}</button>}
                     {canManage && <button onClick={() => onCreateInvoice?.(c)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><Receipt size={13} /></button>}
                     {c.phone && <button onClick={() => window.open(`https://wa.me/91${c.phone}`, '_blank')} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-emerald-400/70"><MessageCircle size={13} /></button>}
                   </div>
@@ -1866,6 +1880,8 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
               <DetailHero icon={Users} />
               <p className="text-base font-bold text-white flex items-center gap-2 flex-wrap mb-1">{selected.name} <Badge color={selected.status === 'Active' ? '#34d399' : '#9ca3af'}>{t(`status.${String(selected.status || '').toLowerCase()}`, selected.status)}</Badge>{visitsOf(selected) > 1 && <Badge color="#22d3ee">{t('status.repeat', 'Repeat')}</Badge>}</p>
               <p className="text-[11px] text-white/45 mb-3">{selected.code} <Badge color={typeColor(selected.type)}>{t(`customerType.${selected.type}`, selected.type)}</Badge></p>
+              <EditLeaseBanner status={lease.status} heldByEmail={lease.heldByEmail} className="mb-3" />
+              {lease.status === 'mine' && <div role="status" className="flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs mb-3" style={{ background: 'rgba(212,175,55,0.10)', border: '1px solid rgba(212,175,55,0.28)' }}><Edit3 size={13} className="text-[#d4af37]" /><span className="text-[#e8c46a]">You are editing this customer.</span></div>}
               {/* Defect #46 — major-section gaps in this drawer used to alternate 16/12/16/12
                   (mb-4, mb-3, mb-4, mb-3) across contact info -> KPI strip -> secondary
                   grid -> tabs with no reason for the difference; measured live via
@@ -2095,7 +2111,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
         )}
       </DetailsPanel>
 
-      {editCust && <CustomerWizard initial={editCust} existing={customers} canManage={canManage} onSave={saveCustomer} onClose={() => setEditCust(null)} demoMode={demoMode} />}
+      {editCust && <CustomerWizard initial={editCust} existing={customers} canManage={canManage} onSave={saveCustomer} onClose={editCust.id ? closeCustomerEditor : () => setEditCust(null)} demoMode={demoMode} />}
       {editVeh && selected && <VehicleModal initial={editVeh} onSave={saveVehicle} onClose={() => setEditVeh(null)} />}
       </div>
     </>

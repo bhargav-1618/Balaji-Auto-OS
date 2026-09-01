@@ -1,9 +1,22 @@
 // context/AuthContext.js
-import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { auth, db, doc, onSnapshot, onAuthStateChanged } from '../lib/firebase';
 import { clearBusinessCaches } from '../lib/session';
 
 const AuthContext = createContext(null);
+
+// CONCURRENCY PHASE 1b — a stable per-tab client id. A single authenticated user
+// can have several tabs open; the edit lease must distinguish them, so it keys on
+// (ownerUid, sessionId), not uid alone. Generated once per AuthProvider mount
+// (i.e. per tab), never persisted — a reload is a new session, which is correct
+// (a stale lease from a crashed tab simply expires). Not a replacement for the
+// auth uid; it never identifies the user.
+const makeSessionId = () => {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return `s_${crypto.randomUUID()}`;
+  } catch { /* fall through */ }
+  return `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+};
 
 // ---------------------------------------------------------------------------
 // ROLE MODEL (read this before changing anything)
@@ -173,10 +186,14 @@ export function AuthProvider({ children }) {
   // every render of AuthProvider — which forces every single useAuth() consumer to
   // re-render even when nothing about the user actually changed. In a 16-module ERP
   // shell that is a lot of wasted work on every keystroke that touches auth state.
+  const sessionIdRef = useRef();
+  if (!sessionIdRef.current) sessionIdRef.current = makeSessionId();
+
   const value = useMemo(() => ({
     user, role, perms, loading, dbAdmins, staffPerms,
     bootstrapAdmins: BOOTSTRAP_ADMINS, demoMode, demoAdmin, exitDemo,
     authTimedOut, retryAuthInit,
+    sessionId: sessionIdRef.current,
   }), [user, role, perms, loading, dbAdmins, staffPerms, demoMode, demoAdmin, exitDemo, authTimedOut, retryAuthInit]);
 
   return (

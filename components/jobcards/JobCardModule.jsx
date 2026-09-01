@@ -30,6 +30,7 @@ import DateTimeField, { toLocalInput } from '../common/DateTimeField';
 import CapacityBanner from '../common/CapacityBanner';
 import CapacityCleanupModal from '../common/CapacityCleanupModal';
 import { checkCapacityGuard } from '../../lib/useCapacity';
+import { useEditLease } from '../../hooks/useEditLease';
 import { invoiceStatus } from '../../services/billingService';
 import { TERMINAL_INVOICE_STATUSES } from '../../constants/capacity';
 import { lockBody, unlockBody } from '../Modal';
@@ -463,6 +464,10 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
   const previewShop = useMemo(() => liveShop(demoMode), [demoMode]);
   const [invQ, setInvQ] = useState('');
   const [previewCard, setPreviewCard] = useState(null);
+  // CONCURRENCY PHASE 1b — single active editor while a SAVED job card is loaded
+  // into the form. A brand-new card (not yet in savedCards) takes no lease.
+  const [leasedJobNo, setLeasedJobNo] = useState(null);
+  const jcLease = useEditLease('jobCards', leasedJobNo);
   // Job Details drawer: reset its scroll to the top each time it opens (Issue 2) and lock
   // the page behind it so only the drawer scrolls (Issue 4).
   const previewBodyRef = useRef(null);
@@ -587,7 +592,21 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('click', close); document.removeEventListener('keydown', onKey); };
   }, [rowMenu]);
-  const loadCard = async (jc) => { if (dirty.current && !await confirmDialog({ title: 'Load this card?', message: 'The current draft will be replaced.', confirmText: 'Load' })) return; applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jc })); dirty.current = false; setCopyUndo({}); appScrollTo({ top: 0, behavior: 'smooth' }); };
+  const loadCard = async (jc) => {
+    if (dirty.current && !await confirmDialog({ title: 'Load this card?', message: 'The current draft will be replaced.', confirmText: 'Load' })) return;
+    // Phase 1b — acquire the edit lease for a SAVED card before opening it.
+    const isSaved = !!(jc && jc.jobNo && (savedRef.current || []).some((c) => c.jobNo === jc.jobNo));
+    if (isSaved) {
+      const r = await jcLease.acquire(jc.jobNo);
+      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing job card ${jc.jobNo}. You can view it once they finish.`, { duration: 6000 }); return; }
+      setLeasedJobNo(jc.jobNo);
+    } else {
+      jcLease.release();
+      setLeasedJobNo(null);
+    }
+    applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jc }));
+    dirty.current = false; setCopyUndo({}); appScrollTo({ top: 0, behavior: 'smooth' });
+  };
   const duplicateCard = (jc) => { const copy = { ...jc, jobNo: nextJobCardNumber(savedRef.current, readJcDefaults(demoMode).prefix), status: 'Received', statusLog: [{ status: 'Received', at: Date.now() }], savedAt: undefined }; applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...copy })); dirty.current = true; setCopyUndo({}); toast.success('Duplicated — review and save as a new card'); appScrollTo({ top: 0, behavior: 'smooth' }); };
   // JC 1.2: copy a field from the most recent saved job card, snapshotting the current
   // (possibly hand-typed, unsaved) value first so it can be restored exactly.
@@ -860,6 +879,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
       });
       try { localStorage.removeItem(DRAFT_KEY); } catch {}
       dirty.current = false;
+      jcLease.release(); setLeasedJobNo(null);   // Phase 1b — hand the lease back after a real save
       toast.success(asDraft ? `Draft saved — ${card.customer}` : `Job card ${card.jobNo} saved`);
       applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode)));
       setCopyUndo({});
@@ -1287,7 +1307,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                 is the reachable entry point below xl; see the matching exit toggle in the
                 preview column's own header, fixed the same way. */}
             <button onClick={() => setFullPreview(true)} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition xl:hidden flex items-center gap-1.5"><FileDown size={14} /> Preview PDF</button>
-            <button onClick={async () => { if (dirty.current && !await confirmDialog({ title: 'Discard the current draft?', confirmText: 'Discard', danger: true })) return; applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); dirty.current = false; setCopyUndo({}); try { localStorage.removeItem(DRAFT_KEY); } catch {} }} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition">New / Clear</button>
+            <button onClick={async () => { if (dirty.current && !await confirmDialog({ title: 'Discard the current draft?', confirmText: 'Discard', danger: true })) return; jcLease.release(); setLeasedJobNo(null); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); dirty.current = false; setCopyUndo({}); try { localStorage.removeItem(DRAFT_KEY); } catch {} }} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition">New / Clear</button>
             <button onClick={() => saveCard(true)} disabled={saving || !card.customer?.trim()} title="Park this job card — nothing enters the workshop queue yet" className="h-10 px-4 rounded-xl text-xs font-bold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 active:scale-95 transition disabled:opacity-40">Save Draft</button>
             {/* NOTE: must be () => saveCard(false), NOT onClick={saveCard}. React passes the
                 click event as the first argument, which would land in `asDraft` as a truthy

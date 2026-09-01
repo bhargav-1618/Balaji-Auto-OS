@@ -55,7 +55,9 @@ const panel = fs.readFileSync(path.resolve(__dirname, '../components/common/Deta
 console.log('\nCustomers — Details panel width balance + independent scroll\n');
 
 const start = src.indexOf('xl:flex xl:gap-4 xl:items-start');
-const block = src.slice(start, start + 24000);
+// widened from 24000: the Phase 1b edit-lease Lock icon + disabled state on the
+// two row Edit buttons sit between this anchor and the panel's bodyRef.
+const block = src.slice(start, start + 27000);
 
 // --- Width balance (Task: table compression) ---
 ok('table column has a real minimum width (was xl:min-w-0 — no floor at all)',

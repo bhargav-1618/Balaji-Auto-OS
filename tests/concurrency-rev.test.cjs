@@ -165,10 +165,11 @@ seed('customers', [{ id: 'legacy1', name: 'Legacy', phone: '9000000001' }]); // 
   ok('L: SupplierModal carries supplier._rev on save', /_rev: supplier\?\._rev \}/.test(dash));
 
   // ── M. no editLocks / heartbeat / session infra (Phase 1b is separate) ──
-  ok('M: Phase 1a introduced no edit-lock machinery (that is Phase 1b)',
-    !/editLocks|editLease|acquireLease|lockOwner|acquireLock/i.test(dash + store_src + repo_src + read('../lib/concurrency.js') + cust_src));
-  ok('M: firestore.rules unchanged (no lock collection / lease rules)',
-    !/editLocks|Lease|editLock/.test(read('../firestore.rules')));
+  // M: the `_rev` data-integrity layer is INDEPENDENT of the Phase 1b edit lease —
+  // the guarded save (repo.guardedSet / store.saveGuarded / lib/concurrency) never
+  // reads a lease, so a save is protected even with no lease / an expired lease.
+  ok('M: the guarded-save path does not depend on the edit lease',
+    !/editLease|editLocks|acquireLease|renewLease|useEditLease/.test(store_src + repo_src + read('../lib/concurrency.js')));
 
   console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
   process.exit(FAIL ? 1 : 0);

@@ -19,11 +19,16 @@ console.log('\nPART-6.1 — Firestore security-rule guarantees\n');
 ok('appSettings WRITE is admin-only (staff cannot self-promote)',
   /match \/appSettings\/\{docId\}[\s\S]*?allow create, update: if isAdmin\(\)/.test(rules));
 
-// 2. every destructive delete is admin-gated
+// 2. every destructive delete on BUSINESS DATA is admin-gated. The one exception
+// is editLocks (Phase 1b) — a transient coordination lock a user releases for
+// themselves, or anyone clears once it has expired; it holds no business data.
 const deleteLines = rules.split('\n').filter((l) => /allow delete:/.test(l));
-ok('every delete rule is admin-only or explicitly false',
-  deleteLines.length > 0 && deleteLines.every((l) => /isAdmin\(\)/.test(l) || /if false/.test(l)),
-  deleteLines.filter((l) => !/isAdmin\(\)|if false/.test(l)).join(' | '));
+const businessDeletes = deleteLines.filter((l) => !/ownedByMe\(\) \|\| expired\(\)/.test(l));
+ok('every delete rule on business data is admin-only or explicitly false',
+  businessDeletes.length > 0 && businessDeletes.every((l) => /isAdmin\(\)/.test(l) || /if false/.test(l)),
+  businessDeletes.filter((l) => !/isAdmin\(\)|if false/.test(l)).join(' | '));
+ok('editLocks delete is scoped to the owner or an expired lease (never a stranger)',
+  /match \/editLocks\/\{lockId\}[\s\S]*?allow delete: if signedIn\(\) && \(ownedByMe\(\) \|\| expired\(\)\)/.test(rules));
 
 // 3. ledgers are immutable (append-only) — audit log can't be tampered
 for (const led of ['sales', 'restocks', 'stockAdjustments', 'auditLog']) {

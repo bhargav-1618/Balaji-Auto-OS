@@ -91,6 +91,7 @@ import { LIMITS, TAB_KEYS, COLLECTIONS, STORAGE } from '../constants';
 import { SEMANTIC, SHELL_WIDTH_CLS, statusColor } from '../constants/ui';
 import { createStore } from '../services/persistenceStore';
 import { isConcurrencyError, revOf, CONC_DELETED } from '../lib/concurrency';
+import { useEditLease } from '../hooks/useEditLease';
 import { clearBusinessCaches } from '../lib/session';
 import { imageForPartName } from '../lib/partImages';
 import {
@@ -10051,6 +10052,32 @@ export default function InventoryDashboard() {
   const [editSupplier, setEditSupplier] = useState(null);
   const [supplierSaving, setSupplierSaving] = useState(false);
 
+  // CONCURRENCY PHASE 1b — single active editor for parts & suppliers. The lease
+  // is acquired when an editor opens for an EXISTING record and released when it
+  // closes (save or cancel). If another user already holds it, the editor is
+  // closed again immediately with a clear message. New records (no id) never
+  // take a lease. Phase 1a `_rev` remains the authoritative save-time guard.
+  const partLease = useEditLease('parts', showModal && editPart && editPart.id ? editPart.id : null);
+  const supplierLease = useEditLease('suppliers', showSupplierModal && editSupplier && editSupplier.id ? editSupplier.id : null);
+  useEffect(() => {
+    if (!(showModal && editPart && editPart.id)) return;
+    let cancelled = false;
+    partLease.acquire(editPart.id).then((r) => {
+      if (cancelled) return;
+      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this part. You can view it, but editing is unavailable right now.`, { duration: 6000 }); setShowModal(false); setEditPart(null); }
+    });
+    return () => { cancelled = true; };
+  }, [showModal, editPart && editPart.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!(showSupplierModal && editSupplier && editSupplier.id)) return;
+    let cancelled = false;
+    supplierLease.acquire(editSupplier.id).then((r) => {
+      if (cancelled) return;
+      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this supplier. You can view it, but editing is unavailable right now.`, { duration: 6000 }); setShowSupplierModal(false); setEditSupplier(null); }
+    });
+    return () => { cancelled = true; };
+  }, [showSupplierModal, editSupplier && editSupplier.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // 1.3 Unified inventory state filter — Active | Low Stock | Out of Stock | Archived | All.
   // Active means "not archived" (Issue 6.4) — Low/Out are their own dedicated filters
   // for the stock-level distinction; each filter shows only its own set.
@@ -10993,7 +11020,9 @@ export default function InventoryDashboard() {
       }
     } finally {
       setSupplierSaving(false);
-      if (!concRejected) { setShowSupplierModal(false); setEditSupplier(null); }
+      // Phase 1b — release the lease only on a real successful save; a stale/deleted
+      // rejection keeps the editor (and the lease) so the user can recover their work.
+      if (!concRejected) { supplierLease.release(); setShowSupplierModal(false); setEditSupplier(null); }
     }
   }
 
@@ -11818,7 +11847,7 @@ export default function InventoryDashboard() {
     } finally {
       setSaving(false);
       // Keep the editor open on a concurrency rejection so nothing typed is lost.
-      if (!concRejected) { setShowModal(false); setEditPart(null); }
+      if (!concRejected) { partLease.release(); setShowModal(false); setEditPart(null); }
     }
   }
 
@@ -13245,7 +13274,7 @@ export default function InventoryDashboard() {
           onSave={handleSave}
           onSaveSupplier={persistSupplierEdit}
           onCreateSupplier={createSupplierNow}
-          onClose={() => { setShowModal(false); setEditPart(null); duplicateOriginRef.current = null; }}
+          onClose={() => { partLease.release(); setShowModal(false); setEditPart(null); duplicateOriginRef.current = null; }}
         />
       );
     }
@@ -13257,7 +13286,7 @@ export default function InventoryDashboard() {
           supplier={editSupplier}
           saving={supplierSaving}
           onSave={handleSupplierSave}
-          onClose={() => { setShowSupplierModal(false); setEditSupplier(null); }}
+          onClose={() => { supplierLease.release(); setShowSupplierModal(false); setEditSupplier(null); }}
         />
       );
     }
@@ -14564,6 +14593,7 @@ export default function InventoryDashboard() {
           onSaveSupplier={persistSupplierEdit}
           onCreateSupplier={createSupplierNow}
           onClose={() => {
+            partLease.release();
             setShowModal(false);
             setEditPart(null);
             duplicateOriginRef.current = null;
@@ -14578,6 +14608,7 @@ export default function InventoryDashboard() {
           saving={supplierSaving}
           onSave={handleSupplierSave}
           onClose={() => {
+            supplierLease.release();
             setShowSupplierModal(false);
             setEditSupplier(null);
           }}
