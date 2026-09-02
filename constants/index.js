@@ -42,6 +42,7 @@ export const STORAGE = Object.freeze({
   DEMO_PURCHASE_ORDERS: 'maruti_demo_po',
   DEMO_AUDIT: 'maruti_demo_audit',
   DEMO_GARAGE_SEED: 'maruti_garage_seed',
+  DEMO_COUNTERS: 'maruti_demo_counters',
 
   // demo dataset (localStorage — survives a tab close)
   DEMO_CUSTOMERS: 'maruti_customers_demo',

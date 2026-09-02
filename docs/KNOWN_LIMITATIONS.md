@@ -21,16 +21,17 @@ rules published.)*
 
 ## 🟠 Concurrency (single-location safe; fix before multi-terminal)
 
-- **Invoice numbering is not concurrency-safe.** Two devices creating an invoice in the
-  same second can collide. Needs a server-side counter (`runTransaction`). Low risk for a
-  single-counter workshop.
-- **A new invoice saved as a draft keeps its preview `INV-` number instead of a
-  `DRF-` one.** The editor pre-allocates the next `INV-` number for display; "Save Draft"
-  persists it as-is (`status: "Draft"` but `invNo: "INV-XXXX"`), so deleting that draft
-  later leaves a gap in the `INV-` sequence. Same root cause as the item above — a proper
-  fix belongs with the server-side counter, not a client-side patch. Low impact for a
-  single-counter workshop; drafts are normally converted, not deleted.
-- **Concurrent stock decrement** has the same class of race.
+- **Invoice numbering IS concurrency-safe** (CONCURRENCY PHASE 2). The `INV-`/`EST-`
+  serial is allocated at save time by a Firestore transaction on `counters/<sequence>`
+  (`lib/docCounter.js`) — two terminals billing in the same moment get distinct,
+  sequential numbers. A new invoice no longer previews a number; the editor says
+  *"number assigned on save"*. Drafts (`DRF-`) stay client-side (a throwaway handle,
+  never a GST serial, and a unique doc id means a clash loses no data). Residual: if a
+  save fails *after* the number is allocated, that number is skipped (a gap) — legal
+  under GST Rule 46(b), and far preferable to a duplicate. Requires connectivity to
+  create a new invoice (the same as editing one or collecting a payment already does).
+- **Concurrent stock decrement** still has the last-write-wins race — a `runTransaction`
+  on the invoice-driven stock path is the remaining pre-multi-terminal item.
 
 ## 🟡 Performance (fine at current scale)
 

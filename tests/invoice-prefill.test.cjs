@@ -40,8 +40,13 @@ ok('Billing carries the registration into the invoice',
   /regNo: pf\.regNo/.test(billing));
 ok('Billing clears the prefill so it fires once',
   /removeItem\('maruti_invoice_prefill'\)/.test(billing));
-ok('the prefilled invoice gets a real invoice number, not blank',
-  /invNo: nextInvNo\(invoices/.test(billing));
+// CONCURRENCY PHASE 2 — the invoice number is no longer previewed on open; it is
+// allocated by a server transaction at save time (store.allocateNumber →
+// counters/<sequence>). The prefill path therefore opens the editor WITHOUT a
+// number and lets save() tag the allocation intent, same as the New Invoice button.
+ok('the prefilled invoice takes its number at save time, not on open (Phase 2)',
+  !/invNo: nextInvNo\(invoices, px\)/.test(billing)
+  && /store\.allocateNumber\(__allocSeq, __allocSeed\)/.test(dash));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

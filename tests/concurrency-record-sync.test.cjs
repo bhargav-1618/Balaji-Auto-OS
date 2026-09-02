@@ -208,9 +208,10 @@ ok('demo mode is inert — useRecordSync short-circuits on demoMode before any l
 // ── §24 — nothing forbidden changed ───────────────────────────────────────
 ok('Firestore rules unchanged for Phase 1c (record reads were already allow read: if signedIn())',
   !/recordSync|RecordUpdated|ConflictReview/.test(read('../firestore.rules')));
-ok('invoice numbering / stock policy / payment transaction untouched',
-  /const nextInvNo = \(list, prefix = 'INV'\) => \{/.test(bill)
-  && /DO NOT CLAMP TO ZERO/.test(dash)
+// (Invoice numbering itself is now owned by CONCURRENCY PHASE 2 — see
+// tests/concurrency-doc-counter.test.cjs. Phase 1c did not touch it.)
+ok('stock policy / payment transaction untouched by Phase 1c',
+  /DO NOT CLAMP TO ZERO/.test(dash)
   && /const collectInvoicePayment = async \(invoiceId, pay\) => \{/.test(dash));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);

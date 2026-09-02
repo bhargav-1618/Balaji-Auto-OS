@@ -91,6 +91,7 @@ import { LIMITS, TAB_KEYS, COLLECTIONS, STORAGE } from '../constants';
 import { SEMANTIC, SHELL_WIDTH_CLS, statusColor } from '../constants/ui';
 import { createStore } from '../services/persistenceStore';
 import { isConcurrencyError, revOf, CONC_DELETED } from '../lib/concurrency';
+import { formatDocNo } from '../lib/docCounter';
 import { useEditLease } from '../hooks/useEditLease';
 import { useRecordSync } from '../hooks/useRecordSync';
 import { useLeaseReleaseToast } from '../hooks/useLeaseReleaseToast';
@@ -9847,9 +9848,33 @@ export default function InventoryDashboard() {
   // (syncCustomerTotals) are now gated on the real write.
   const persistInvoice = async (iv) => {
     txn(3, 'persistInvoice called', { invNo: iv.invNo, status: iv.status, lines: (iv.lines || []).length, payments: (iv.payments || []).length, demoMode });
+
+    // CONCURRENCY PHASE 2 — allocate the authoritative INV-/EST- number BEFORE the
+    // write. The editor tags a fresh invoice with { __allocSeq, __allocPrefix,
+    // __allocSeed } instead of a client-computed number; store.allocateNumber runs a
+    // Firestore transaction on counters/<sequence> (retry-safe, never-decreasing)
+    // and hands out exactly one value, so two terminals billing at once can never
+    // get the same number. If the write below then fails the number is SKIPPED
+    // (a legal gap under GST Rule 46(b)), never reused for another document.
+    let target = iv;
+    if (iv.__allocSeq) {
+      const { __allocSeq, __allocPrefix, __allocSeed, ...rest } = iv;
+      let n;
+      try {
+        n = await store.allocateNumber(__allocSeq, __allocSeed);
+      } catch (err) {
+        // The counter transaction needs connectivity (as does every other invoice
+        // write — the guarded edit and the payment transaction). Tell the user;
+        // BillingModule's onSave wrapper keeps the editor open with nothing lost.
+        toast.error('Could not reserve an invoice number — check your connection and try again.');
+        throw err;
+      }
+      target = { ...rest, invNo: formatDocNo(__allocPrefix, n) };
+    }
+
     // Read prior from a ref, NOT from inside the updater, so the effects below run
     // exactly once regardless of how many times React re-invokes the updater.
-    const prior = invoicesRef.current.find((x) => x.id === iv.id) || null;
+    const prior = invoicesRef.current.find((x) => x.id === target.id) || null;
     // Phase 1a — editing an EXISTING invoice goes through the revision-guarded
     // transaction FIRST. The realized stock/ledger cascade and the optimistic
     // state update only run once that write is confirmed, so a rejected stale
@@ -9858,21 +9883,21 @@ export default function InventoryDashboard() {
     if (prior && !demoMode) {
       let fresh;
       try {
-        fresh = await store.saveGuarded(COLLECTIONS.INVOICES, iv, revOf(iv), { label: 'This invoice' });
+        fresh = await store.saveGuarded(COLLECTIONS.INVOICES, target, revOf(target), { label: 'This invoice' });
       } catch (err) {
         if (isConcurrencyError(err)) concToast(err, 'invoice');
         throw err; // BillingModule's onSave wrapper catches and keeps the editor open
       }
-      const merged = { ...iv, _rev: fresh._rev };
+      const merged = { ...target, _rev: fresh._rev };
       runInvoiceTransaction(prior, merged, 'persist');
       const prevList = invoicesRef.current;
-      const nextList = [...prevList.filter((x) => x.id !== iv.id), merged];
+      const nextList = [...prevList.filter((x) => x.id !== target.id), merged];
       invoicesRef.current = nextList;
       setInvoicesRaw(nextList);
-      syncCustomerTotals(iv.customerId, nextList);
-      return;
+      syncCustomerTotals(target.customerId, nextList);
+      return merged;
     }
-    runInvoiceTransaction(prior, iv, 'persist');
+    runInvoiceTransaction(prior, target, 'persist');
     // E2E workflow QA fix: `prev` MUST be captured before invoicesRef.current is
     // overwritten. writeInvoices() used to re-read invoicesRef.current internally as
     // its "prev" arg — but by then the ref already held `next` (set two lines below,
@@ -9888,11 +9913,12 @@ export default function InventoryDashboard() {
     // BEFORE mutating the ref, and pass it explicitly to the diff instead of letting
     // the write path re-read a ref that's already moved on.
     const prev = invoicesRef.current;
-    const next = [...prev.filter((x) => x.id !== iv.id), iv];
+    const next = [...prev.filter((x) => x.id !== target.id), target];
     invoicesRef.current = next;          // keep the ref authoritative immediately
     setInvoicesRaw(next);                // pure commit
     await persistDocsDiff(COLLECTIONS.INVOICES, prev, next);
-    syncCustomerTotals(iv.customerId, next);
+    syncCustomerTotals(target.customerId, next);
+    return target;
   };
 
   // BUG-CONC-01 — concurrent payment collection.

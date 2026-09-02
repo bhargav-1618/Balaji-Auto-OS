@@ -24,7 +24,7 @@
  *     the permanent owner admin even with no appSettings/roles doc at all.
  *   - the deny-by-default fallback for any unlisted path.
  */
-const { doc, getDoc, setDoc, updateDoc, deleteDoc, Timestamp } = require('firebase/firestore');
+const { doc, getDoc, setDoc, updateDoc, deleteDoc, runTransaction, Timestamp } = require('firebase/firestore');
 const { assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
 const { makeTestEnv, seedAdmins, seedDoc, OWNER_EMAIL, ADMIN_EMAIL, STAFF_EMAIL } = require('./helpers.cjs');
 
@@ -202,6 +202,81 @@ async function main() {
 
       ok('editLocks: unauthenticated create — DENIED',
         await deny(setDoc(doc(testEnv.unauthenticatedContext().firestore(), 'editLocks/customers__c1'), lockData('uid-A', future()))));
+    }
+
+    // =========================================================================
+    // counters/<sequence> — CONCURRENCY PHASE 2 document-number allocator.
+    // { next: <int> } advanced by a client transaction (lib/docCounter.js). The
+    // rules must let any signed-in user READ + ADVANCE it, but never DECREMENT,
+    // DELETE, or add fields — that monotonic guarantee is what stops duplicate
+    // invoice serials.
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      const aDb = testEnv.authenticatedContext('uid-A', { email: STAFF_EMAIL }).firestore();
+      const anon = testEnv.unauthenticatedContext().firestore();
+      const ctr = (db) => doc(db, 'counters/invoices');
+
+      // ---- rule shape ----
+      ok('counters: anon read DENIED', await deny(getDoc(ctr(anon))));
+      ok('counters: signed-in read allowed', await allow(getDoc(ctr(aDb))));
+      ok('counters: first allocation — create { next: 8 } allowed', await allow(setDoc(ctr(aDb), { next: 8 })));
+      await testEnv.clearFirestore();
+      ok('counters: create { next: 0 } DENIED (must be a positive serial)', await deny(setDoc(ctr(aDb), { next: 0 })));
+      ok('counters: create with an extra field DENIED', await deny(setDoc(ctr(aDb), { next: 8, owner: 'x' })));
+      ok('counters: anon create DENIED', await deny(setDoc(ctr(anon), { next: 8 })));
+
+      await seedDoc(testEnv, 'counters/invoices', { next: 8 });
+      ok('counters: advance next 8 -> 9 allowed', await allow(setDoc(ctr(aDb), { next: 9 }, { merge: true })));
+      await seedDoc(testEnv, 'counters/invoices', { next: 8 });
+      ok('counters: rewrite next 8 -> 8 allowed (no-op — keeps transaction retries from failing as permission-denied)',
+        await allow(setDoc(ctr(aDb), { next: 8 }, { merge: true })));
+      ok('counters: DECREMENT next 8 -> 3 DENIED (would cause duplicate serials)', await deny(setDoc(ctr(aDb), { next: 3 }, { merge: true })));
+      ok('counters: update adding a field DENIED', await deny(setDoc(ctr(aDb), { next: 20, note: 'x' }, { merge: true })));
+      ok('counters: update next to a non-int DENIED', await deny(setDoc(ctr(aDb), { next: 9.5 }, { merge: true })));
+      ok('counters: DELETE DENIED (losing the counter restarts the sequence)', await deny(deleteDoc(ctr(aDb))));
+
+      // ---- §9/§10/§11 — concurrent allocation from independent clients ----
+      // The exact allocation transaction from lib/docCounter.js, replicated here
+      // (the rules-test SDK can't import the app's lib/firebase). Clients fire it
+      // at once against a shared counter; the emulator serialises the contending
+      // transactions with retries.
+      const allocate = (db, seedFrom) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'counters/invoices');
+        const snap = await tx.get(ref);
+        const current = snap.exists() && Number.isInteger(snap.data().next) ? snap.data().next : 0;
+        const n = Math.max(current, Math.max(1, Math.floor(seedFrom) || 1));
+        tx.set(ref, { next: n + 1 });
+        return n;
+      });
+      const bDb = testEnv.authenticatedContext('uid-B', { email: ADMIN_EMAIL }).firestore();
+      const cDb = testEnv.authenticatedContext('uid-C', { email: OWNER_EMAIL }).firestore();
+
+      // sequential sanity — counter starts empty, seed 8
+      await testEnv.clearFirestore();
+      const s1 = await allocate(aDb, 8);
+      const s2 = await allocate(bDb, 8);
+      const s3 = await allocate(cDb, 8);
+      ok('counters: sequential allocation is 8, 9, 10 (no dup, no gap, counter self-seeds)',
+        JSON.stringify([s1, s2, s3]) === JSON.stringify([8, 9, 10]), `${s1},${s2},${s3}`);
+      ok('counters: after 3 allocations from 8, next = 11', (await getDoc(ctr(aDb))).data().next === 11);
+
+      // 3 clients concurrently
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'counters/invoices', { next: 8 });
+      const got = await Promise.all([allocate(aDb, 5), allocate(bDb, 5), allocate(cDb, 5)]);
+      ok('counters: 3 concurrent clients get 3 DISTINCT numbers', new Set(got).size === 3, `got ${JSON.stringify(got)}`);
+      ok('counters: the 3 numbers are exactly 8, 9, 10 (sequential, no gap)',
+        JSON.stringify([...got].sort((x, y) => x - y)) === JSON.stringify([8, 9, 10]));
+      ok('counters: the counter advanced to start + 3 (next = 11)',
+        (await getDoc(ctr(aDb))).data().next === 11);
+
+      // a second concurrent burst continues from 11 with no reuse of the first
+      const got2 = await Promise.all([allocate(aDb, 1), allocate(bDb, 1)]);
+      ok('counters: a second burst continues cleanly (11, 12) with no reuse',
+        JSON.stringify([...got2].sort((x, y) => x - y)) === JSON.stringify([11, 12])
+        && got2.every((n) => !got.includes(n)));
+      ok('counters: after 5 total allocations from 8, next = 13', (await getDoc(ctr(aDb))).data().next === 13);
     }
 
     // =========================================================================

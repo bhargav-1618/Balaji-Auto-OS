@@ -206,6 +206,42 @@ service cloud.firestore {
       allow delete: if signedIn() && (ownedByMe() || expired());
     }
 
+    // ---- Document-number counters (CONCURRENCY PHASE 2). One doc per sequence
+    // (counters/invoices, counters/estimates): { next: <int> }. Allocation is a
+    // client transaction (lib/docCounter.js) that reads `next`, hands it out and
+    // writes `next + 1` in the same transaction — so two terminals billing at the
+    // same moment can never receive the same invoice number.
+    //
+    //   READ    — any signed-in user (the allocator must read the current value).
+    //   CREATE  — any signed-in user, first allocation only, `next` a positive int.
+    //   UPDATE  — any signed-in user, but `next` may NEVER DECREASE. That is the
+    //             safety property: a stale or malicious client cannot reset the
+    //             counter low and cause duplicate serials. No other field may be
+    //             written (hasOnly(['next'])).
+    //             `>=` (not `>`): under transaction contention the Firestore
+    //             emulator/back end rule-checks a losing attempt's commit BEFORE
+    //             its version-conflict retry; a strict `>` would turn that
+    //             abort-and-retry into a terminal permission-denied. `>=` lets the
+    //             doomed no-op write pass rules so the transaction aborts+retries
+    //             normally, and monotonicity is still guaranteed (a retry always
+    //             re-reads the higher value and writes higher again).
+    //   DELETE  — never. Losing the counter would restart the sequence at 1.
+    //
+    // Single-shop trust model: any signed-in user may advance the counter, exactly
+    // as any signed-in user may already create invoices.
+    match /counters/{sequence} {
+      allow read:   if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['next'])
+        && request.resource.data.next is int
+        && request.resource.data.next >= 1;
+      allow update: if signedIn()
+        && request.resource.data.keys().hasOnly(['next'])
+        && request.resource.data.next is int
+        && request.resource.data.next >= resource.data.next;
+      allow delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

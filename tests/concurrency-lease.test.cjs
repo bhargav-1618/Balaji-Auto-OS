@@ -170,10 +170,14 @@ ok('the deny-by-default catch-all is still last', /match \/\{document=\*\*\} \{\
 ok('Phase 1a payment fix + guarded saves still present',
   /const collectInvoicePayment = async \(invoiceId, pay\) => \{/.test(dash)
   && /store\.saveGuarded\(COLLECTIONS\.PARTS/.test(dash));
-ok('invoice numbering unchanged (still client nextInvNo — CONC-06 is a later phase)',
-  /const nextInvNo = \(list, prefix = 'INV'\) => \{/.test(bill)
-  && !/runTransaction\([\s\S]{0,200}counters/.test(bill + dash)
-  && !/doc\(db, 'counters'/.test(bill + dash));
+// CONCURRENCY PHASE 2 (the "later phase") landed: invoice numbers are now allocated
+// by a Firestore transaction on counters/<sequence> (lib/docCounter.js) at save time.
+// That allocator is INDEPENDENT of the Phase 1b edit lease — neither imports the other.
+ok('invoice numbering is server-allocated (Phase 2) and independent of the edit lease',
+  /export async function allocateNumber\(sequence, seedFrom/.test(read('../lib/docCounter.js'))
+  && /runTransaction\(db, async \(tx\) => \{/.test(read('../lib/docCounter.js'))
+  && /store\.allocateNumber\(__allocSeq, __allocSeed\)/.test(dash)
+  && !/editLease|editLocks|acquireLease|useEditLease/.test(read('../lib/docCounter.js')));
 ok('stock oversell policy unchanged (DO NOT CLAMP TO ZERO comment still there)',
   /DO NOT CLAMP TO ZERO/.test(dash));
 

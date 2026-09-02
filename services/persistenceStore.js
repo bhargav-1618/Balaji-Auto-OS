@@ -39,6 +39,7 @@
 import { where } from 'firebase/firestore';
 import { STORAGE } from '../constants';
 import * as repo from '../repositories/firestoreRepository';
+import { allocateNumber as allocateCounterNumber, allocationStep } from '../lib/docCounter';
 import { revState, conflictError } from '../lib/concurrency';
 
 /** Which localStorage/sessionStorage key backs each collection in demo mode. */
@@ -125,6 +126,23 @@ export function createStore(demoMode) {
         rows[idx] = merged;
         writeAll(key, rows);
         return merged;
+      },
+
+      /**
+       * ALLOCATE the next number in a named sequence (CONCURRENCY PHASE 2).
+       *
+       * Demo has one in-memory client, so there is no race to protect against —
+       * but the SAME allocation decision (lib/docCounter.allocationStep) runs, and
+       * a per-sequence counter blob is persisted so numbers stay stable across a
+       * reload without a server. `seedFrom` (highest known + 1) initialises a
+       * missing counter and pulls a lagging one forward, exactly as production.
+       */
+      async allocateNumber(sequence, seedFrom = 1) {
+        const all = readAll(STORAGE.DEMO_COUNTERS) || {};
+        const { allocated, nextNext } = allocationStep(all[sequence], seedFrom);
+        all[sequence] = nextNext;
+        writeAll(STORAGE.DEMO_COUNTERS, all);
+        return allocated;
       },
 
       /**
@@ -251,6 +269,17 @@ export function createStore(demoMode) {
      */
     async saveGuarded(collectionName, record, expectedRev, { idField = 'id', label } = {}) {
       return repo.guardedSet(collectionName, record[idField], record, expectedRev, label);
+    },
+
+    /**
+     * ALLOCATE the next number in a named sequence (CONCURRENCY PHASE 2).
+     * Delegates to lib/docCounter's Firestore transaction on `counters/<sequence>`
+     * — the authoritative, retry-safe, collision-proof allocator. `seedFrom` is
+     * the highest number the caller already knows about + 1 (from its loaded
+     * list); it initialises a missing counter and self-heals a lagging one.
+     */
+    async allocateNumber(sequence, seedFrom) {
+      return allocateCounterNumber(sequence, seedFrom);
     },
 
     async saveAll(collectionName, records) {

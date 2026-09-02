@@ -119,7 +119,12 @@ console.log('\nREGRESSION — the paths the fixes could have broken\n');
     `onSave called ${saved.length} times`);
   if (saved.length) {
     ok('R1 invoice is marked Paid', saved[0].iv.status === 'Paid', `status = ${saved[0].iv.status}`);
-    ok('R1 invoice gets an INV- number', /^INV-/.test(saved[0].iv.invNo || ''), `invNo = ${saved[0].iv.invNo}`);
+    // CONCURRENCY PHASE 2 — a new invoice no longer carries a client-computed number.
+    // save() emits the allocation intent; the server counter assigns the real INV-
+    // serial in persistInvoice (store.allocateNumber), which this modal test stubs out.
+    ok('R1 invoice save requests an INV- serial from the server counter (not a client number)',
+      saved[0].iv.invNo === '' && saved[0].iv.__allocSeq === 'invoices' && saved[0].iv.__allocPrefix === 'INV',
+      `invNo=${JSON.stringify(saved[0].iv.invNo)} __allocSeq=${saved[0].iv.__allocSeq}`);
     ok('R1 persisted paid mirrors the payment rows', Math.abs(saved[0].iv.paid - grand) < 0.5,
       `paid = ${saved[0].iv.paid}, grand = ${grand}`);
     ok('R1 balance is zero', Math.abs(saved[0].iv.balance) < 0.5, `balance = ${saved[0].iv.balance}`);
@@ -159,7 +164,10 @@ console.log('\nREGRESSION — the paths the fixes could have broken\n');
   ok('R3 estimate saves', saved.length === 1, `onSave called ${saved.length} times`);
   if (saved.length) {
     ok('R3 estimate carries no payments', (saved[0].payments || []).length === 0);
-    ok('R3 estimate gets an EST- number', /^EST-/.test(saved[0].invNo || ''), `invNo = ${saved[0].invNo}`);
+    // Phase 2 — the EST- serial is assigned by the server counter at persist time.
+    ok('R3 estimate save requests an EST- serial from the server counter',
+      saved[0].invNo === '' && saved[0].__allocSeq === 'estimates' && saved[0].__allocPrefix === 'EST',
+      `invNo=${JSON.stringify(saved[0].invNo)} __allocSeq=${saved[0].__allocSeq}`);
   }
 }
 

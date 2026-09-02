@@ -12,12 +12,14 @@ current release.
 
 ## Concurrency — before multi-terminal use
 
-- **Server-side invoice counter.** `nextInvNo()` derives the next number from a
-  client-side `max()` with no reservation, so two devices billing in the same second
-  can collide. Move allocation into a Firestore `runTransaction` on a
-  `counters/invoices` document; fall back to the local sequence only when offline and
-  flag those invoices for re-numbering on reconnect. (GST Rule 46(b) requires unique,
-  consecutive serials.)
+- ~~**Server-side invoice counter.**~~ **DONE (CONCURRENCY PHASE 2).** `INV-`/`EST-`
+  allocation now runs inside a Firestore `runTransaction` on `counters/<sequence>`
+  (`lib/docCounter.js` → `store.allocateNumber` → `persistInvoice`), at save time. The
+  editor no longer previews a number. New-invoice creation requires connectivity (as
+  editing an invoice and collecting a payment already did); there is no offline
+  local-sequence fallback — a duplicate serial is worse than needing a connection.
+  Drafts (`DRF-`) stay client-side by design. Rules: `counters/{sequence}` is
+  read/advance for any signed-in user, never-decreasing, no delete.
 - **Transactional stock decrement on the billing path.** The inventory "quick sell"
   path already re-reads stock inside a `runTransaction`
   (`components/InventoryDashboard.js`); invoice-driven stock consumption does not yet.

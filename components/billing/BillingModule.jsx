@@ -322,21 +322,26 @@ const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid r
 // Each prefix now owns its own independent sequence, so INV numbers stay consecutive no
 // matter how many estimates or drafts are raised.
 //
-// NOTE — this is still a CLIENT-SIDE max. Two counters billing in the same moment can
-// still both compute INV-0010 (see the duplicate guard in save(), which catches the
-// collision on write). A truly gap-free, collision-proof sequence requires a server-side
-// counter (a Firestore transaction on a `counters/invoices` doc). That is flagged as the
-// #1 v1.0 blocker in the audit report — it cannot be fixed correctly on the client alone.
-const nextInvNo = (list, prefix = 'INV') => {
+// CONCURRENCY PHASE 2 — the AUTHORITATIVE INV-/EST- number is now allocated at SAVE
+// TIME by a Firestore transaction on `counters/<sequence>` (lib/docCounter.js, via
+// store.allocateNumber in persistInvoice). The editor no longer previews a number.
+//
+// `invSeqMax` / `nextInvNo` remain for:
+//   - the `seedFrom` value handed to the transaction (highest known + 1), so a
+//     missing/lagging counter initialises itself correctly, and
+//   - DRF- drafts, which are a throwaway internal handle (never a GST serial, and a
+//     clash loses no data — the doc id is unique) and stay client-side.
+const invSeqMax = (list, prefix) => {
   const px = String(prefix || 'INV').toUpperCase();
-  const highest = (list || []).reduce((max, i) => {
-    const no = String(i.invNo || '');
-    // ONLY consider documents sharing this exact prefix.
-    const m = no.match(/^([A-Za-z]+)-(\d+)$/);
-    if (!m || m[1].toUpperCase() !== px) return max;
+  return (list || []).reduce((max, i) => {
+    const m = String(i.invNo || '').match(/^([A-Za-z]+)-(\d+)$/);
+    if (!m || m[1].toUpperCase() !== px) return max;   // ONLY this exact prefix
     return Math.max(max, parseInt(m[2], 10) || 0);
   }, 0);
-  return `${px}-${String(highest + 1).padStart(4, '0')}`;
+};
+const nextInvNo = (list, prefix = 'INV') => {
+  const px = String(prefix || 'INV').toUpperCase();
+  return `${px}-${String(invSeqMax(list, px) + 1).padStart(4, '0')}`;
 };
 // Labour/service lines are FLAT-PRICED by default: a garage owner bills
 // "Water Wash 500", not 1.5 hours x Rs.333. `hourly: false` means qty is pinned to
@@ -560,15 +565,12 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   // panel is already near-viewport-sized, but keeps the fix universal.
   const modalRef = useRef(null);
   // Payments/Validation review (Issue 5.3) — this used to gate on `!initial.invNo`,
-  // which was meant to mean "a brand-new, unsaved invoice." But every real entry
-  // point (the New Invoice button, Job Card prefill) pre-allocates an invoice NUMBER
-  // via nextInvNo() before this modal even opens, so invNo is already truthy on
-  // first render for the ordinary case — the exact case this mechanism most needs
-  // to protect. The dead path was invisible precisely because it fails silently
-  // (nothing to autosave = nothing looks wrong) until a crash actually loses work.
+  // meant to mean "a brand-new, unsaved invoice." That was already wrong when the
+  // editor pre-allocated a preview number; under Phase 2 a new invoice carries NO
+  // number at all until it is saved, so `invNo` is a doubly-unreliable signal here.
   // The real signal for "does this invoice already have a safe copy elsewhere" is
-  // whether it exists in the persisted `invoices` list, not whether a number string
-  // has been generated — a number can exist for an invoice nobody has saved yet.
+  // whether it exists in the persisted `invoices` list — a DRF-/INV- string can be
+  // present on an invoice nobody has saved yet, and absent on a brand-new one.
   const isPersisted = invoices.some((x) => x.id === initial.id);
   const [inv, setInvRaw] = useState(() => {
     // Restore an autosaved draft for any invoice not yet actually persisted.
@@ -1116,11 +1118,28 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     const needsNewNumber = asDraft
       ? !inv.invNo                                                   // temp DRF- handle only
       : (!inv.invNo || numberIsDraft || (!asEstimate && numberIsEstimate) || (asEstimate && !numberIsEstimate && !inv.invNo));
-    const invNo = needsNewNumber
-      ? nextInvNo(invoices, asDraft ? 'DRF' : asEstimate ? 'EST' : prefix)
-      : inv.invNo;
 
-    const clean = { ...inv, isEstimate: asEstimate && !asDraft, lines: billItems, payments, invNo };
+    // Phase 2 — a fresh INV-/EST- number is allocated by a Firestore transaction in
+    // persistInvoice (store.allocateNumber). Here we only DECLARE the intent: the
+    // sequence, the display prefix and a seed (highest number we can see + 1, which
+    // initialises a missing counter / pulls a lagging one forward). DRF- drafts are
+    // a throwaway client handle and keep the local max()+1.
+    let invNo = inv.invNo;
+    let alloc = null;
+    if (needsNewNumber) {
+      if (asDraft) {
+        invNo = nextInvNo(invoices, 'DRF');
+      } else {
+        invNo = '';
+        alloc = {
+          __allocSeq: asEstimate ? 'estimates' : 'invoices',
+          __allocPrefix: prefix,
+          __allocSeed: invSeqMax(invoices, prefix) + 1,
+        };
+      }
+    }
+
+    const clean = { ...inv, isEstimate: asEstimate && !asDraft, lines: billItems, payments, invNo, ...(alloc || {}) };
     clean.paid = (asEstimate || asDraft) ? 0 : payments.reduce((a, p) => a + num(p.amount), 0);
     const snap = totalsOf(clean);
     clean.grandTotal = snap.grand; clean.balance = snap.balance; clean.gstAmount = snap.gst; clean.profitAmount = snap.profit;
@@ -1186,7 +1205,15 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
         <div className={`${SHELL_WIDTH_CLS} mx-auto flex items-center justify-between`}>
         <div className="flex items-center gap-3 min-w-0">
           <button onClick={guardedClose} className="w-9 h-9 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
-          <div className="min-w-0"><h3 className="text-base font-bold text-white truncate">{isPersisted ? `Edit ${inv.invNo}` : (inv.invNo ? `New Invoice · ${inv.invNo}` : 'New Invoice')}</h3><p className="text-[11px] text-white/45 truncate">{inv.customer || 'No customer selected'}</p></div>
+          <div className="min-w-0">
+            <h3 className="text-base font-bold text-white truncate">
+              {isPersisted ? `Edit ${inv.invNo}` : (inv.invNo ? `New Invoice · ${inv.invNo}` : 'New Invoice')}
+              {/* Phase 2 — the INV- serial is now allocated by the server at save time, not
+                  previewed. Say so, so the missing number doesn't read as a bug. */}
+              {!isPersisted && !inv.invNo && <span className="ml-2 text-[10px] font-medium text-white/40">· number assigned on save</span>}
+            </h3>
+            <p className="text-[11px] text-white/45 truncate">{inv.customer || 'No customer selected'}</p>
+          </div>
         </div>
         <div className="hidden sm:flex items-center gap-2">
           <div className="text-right mr-1"><p className="text-[9px] uppercase tracking-wide text-white/45 leading-none">Total</p><p className="text-base font-bold leading-tight" style={{ color: '#d4af37' }}>{inr(t.grand)}</p></div>
@@ -1957,11 +1984,10 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     if (!pf) return;
     try { localStorage.removeItem('maruti_invoice_prefill'); } catch {}   // fire once
     if (!canManage) return;
-    let px = 'INV';
-    try { px = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}').invPrefix || 'INV'; } catch {}
+    // Phase 2 — no preview number; the INV- serial is allocated by a server
+    // transaction when this invoice is first saved (see save() / persistInvoice).
     setEdit({
       ...emptyInvoice(),
-      invNo: nextInvNo(invoices, px),
       customerId: pf.customerId || '',
       customer: pf.customer || '',
       phone: pf.phone || '',
@@ -2311,10 +2337,18 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     clearSel();
   };
   const convertEstimate = async (iv) => {
-    const next = { ...iv, isEstimate: false, invNo: nextInvNo(invoices, 'INV'), status: 'Unpaid', history: [...(iv.history || []), { at: Date.now(), action: `Converted from estimate ${iv.invNo}`, by: demoMode ? 'Demo User' : 'Staff' }] };
+    // Phase 2 — a converted estimate must be ISSUED A FRESH invoice serial, and that
+    // serial comes from the server counter (transaction), same as any new invoice. Tag
+    // the intent; persistInvoice allocates it, then the guarded write applies it.
+    const next = {
+      ...iv, isEstimate: false, invNo: '', status: 'Unpaid',
+      __allocSeq: 'invoices', __allocPrefix: 'INV', __allocSeed: invSeqMax(invoices, 'INV') + 1,
+      history: [...(iv.history || []), { at: Date.now(), action: `Converted from estimate ${iv.invNo}`, by: demoMode ? 'Demo User' : 'Staff' }],
+    };
     next.status = deriveStatus(next);
-    try { await onPersist?.(next); } catch (e) { return; }
-    toast.success(`${iv.invNo} → ${next.invNo}`);
+    let saved;
+    try { saved = await onPersist?.(next); } catch (e) { return; }
+    toast.success(`${iv.invNo} → ${(saved || next).invNo}`);
   };
   const changeStatus = async (iv, status, verb) => {
     // Cancel/Refund/Return restore inventory stock via the parent's delete-style path
@@ -2784,19 +2818,18 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
         {canManage && (
           <button
             onClick={async () => {
-              // CAPACITY GUARD — checked here, before the editor ever opens (the invoice
-              // number below is only PRE-ALLOCATED, not yet persisted, so this is the
-              // true "would this create a new record" gate). Blocking at the button means
-              // there is never a half-filled draft to lose if the limit has been reached.
+              // CAPACITY GUARD — checked here, before the editor ever opens. Blocking at
+              // the button means there is never a half-filled draft to lose if the limit
+              // has been reached.
               const { blocked } = await checkCapacityGuard('invoices', { demoMode });
               if (blocked) {
                 notify.warning('Record limit reached. Please free space before creating a new record.');
                 setCapacityBlockedOpen(true);
                 return;
               }
-              let px = 'INV';
-              try { px = JSON.parse(localStorage.getItem(demoMode ? 'maruti_settings_demo' : 'maruti_settings') || '{}').invPrefix || 'INV'; } catch {}
-              setEdit({ ...emptyInvoice(), invNo: nextInvNo(invoices, px) });
+              // Phase 2 — no preview number; the INV- serial is allocated by a server
+              // transaction when this invoice is first saved (see save() / persistInvoice).
+              setEdit({ ...emptyInvoice() });
             }}
             className="h-11 px-4 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] flex items-center gap-1.5 active:scale-95 transition"
           ><Plus size={14} /> {t('billing.newInvoice', 'New Invoice')}</button>
@@ -2977,7 +3010,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           the real outcome and only closes/toasts on confirmed success; on failure the modal
           stays open (so nothing typed is lost) and the shared persistence layer's own toast
           already told the user what happened. */}
-      {edit && <InvoiceModal key={`inv:${edit.id || 'new'}:${revOf(edit)}`} initial={edit} readOnly={invoiceViewOnly} banner={isPersistedEdit ? invoiceBanner : null} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { try { await onPersist?.(iv); } catch (e) { return; } invoiceLease.release(); setEdit(null); toast.success(`${iv.isEstimate ? 'Estimate' : 'Invoice'} ${iv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(iv), 120); }} onClose={closeInvoiceEditor} />}
+      {edit && <InvoiceModal key={`inv:${edit.id || 'new'}:${revOf(edit)}`} initial={edit} readOnly={invoiceViewOnly} banner={isPersistedEdit ? invoiceBanner : null} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { let saved; try { saved = await onPersist?.(iv); } catch (e) { return; } const finalIv = saved || iv; invoiceLease.release(); setEdit(null); toast.success(`${finalIv.isEstimate ? 'Estimate' : 'Invoice'} ${finalIv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(finalIv), 120); }} onClose={closeInvoiceEditor} />}
       {invoiceReviewOpen && isPersistedEdit && invoiceSync.latest && (
         <ConflictReviewDialog
           mode="review"

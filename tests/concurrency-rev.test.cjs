@@ -146,7 +146,9 @@ seed('customers', [{ id: 'legacy1', name: 'Legacy', phone: '9000000001' }]); // 
   ok('J: Suppliers editor save is guarded', /store\.saveGuarded\(COLLECTIONS\.SUPPLIERS, \{ \.\.\.payload, id: formData\.id \}, revOf\(formData\)/.test(dash));
   ok('J: Job Cards editor save is guarded (keyed by jobNo)', /store\.saveGuarded\(COLLECTIONS\.JOB_CARDS, card, revOf\(card\), \{ idField: 'jobNo'/.test(dash));
   ok('J: Invoices editor save is guarded (payment path untouched)',
-    /store\.saveGuarded\(COLLECTIONS\.INVOICES, iv, revOf\(iv\)/.test(dash)
+    // Phase 2 renamed the local `iv` -> `target` after the number-allocation step;
+    // the guarded write is otherwise identical.
+    /store\.saveGuarded\(COLLECTIONS\.INVOICES, target, revOf\(target\)/.test(dash)
     && /collectInvoicePayment/.test(dash));
   ok('J: Customers editor save is guarded via onSaveCustomerEdit → saveCustomerEdit → store.saveGuarded',
     /const saveCustomerEdit = useCallback\(async \(record, expectedRev\) => \{[\s\S]{0,300}store\.saveGuarded\(COLLECTIONS\.CUSTOMERS, record, expectedRev/.test(dash)
