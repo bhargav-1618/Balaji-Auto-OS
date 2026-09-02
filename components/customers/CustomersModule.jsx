@@ -26,7 +26,7 @@ import { useDeferredSearch, useSearchIndex, searchAndRank, indexBy, phoneKey } f
 import { useEditLease } from '../../hooks/useEditLease';
 import { useRecordSync } from '../../hooks/useRecordSync';
 import { useLeaseReleaseToast } from '../../hooks/useLeaseReleaseToast';
-import { revOf } from '../../lib/concurrency';
+import { revOf, isConcurrencyError, CONC_DELETED } from '../../lib/concurrency';
 import EditLeaseBanner from '../common/EditLeaseBanner';
 import RecordUpdatedNotice from '../common/RecordUpdatedNotice';
 import RecordConflictBanner from '../common/RecordConflictBanner';
@@ -1421,8 +1421,20 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
         });
       }
     } catch (e) {
-      // Phase 1a: on a stale/deleted rejection the parent already toasted; keep the
-      // wizard open so nothing typed is lost (the polished conflict UX is Phase 1c).
+      // Phase 1c — the guarded save was rejected (stale / deleted). The wizard stays
+      // open so nothing typed is lost and the "⚠️ Updated elsewhere" banner + [Review
+      // Latest] handle recovery. Every OTHER editor surfaces an explicit "changes not
+      // saved" toast via concToast; Customers goes through saveCustomerEdit, which lets
+      // the ConcurrencyError propagate here without toasting — so say it here, matching
+      // the shared concurrency-error message pattern.
+      if (isConcurrencyError(e)) {
+        toast.error(
+          e.code === CONC_DELETED
+            ? 'This record was deleted by another user. Your changes were not saved.'
+            : 'This record was updated by another user. Your changes were not saved.',
+          { duration: 7000 },
+        );
+      }
       return;
     }
     lease.release();               // Phase 1b — hand the edit lease back after a real save

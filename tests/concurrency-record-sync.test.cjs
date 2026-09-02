@@ -161,6 +161,18 @@ ok('Customers — new-customer: no conflict banner + no review dialog for an unp
   /conflict=\{isPersistedCust\(editCust\.id\) \? \{ status: recordSync\.status/.test(cust)
   && /\{reviewOpen && isPersistedCust\(editCust && editCust\.id\) && recordSync\.latest && \(/.test(cust)
   && !/conflict=\{editCust\.id \? \{ status: recordSync\.status/.test(cust));   // the buggy form is gone
+// BUG #2 — TEST 6: a stale Customer save was rejected + input preserved, but SILENT.
+// saveCustomer's catch must surface the concurrency rejection like every other editor
+// (which call concToast on isConcurrencyError), keeping the wizard open, no _rev bypass.
+ok('Customers — stale save shows an explicit "changes not saved" message (BUG #2)',
+  /import \{ revOf, isConcurrencyError, CONC_DELETED \} from '\.\.\/\.\.\/lib\/concurrency';/.test(cust)
+  && /\} catch \(e\) \{[\s\S]{0,600}if \(isConcurrencyError\(e\)\) \{[\s\S]{0,200}This record was updated by another user\. Your changes were not saved\.[\s\S]{0,200}\}\s*\n\s*return;\s*\n\s*\}/.test(cust));
+ok('Customers — stale save still keeps the wizard open + does not bypass _rev (unchanged)',
+  // the guarded path is unchanged: onSaveCustomerEdit still runs with the opened _rev,
+  // and the catch still `return`s BEFORE lease.release()/setEditCust(null) so nothing
+  // typed is lost and no stale write happens.
+  /const fresh = await onSaveCustomerEdit\(\{ \.\.\.c, history: hist \}, Number\.isInteger\(c\._rev\) && c\._rev >= 0 \? c\._rev : 0\);/.test(cust)
+  && /\}\s*\n\s*return;\s*\n\s*\}\s*\n\s*lease\.release\(\);\s+\/\/ Phase 1b/.test(cust));
 
 ok('Parts — useRecordSync + view-only mode + review dialog (mode="review")',
   /const partSync = useRecordSync\('parts',/.test(dash)
