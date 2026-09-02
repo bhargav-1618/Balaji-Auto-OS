@@ -12,18 +12,24 @@ current release.
 
 ## Concurrency — before multi-terminal use
 
-- ~~**Server-side invoice counter.**~~ **DONE (CONCURRENCY PHASE 2).** `INV-`/`EST-`
-  allocation now runs inside a Firestore `runTransaction` on `counters/<sequence>`
-  (`lib/docCounter.js` → `store.allocateNumber` → `persistInvoice`), at save time. The
-  editor no longer previews a number. New-invoice creation requires connectivity (as
-  editing an invoice and collecting a payment already did); there is no offline
-  local-sequence fallback — a duplicate serial is worse than needing a connection.
-  Drafts (`DRF-`) stay client-side by design. Rules: `counters/{sequence}` is
-  read/advance for any signed-in user, never-decreasing, no delete.
+- ~~**Server-side invoice counter.**~~ **DONE — CONCURRENCY PHASE 2, shipped and
+  production-verified.** `INV-` allocation runs inside a Firestore `runTransaction` on
+  `counters/invoices` (`EST-` on `counters/estimates`) — `lib/docCounter.js` →
+  `store.allocateNumber` → `persistInvoice` — at save time. The editor no longer
+  previews a number ("number assigned on save"). Verified with 1, 2 and 3 concurrent
+  clients against live Firestore: distinct, sequential serials, zero duplicates. New-
+  invoice creation now requires connectivity (as editing an invoice and collecting a
+  payment already did) — no offline local-sequence fallback, because a duplicate serial
+  is worse than needing a connection. Drafts (`DRF-`) stay client-side by design.
+  Rules (`firestore.rules`, published to `balaji-auto-os-7`): `counters/{sequence}` is
+  read/advance for any signed-in user, never-decreasing (`next >= resource.data.next`),
+  no client delete. A one-off reset (e.g. after test invoices) is a Console delete of
+  the `counters/invoices` doc — it re-seeds from `max(existing) + 1` on the next save.
 - **Transactional stock decrement on the billing path.** The inventory "quick sell"
   path already re-reads stock inside a `runTransaction`
   (`components/InventoryDashboard.js`); invoice-driven stock consumption does not yet.
-  Wrap that path the same way — see `services/README.md` for where it belongs.
+  Wrap that path the same way — see `services/README.md` for where it belongs. This is
+  now the only remaining pre-multi-terminal concurrency item.
 
 ## Scale — before large datasets
 

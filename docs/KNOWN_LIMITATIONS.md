@@ -21,17 +21,25 @@ rules published.)*
 
 ## 🟠 Concurrency (single-location safe; fix before multi-terminal)
 
-- **Invoice numbering IS concurrency-safe** (CONCURRENCY PHASE 2). The `INV-`/`EST-`
-  serial is allocated at save time by a Firestore transaction on `counters/<sequence>`
-  (`lib/docCounter.js`) — two terminals billing in the same moment get distinct,
-  sequential numbers. A new invoice no longer previews a number; the editor says
-  *"number assigned on save"*. Drafts (`DRF-`) stay client-side (a throwaway handle,
-  never a GST serial, and a unique doc id means a clash loses no data). Residual: if a
-  save fails *after* the number is allocated, that number is skipped (a gap) — legal
-  under GST Rule 46(b), and far preferable to a duplicate. Requires connectivity to
-  create a new invoice (the same as editing one or collecting a payment already does).
+- **Invoice numbering IS concurrency-safe** (CONCURRENCY PHASE 2 — shipped, rules
+  published, production-verified with 1/2/3 concurrent clients). The `INV-`/`EST-`
+  serial is allocated at save time by a Firestore transaction on `counters/invoices` /
+  `counters/estimates` (`lib/docCounter.js`) — two terminals billing in the same moment
+  get distinct, sequential numbers. A new invoice no longer previews a number; the
+  editor says *"number assigned on save"*. Drafts (`DRF-`) stay client-side (a
+  throwaway handle, never a GST serial, and a unique doc id means a clash loses no
+  data). Behaviour notes:
+  - Creating a new invoice now **requires connectivity** (same as editing an invoice or
+    collecting a payment, which were already transactional). On failure the editor stays
+    open with nothing lost.
+  - If a save fails *after* the number is allocated, that number is **skipped** (a gap)
+    — legal under GST Rule 46(b), and far preferable to a duplicate.
+  - The counter only moves forward. To reset it (e.g. after test invoices), delete the
+    `counters/invoices` document in the Firebase Console — it re-seeds from
+    `max(existing) + 1` on the next save. Clients cannot lower it (`allow delete: if
+    false`, `next >= resource.data.next`).
 - **Concurrent stock decrement** still has the last-write-wins race — a `runTransaction`
-  on the invoice-driven stock path is the remaining pre-multi-terminal item.
+  on the invoice-driven stock path is the one remaining pre-multi-terminal item.
 
 ## 🟡 Performance (fine at current scale)
 
