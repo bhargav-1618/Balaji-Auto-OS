@@ -1092,10 +1092,17 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
   // CONCURRENCY PHASE 1c — watch the open customer's document (detail panel viewer
   // OR wizard editor) for changes another session makes. Baseline is re-set on
   // editor open / merge; own saves advance it so they don't self-alarm.
-  const watchedCustId = (editCust && editCust.id) || selId;
-  const watchedCustRev = (editCust && editCust._rev) != null
+  //
+  // A brand-new customer carries a client-generated temp id (emptyCustomer()) BEFORE
+  // its first save, so record-sync applies only to a customer that ACTUALLY EXISTS in
+  // Firestore — the same "is this persisted?" test saveCustomer uses. Watching a
+  // temp id would subscribe to a doc that doesn't exist and read back as "deleted".
+  const isPersistedCust = useCallback((id) => !!id && customers.some((c) => c.id === id), [customers]);
+  const watchedCustId = isPersistedCust(editCust && editCust.id) ? editCust.id
+    : (isPersistedCust(selId) ? selId : null);
+  const watchedCustRev = (editCust && editCust.id === watchedCustId && editCust._rev != null)
     ? editCust._rev
-    : customers.find((c) => c.id === selId)?._rev;
+    : customers.find((c) => c.id === watchedCustId)?._rev;
   const recordSync = useRecordSync('customers', watchedCustId, watchedCustRev);
   useLeaseReleaseToast(lease.status);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -2178,10 +2185,10 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
           onClose={editCust.id ? closeCustomerEditor : () => setEditCust(null)}
           demoMode={demoMode}
           formValuesRef={wizardValuesRef}
-          conflict={editCust.id ? { status: recordSync.status, onReview: () => setReviewOpen(true), onClose: closeCustomerEditor } : null}
+          conflict={isPersistedCust(editCust.id) ? { status: recordSync.status, onReview: () => setReviewOpen(true), onClose: closeCustomerEditor } : null}
         />
       )}
-      {reviewOpen && editCust && editCust.id && recordSync.latest && (
+      {reviewOpen && isPersistedCust(editCust && editCust.id) && recordSync.latest && (
         <ConflictReviewDialog
           title="Review the latest customer"
           fields={CUSTOMER_CONFLICT_FIELDS}

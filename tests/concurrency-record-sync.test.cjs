@@ -150,6 +150,17 @@ ok('Customers — field-level rebase (mode="rebase"): CustomerWizard exposes its
   && /<ConflictReviewDialog[\s\S]{0,400}fields=\{CUSTOMER_CONFLICT_FIELDS\}[\s\S]{0,400}onKeepMine=/.test(cust));
 ok('Customers — E: own save advances the baseline (recordSync.markSynced(fresh._rev)) so it does not self-alarm',
   /if \(fresh && Number\.isInteger\(fresh\._rev\)\) recordSync\.markSynced\(fresh\._rev\);/.test(cust));
+// BUGFIX — a brand-new customer carries a client temp id (emptyCustomer()); record-sync
+// must key on ACTUAL persisted-record membership, not id-truthiness, or useRecordSync
+// subscribes to customers/<temp-id> which reads back as "deleted" and the new-customer
+// wizard shows a false "🗑️ Record deleted" banner.
+ok('Customers — new-customer bug fix: record-sync keyed on persisted membership, not id truthiness',
+  /const isPersistedCust = useCallback\(\(id\) => !!id && customers\.some\(\(c\) => c\.id === id\), \[customers\]\);/.test(cust)
+  && /const watchedCustId = isPersistedCust\(editCust && editCust\.id\) \? editCust\.id\s*\n?\s*: \(isPersistedCust\(selId\) \? selId : null\);/.test(cust));
+ok('Customers — new-customer: no conflict banner + no review dialog for an unpersisted customer',
+  /conflict=\{isPersistedCust\(editCust\.id\) \? \{ status: recordSync\.status/.test(cust)
+  && /\{reviewOpen && isPersistedCust\(editCust && editCust\.id\) && recordSync\.latest && \(/.test(cust)
+  && !/conflict=\{editCust\.id \? \{ status: recordSync\.status/.test(cust));   // the buggy form is gone
 
 ok('Parts — useRecordSync + view-only mode + review dialog (mode="review")',
   /const partSync = useRecordSync\('parts',/.test(dash)
