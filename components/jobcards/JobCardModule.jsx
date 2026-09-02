@@ -31,6 +31,14 @@ import CapacityBanner from '../common/CapacityBanner';
 import CapacityCleanupModal from '../common/CapacityCleanupModal';
 import { checkCapacityGuard } from '../../lib/useCapacity';
 import { useEditLease } from '../../hooks/useEditLease';
+import { useRecordSync } from '../../hooks/useRecordSync';
+import { useLeaseReleaseToast } from '../../hooks/useLeaseReleaseToast';
+import { revOf } from '../../lib/concurrency';
+import EditLeaseBanner from '../common/EditLeaseBanner';
+import EditAvailableBar from '../common/EditAvailableBar';
+import RecordUpdatedNotice from '../common/RecordUpdatedNotice';
+import RecordConflictBanner from '../common/RecordConflictBanner';
+import ConflictReviewDialog from '../common/ConflictReviewDialog';
 import { invoiceStatus } from '../../services/billingService';
 import { TERMINAL_INVOICE_STATUSES } from '../../constants/capacity';
 import { lockBody, unlockBody } from '../Modal';
@@ -388,6 +396,23 @@ const emptyCard = (saved = [], jc = {}) => {
   };
 };
 
+// CONCURRENCY PHASE 1c — job-card fields whose "another user changed this" diff is
+// worth showing in the review (record-vs-record; mode="review", no auto field merge).
+const JOBCARD_CONFLICT_FIELDS = [
+  { key: 'customer', label: 'Customer' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'vehicle', label: 'Vehicle' },
+  { key: 'regNo', label: 'Reg. number' },
+  { key: 'advisor', label: 'Advisor' },
+  { key: 'technician', label: 'Technician' },
+  { key: 'status', label: 'Status' },
+  { key: 'promised', label: 'Promised delivery' },
+  { key: 'complaints', label: 'Complaints', format: (v) => `${(v || []).filter(Boolean).length} entered` },
+  { key: 'diagnosis', label: 'Diagnosis', format: (v) => `${(v || []).filter(Boolean).length} entered` },
+  { key: 'parts', label: 'Parts', format: (v) => `${(v || []).length} line${(v || []).length === 1 ? '' : 's'}` },
+  { key: 'notes', label: 'Notes' },
+];
+
 // Module-scoped view state — a plain JS-module-level object, NOT sessionStorage-backed
 // (Navigation State + Data Freshness review — this used to mirror into sessionStorage
 // specifically so a Browser Refresh restored the old saved-list search/filter, which is the
@@ -464,10 +489,26 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
   const previewShop = useMemo(() => liveShop(demoMode), [demoMode]);
   const [invQ, setInvQ] = useState('');
   const [previewCard, setPreviewCard] = useState(null);
-  // CONCURRENCY PHASE 1b — single active editor while a SAVED job card is loaded
-  // into the form. A brand-new card (not yet in savedCards) takes no lease.
+  // CONCURRENCY PHASE 1b/1c — single active editor while a SAVED job card is loaded
+  // into the form. A brand-new card (not yet in savedCards) takes no lease. If
+  // another user holds the lease the card still loads, READ-ONLY (Phase 1c), and
+  // becomes editable in place via [Edit] once the lease frees.
   const [leasedJobNo, setLeasedJobNo] = useState(null);
   const jcLease = useEditLease('jobCards', leasedJobNo);
+  const [jcViewOnly, setJcViewOnly] = useState(false);
+  const [jcReviewOpen, setJcReviewOpen] = useState(false);
+  const jcSync = useRecordSync('jobCards', leasedJobNo, card && card._rev);
+  const previewSync = useRecordSync('jobCards', previewCard && previewCard.jobNo, previewCard && previewCard._rev);
+  useLeaseReleaseToast(jcLease.status);
+  const claimJobCardEdit = useCallback(async () => {
+    if (!leasedJobNo) return;
+    const r = await jcLease.acquire(leasedJobNo);
+    if (!r.ok) { toast.error(`🔒 ${r.heldBy} is still editing this job card.`); return; }
+    if (jcSync.latest) applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jcSync.latest }));
+    jcSync.markSynced();
+    dirty.current = false;
+    setJcViewOnly(false);
+  }, [leasedJobNo, jcLease, jcSync, demoMode]); // eslint-disable-line react-hooks/exhaustive-deps
   // Job Details drawer: reset its scroll to the top each time it opens (Issue 2) and lock
   // the page behind it so only the drawer scrolls (Issue 4).
   const previewBodyRef = useRef(null);
@@ -594,15 +635,19 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
   }, [rowMenu]);
   const loadCard = async (jc) => {
     if (dirty.current && !await confirmDialog({ title: 'Load this card?', message: 'The current draft will be replaced.', confirmText: 'Load' })) return;
-    // Phase 1b — acquire the edit lease for a SAVED card before opening it.
+    // Phase 1b/1c — acquire the edit lease for a SAVED card. If someone else holds
+    // it, load the card anyway but READ-ONLY (never refuse) — [Edit] claims it later.
     const isSaved = !!(jc && jc.jobNo && (savedRef.current || []).some((c) => c.jobNo === jc.jobNo));
     if (isSaved) {
+      jcSync.markSynced(revOf(jc));
       const r = await jcLease.acquire(jc.jobNo);
-      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing job card ${jc.jobNo}. You can view it once they finish.`, { duration: 6000 }); return; }
+      setJcViewOnly(!r.ok);
+      if (!r.ok) toast.error(`🔒 ${r.heldBy} is editing job card ${jc.jobNo}. You can view it once they finish.`, { duration: 6000 });
       setLeasedJobNo(jc.jobNo);
     } else {
       jcLease.release();
       setLeasedJobNo(null);
+      setJcViewOnly(false);
     }
     applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jc }));
     dirty.current = false; setCopyUndo({}); appScrollTo({ top: 0, behavior: 'smooth' });
@@ -844,6 +889,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
   // up front just means the card never gets written. A draft needs only a name so it
   // can be found again; the full validation applies when it is properly opened.
   async function saveCard(asDraft = false) {
+    if (jcViewOnly) return;   // Phase 1c — view-only while another user holds the edit lease
     if (savingRef.current) return;   // a save is already in flight (guards double-click)
     if (!canManage) { toast.error('You do not have permission to save job cards.'); return; }
     // Same reasoning as validate(): read the synchronous ref, not the render closure, so a
@@ -879,7 +925,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
       });
       try { localStorage.removeItem(DRAFT_KEY); } catch {}
       dirty.current = false;
-      jcLease.release(); setLeasedJobNo(null);   // Phase 1b — hand the lease back after a real save
+      jcLease.release(); setLeasedJobNo(null); setJcViewOnly(false);   // Phase 1b — hand the lease back after a real save
       toast.success(asDraft ? `Draft saved — ${card.customer}` : `Job card ${card.jobNo} saved`);
       applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode)));
       setCopyUndo({});
@@ -1307,14 +1353,36 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                 is the reachable entry point below xl; see the matching exit toggle in the
                 preview column's own header, fixed the same way. */}
             <button onClick={() => setFullPreview(true)} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition xl:hidden flex items-center gap-1.5"><FileDown size={14} /> Preview PDF</button>
-            <button onClick={async () => { if (dirty.current && !await confirmDialog({ title: 'Discard the current draft?', confirmText: 'Discard', danger: true })) return; jcLease.release(); setLeasedJobNo(null); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); dirty.current = false; setCopyUndo({}); try { localStorage.removeItem(DRAFT_KEY); } catch {} }} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition">New / Clear</button>
-            <button onClick={() => saveCard(true)} disabled={saving || !card.customer?.trim()} title="Park this job card — nothing enters the workshop queue yet" className="h-10 px-4 rounded-xl text-xs font-bold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 active:scale-95 transition disabled:opacity-40">Save Draft</button>
+            <button onClick={async () => { if (dirty.current && !await confirmDialog({ title: 'Discard the current draft?', confirmText: 'Discard', danger: true })) return; jcLease.release(); setLeasedJobNo(null); setJcViewOnly(false); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); dirty.current = false; setCopyUndo({}); try { localStorage.removeItem(DRAFT_KEY); } catch {} }} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition">New / Clear</button>
+            {!jcViewOnly && <button onClick={() => saveCard(true)} disabled={saving || !card.customer?.trim()} title="Park this job card — nothing enters the workshop queue yet" className="h-10 px-4 rounded-xl text-xs font-bold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 active:scale-95 transition disabled:opacity-40">Save Draft</button>}
             {/* NOTE: must be () => saveCard(false), NOT onClick={saveCard}. React passes the
                 click event as the first argument, which would land in `asDraft` as a truthy
                 MouseEvent and silently turn every save into a draft. */}
-            <button onClick={() => saveCard(false)} disabled={saving} className="h-10 px-5 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-95 transition disabled:opacity-60">{saving ? 'Saving…' : 'Save Job Card'}</button>
+            {!jcViewOnly && <button onClick={() => saveCard(false)} disabled={saving} className="h-10 px-5 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-95 transition disabled:opacity-60">{saving ? 'Saving…' : 'Save Job Card'}</button>}
           </div>
         } />
+
+        {/* Phase 1c — lease / record-status strip for the job-card form. */}
+        {leasedJobNo && (
+          <div className="space-y-2">
+            {jcViewOnly && jcLease.status === 'held' && <EditLeaseBanner status="held" heldByEmail={jcLease.heldByEmail} />}
+            {jcViewOnly && jcLease.status !== 'held' && <EditAvailableBar onEdit={claimJobCardEdit} />}
+            {jcViewOnly
+              ? <RecordUpdatedNotice status={jcSync.status} onAcknowledge={() => { if (jcSync.latest) applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jcSync.latest })); jcSync.markSynced(); dirty.current = false; }} />
+              : <RecordConflictBanner status={jcSync.status} onReview={() => setJcReviewOpen(true)} onClose={() => { jcLease.release(); setLeasedJobNo(null); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); dirty.current = false; }} />}
+          </div>
+        )}
+        {jcReviewOpen && leasedJobNo && jcSync.latest && (
+          <ConflictReviewDialog
+            mode="review"
+            title="This job card was changed by another user"
+            fields={JOBCARD_CONFLICT_FIELDS}
+            opened={card}
+            latest={jcSync.latest}
+            onUseLatest={(latest) => { setJcReviewOpen(false); jcSync.markSynced(revOf(latest)); applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...latest })); dirty.current = false; }}
+            onClose={() => setJcReviewOpen(false)}
+          />
+        )}
 
         <CapacityBanner
           moduleKey="jobCards" demoMode={demoMode} actorEmail={actorEmail}
@@ -1331,6 +1399,9 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
           ctx={{ activeInvoiceJobNos }} onComplete={() => { onCapacityCleanup?.(); setCapacityRefreshTick((n) => n + 1); }}
         />
 
+        {/* Phase 1c — one disabled <fieldset> switches off the whole job-card form
+            when this session is only a viewer (another user holds the edit lease). */}
+        <fieldset disabled={jcViewOnly} style={jcViewOnly ? { border: 0, margin: 0, padding: 0, minInlineSize: 0, opacity: 0.92 } : { border: 0, margin: 0, padding: 0, minInlineSize: 0 }} className="space-y-4">
         {(() => {
           const existingInv = (invoices || []).find((iv) => iv.jobNo && card.jobNo && iv.jobNo === card.jobNo);
           const matchedCust = customers.find((c) => (card.customerId && c.id === card.customerId) || (c.name && c.name === card.customer));
@@ -2032,6 +2103,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             </div>
           </div>
         )}
+        </fieldset>
         {previewCard && createPortal((
           // ROOT CAUSE of "the SBBMC… header + Close (X) sit below the app chrome
           // instead of at the panel's own top": this drawer used to render inline,
@@ -2056,6 +2128,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
               </div>
               {/* Scrollable body */}
               <div ref={previewBodyRef} className="flex-1 overflow-y-auto dark-scroll p-5">
+              {/* Phase 1c — another user changed/deleted this job card while it was open here. */}
+              <RecordUpdatedNotice status={previewSync.status} onAcknowledge={() => previewSync.markSynced()} className="mb-3" />
               <div className="space-y-2.5 text-sm">
                 {[['Customer', previewCard.customer], ['Phone', previewCard.phone], ['Vehicle', previewCard.vehicle], ['Reg No.', previewCard.regNo], ['Advisor', previewCard.advisor], ['Status', previewCard.status], ['Date In', fmtDT(previewCard.dateIn)], ['Promised', fmtDT(previewCard.promised)]].map(([k, v]) => (
                   <div key={k} className="flex justify-between gap-3"><span className="text-white/45">{k}</span><span className="text-white/85 text-right">{v || '—'}</span></div>

@@ -164,12 +164,13 @@ seed('customers', [{ id: 'legacy1', name: 'Legacy', phone: '9000000001' }]); // 
   ok('L: PartModal carries part._rev on save', /out\._rev = part\?\._rev;/.test(dash));
   ok('L: SupplierModal carries supplier._rev on save', /_rev: supplier\?\._rev \}/.test(dash));
 
-  // ── M. no editLocks / heartbeat / session infra (Phase 1b is separate) ──
-  // M: the `_rev` data-integrity layer is INDEPENDENT of the Phase 1b edit lease —
-  // the guarded save (repo.guardedSet / store.saveGuarded / lib/concurrency) never
-  // reads a lease, so a save is protected even with no lease / an expired lease.
-  ok('M: the guarded-save path does not depend on the edit lease',
-    !/editLease|editLocks|acquireLease|renewLease|useEditLease/.test(store_src + repo_src + read('../lib/concurrency.js')));
+  // ── M. no editLocks / heartbeat / session infra (Phase 1b/1c is separate) ──
+  // M: the `_rev` data-integrity layer is INDEPENDENT of the Phase 1b edit lease AND
+  // the Phase 1c record-sync / conflict-UX layer — the guarded save (repo.guardedSet /
+  // store.saveGuarded / lib/concurrency) reads neither, so a save is protected even
+  // with no lease / an expired lease / a stale open editor.
+  ok('M: the guarded-save path does not depend on the edit lease or the record-sync layer',
+    !/editLease|editLocks|acquireLease|renewLease|useEditLease|recordSync|useRecordSync/.test(store_src + repo_src + read('../lib/concurrency.js')));
 
   console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
   process.exit(FAIL ? 1 : 0);

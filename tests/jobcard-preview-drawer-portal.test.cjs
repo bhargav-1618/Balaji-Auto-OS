@@ -32,12 +32,13 @@ ok('createPortal is imported from react-dom',
 
 // isolate the previewCard drawer block
 const start = src.indexOf('{previewCard && ');
-const block = src.slice(start, start + 4200);
+// widened from 4200: Phase 1c adds a RecordUpdatedNotice row inside the drawer body.
+const block = src.slice(start, start + 5000);
 
 ok('the preview drawer is portaled via createPortal (not rendered inline in <main>)',
   /\{previewCard && createPortal\(/.test(block));
 ok('createPortal targets document.body',
-  /\{previewCard && createPortal\(\([\s\S]{0,4000}\), document\.body\)\}/.test(block));
+  /\{previewCard && createPortal\(\([\s\S]{0,4800}\), document\.body\)\}/.test(block));
 ok('the drawer keeps its own right-side overlay + close-on-backdrop-click (portaling only moves WHERE it mounts)',
   /<div className="fixed inset-0 z-\[120\] flex justify-end"[\s\S]{0,120}onClick=\{\(\) => setPreviewCard\(null\)\}/.test(block));
 

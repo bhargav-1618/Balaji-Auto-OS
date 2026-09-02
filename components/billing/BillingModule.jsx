@@ -18,6 +18,14 @@ import DropdownPanel, { ModalBoundaryContext } from '../common/DropdownPanel';
 import ActionMenu from '../common/ActionMenu';
 import PageHeader from '../common/PageHeader';
 import { useEditLease } from '../../hooks/useEditLease';
+import { useRecordSync } from '../../hooks/useRecordSync';
+import { useLeaseReleaseToast } from '../../hooks/useLeaseReleaseToast';
+import { revOf } from '../../lib/concurrency';
+import EditLeaseBanner from '../common/EditLeaseBanner';
+import EditAvailableBar from '../common/EditAvailableBar';
+import RecordUpdatedNotice from '../common/RecordUpdatedNotice';
+import RecordConflictBanner from '../common/RecordConflictBanner';
+import ConflictReviewDialog from '../common/ConflictReviewDialog';
 import { useTranslation } from '../../lib/i18n';
 import CapacityBanner from '../common/CapacityBanner';
 import CapacityCleanupModal from '../common/CapacityCleanupModal';
@@ -373,6 +381,24 @@ const INV_STATUSES = ['Draft', 'Estimate', 'Invoice', 'Partially Paid', 'Paid', 
 // statusColor now comes from constants/ui.js — ONE map shared with Job Cards, Vehicles
 // and Inventory, so the same status word cannot render as two different colours on two
 // pages. Every hex is unchanged (see the note there about 'Cancelled').
+// CONCURRENCY PHASE 1c — invoice fields whose "another user changed this" diff is
+// worth showing in the review (compared record-vs-record; mode="review", no auto
+// field merge — payments/totals/status are transaction-managed and excluded).
+const INVOICE_CONFLICT_FIELDS = [
+  { key: 'customer', label: 'Customer' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'vehicle', label: 'Vehicle' },
+  { key: 'regNo', label: 'Reg. number' },
+  { key: 'odometer', label: 'Odometer' },
+  { key: 'advisor', label: 'Advisor' },
+  { key: 'technician', label: 'Technician' },
+  { key: 'discount', label: 'Discount' },
+  { key: 'lines', label: 'Line items', format: (v) => `${(v || []).length} line${(v || []).length === 1 ? '' : 's'}` },
+  { key: 'notes', label: 'Notes' },
+  { key: 'terms', label: 'Terms' },
+  { key: 'isEstimate', label: 'Is estimate', format: (v) => (v ? 'Yes' : 'No') },
+];
+
 const emptyInvoice = () => ({
   id: `inv_${Date.now()}_${Math.floor(Math.random() * 1e4)}`, invNo: '', date: localDateStr(),
   customerId: '', customer: '', phone: '', email: '', gstNo: '', address: '',
@@ -502,7 +528,7 @@ function Section({ title, sub, children, defaultOpen = true, badge }) {
   );
 }
 
-function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], onSave, onClose, demoMode, demoCanEditPricing = true, onQuickCustomer, onQuickVehicle, onDownloadPDF, onDuplicate, onCreditNote }) {
+function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], onSave, onClose, demoMode, demoCanEditPricing = true, onQuickCustomer, onQuickVehicle, onDownloadPDF, onDuplicate, onCreditNote, readOnly = false, banner = null }) {
   // Billing settings (admin-controlled): GST & discount can be switched off entirely.
   const SETTINGS_KEY = demoMode ? 'maruti_settings_demo' : 'maruti_settings';
   const billingCfg = useMemo(() => { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { return {}; } }, [SETTINGS_KEY]);
@@ -723,7 +749,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   const t = totalsOf(inv);
   // Smart-action state: is there anything worth saving, and is it fully paid?
   const hasBillItems = inv.lines.some((l) => l.desc.trim() && num(l.rate) > 0);
-  const canSave = !!(inv.customer && inv.customer.trim()) && hasBillItems;
+  const canSave = !readOnly && !!(inv.customer && inv.customer.trim()) && hasBillItems;
   // GSTIN is optional here (a customer may not be GST-registered), but if entered it
   // must be a real GSTIN — same canonical rule as Customers/Suppliers (lib/gst.js).
   const gstNoErr = inv.gstNo && !isValidGstin(inv.gstNo) ? GSTIN_ERROR : null;
@@ -945,6 +971,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     if (ok) save(false);
   };
   const save = (asEstimate = false, thenPay = false, asDraft = false) => {
+    if (readOnly) return; // Phase 1c — view-only while another user holds the edit lease
     if (savingRef.current) return; // prevent double-submit
     // A DRAFT is deliberately permissive: a workshop parks a half-written bill all the
     // time (customer is deciding, waiting on a part, shift change). It needs a name to
@@ -1188,6 +1215,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto dark-scroll">
+        {banner && <div className={`mx-auto w-full ${SHELL_WIDTH_CLS} px-4 sm:px-6 pt-4`}>{banner}</div>}
         {locked && (
           <div className={`mx-auto w-full ${SHELL_WIDTH_CLS} px-4 sm:px-6 pt-4`}>
             {/* Mobile QA fix: the icon + text used to be direct flex children of a
@@ -1215,7 +1243,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
             Purely a box-height change: the summary's own visible card keeps its natural
             (shorter) height, since the visual styling lives on the sticky child, not on
             this stretched parent. */}
-        <div className={`mx-auto w-full ${SHELL_WIDTH_CLS} p-4 sm:p-6 pb-32 sm:pb-28 lg:flex lg:gap-6 lg:items-stretch`} style={locked ? { pointerEvents: 'none', opacity: 0.85 } : undefined}>
+        <div className={`mx-auto w-full ${SHELL_WIDTH_CLS} p-4 sm:p-6 pb-32 sm:pb-28 lg:flex lg:gap-6 lg:items-stretch`} style={(locked || readOnly) ? { pointerEvents: 'none', opacity: 0.85 } : undefined}>
           <div className="lg:flex-1 lg:min-w-0 space-y-4">
             {/* Customer & Vehicle */}
             {/* Mobile QA fix: inv.phone can genuinely be unset (walk-in edited before a
@@ -1861,21 +1889,45 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     onInitialStatusFilterHandled?.();
   }, [initialStatusFilter, onInitialStatusFilterHandled]);
   const [edit, setEdit] = useState(null);
-  // CONCURRENCY PHASE 1b — single active editor for an existing invoice. New /
-  // draft invoices (no persisted id yet) take no lease. Released on a real save
-  // or on close; a stale/deleted Phase 1a rejection keeps the editor + lease.
+  // CONCURRENCY PHASE 1b/1c — single active editor for an existing invoice. New /
+  // draft invoices (no persisted id yet) take no lease. If another user holds the
+  // lease the popup stays OPEN read-only (Phase 1c) — never force-closed — and
+  // becomes editable in place via [Edit] once the lease frees.
   const isPersistedEdit = !!(edit && edit.id && (invoices || []).some((iv) => iv.id === edit.id));
   const invoiceLease = useEditLease('invoices', isPersistedEdit ? edit.id : null);
+  const [invoiceViewOnly, setInvoiceViewOnly] = useState(false);
+  const [invoiceReviewOpen, setInvoiceReviewOpen] = useState(false);
+  const invoiceSync = useRecordSync('invoices', isPersistedEdit ? edit.id : null, edit && edit._rev);
+  useLeaseReleaseToast(invoiceLease.status);
   useEffect(() => {
-    if (!isPersistedEdit) return undefined;
+    if (!isPersistedEdit) { setInvoiceViewOnly(false); return undefined; }
     let cancelled = false;
+    setInvoiceViewOnly(false);
+    invoiceSync.markSynced(revOf(edit));
     invoiceLease.acquire(edit.id).then((r) => {
       if (cancelled) return;
-      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this invoice. You can view it once they finish.`, { duration: 6000 }); setEdit(null); }
+      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this invoice. You can view it once they finish.`, { duration: 6000 }); setInvoiceViewOnly(true); }
     });
     return () => { cancelled = true; };
   }, [isPersistedEdit, edit && edit.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const closeInvoiceEditor = useCallback(() => { invoiceLease.release(); setEdit(null); }, [invoiceLease]);
+  const closeInvoiceEditor = useCallback(() => { invoiceLease.release(); setInvoiceReviewOpen(false); setEdit(null); }, [invoiceLease]);
+  const claimInvoiceEdit = useCallback(async () => {
+    if (!edit || !edit.id) return;
+    const r = await invoiceLease.acquire(edit.id);
+    if (!r.ok) { toast.error(`🔒 ${r.heldBy} is still editing this invoice.`); return; }
+    if (invoiceSync.latest) setEdit(invoiceSync.latest);
+    invoiceSync.markSynced();
+    setInvoiceViewOnly(false);
+  }, [edit, invoiceLease, invoiceSync]);
+  const invoiceBanner = (
+    <>
+      {invoiceViewOnly && invoiceLease.status === 'held' && <EditLeaseBanner status="held" heldByEmail={invoiceLease.heldByEmail} className="mb-2" />}
+      {invoiceViewOnly && invoiceLease.status !== 'held' && <EditAvailableBar onEdit={claimInvoiceEdit} className="mb-2" />}
+      {invoiceViewOnly
+        ? <RecordUpdatedNotice status={invoiceSync.status} onAcknowledge={() => { if (invoiceSync.latest) setEdit(invoiceSync.latest); invoiceSync.markSynced(); }} className="mb-2" />
+        : <RecordConflictBanner status={invoiceSync.status} onReview={() => setInvoiceReviewOpen(true)} onClose={closeInvoiceEditor} className="mb-2" />}
+    </>
+  );
   const [capacityBlockedOpen, setCapacityBlockedOpen] = useState(false);
   // Bumped by the cleanup wizard's onComplete so the capacity banner re-checks its
   // count immediately after a cleanup — NOT used to close the modal (see the wizard's
@@ -2925,7 +2977,18 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           the real outcome and only closes/toasts on confirmed success; on failure the modal
           stays open (so nothing typed is lost) and the shared persistence layer's own toast
           already told the user what happened. */}
-      {edit && <InvoiceModal initial={edit} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { try { await onPersist?.(iv); } catch (e) { return; } invoiceLease.release(); setEdit(null); toast.success(`${iv.isEstimate ? 'Estimate' : 'Invoice'} ${iv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(iv), 120); }} onClose={closeInvoiceEditor} />}
+      {edit && <InvoiceModal key={`inv:${edit.id || 'new'}:${revOf(edit)}`} initial={edit} readOnly={invoiceViewOnly} banner={isPersistedEdit ? invoiceBanner : null} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { try { await onPersist?.(iv); } catch (e) { return; } invoiceLease.release(); setEdit(null); toast.success(`${iv.isEstimate ? 'Estimate' : 'Invoice'} ${iv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(iv), 120); }} onClose={closeInvoiceEditor} />}
+      {invoiceReviewOpen && isPersistedEdit && invoiceSync.latest && (
+        <ConflictReviewDialog
+          mode="review"
+          title="This invoice was changed by another user"
+          fields={INVOICE_CONFLICT_FIELDS}
+          opened={edit}
+          latest={invoiceSync.latest}
+          onUseLatest={(latest) => { setInvoiceReviewOpen(false); invoiceSync.markSynced(revOf(latest)); setEdit({ ...latest }); }}
+          onClose={() => setInvoiceReviewOpen(false)}
+        />
+      )}
     </PageHeader>
   );
 }

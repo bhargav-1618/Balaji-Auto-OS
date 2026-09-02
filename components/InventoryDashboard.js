@@ -92,6 +92,13 @@ import { SEMANTIC, SHELL_WIDTH_CLS, statusColor } from '../constants/ui';
 import { createStore } from '../services/persistenceStore';
 import { isConcurrencyError, revOf, CONC_DELETED } from '../lib/concurrency';
 import { useEditLease } from '../hooks/useEditLease';
+import { useRecordSync } from '../hooks/useRecordSync';
+import { useLeaseReleaseToast } from '../hooks/useLeaseReleaseToast';
+import EditLeaseBanner from './common/EditLeaseBanner';
+import EditAvailableBar from './common/EditAvailableBar';
+import RecordUpdatedNotice from './common/RecordUpdatedNotice';
+import RecordConflictBanner from './common/RecordConflictBanner';
+import ConflictReviewDialog from './common/ConflictReviewDialog';
 import { clearBusinessCaches } from '../lib/session';
 import { imageForPartName } from '../lib/partImages';
 import {
@@ -2626,10 +2633,48 @@ export function SupplierPicker({ suppliers, row, onChange, onRemove, onSaveSuppl
   );
 }
 
+// CONCURRENCY PHASE 1c — the record fields whose "another user changed this"
+// diff is worth showing in the conflict review. Parts/suppliers use mode="review"
+// (the editors transform field shapes on load/save, so an automatic field-level
+// merge is not safe) — this list only drives the read-only "what changed" display,
+// compared record-vs-record.
+const PART_CONFLICT_FIELDS = [
+  { key: 'name', label: 'Part name' },
+  { key: 'sku', label: 'SKU' },
+  { key: 'brand', label: 'Brand' },
+  { key: 'category', label: 'Category' },
+  { key: 'oemNo', label: 'OEM number' },
+  { key: 'partNo', label: 'Part number' },
+  { key: 'hsn', label: 'HSN' },
+  { key: 'gst', label: 'GST %' },
+  { key: 'locationBin', label: 'Location / bin' },
+  { key: 'minStock', label: 'Min stock' },
+  { key: 'mrp', label: 'MRP' },
+  { key: 'purchasePrice', label: 'Purchase price' },
+  { key: 'sellingPrice', label: 'Selling price' },
+  { key: 'minSellingPrice', label: 'Min selling price' },
+  { key: 'notes', label: 'Notes' },
+];
+const SUPPLIER_CONFLICT_FIELDS = [
+  { key: 'name', label: 'Supplier name' },
+  { key: 'type', label: 'Type' },
+  { key: 'contactPerson', label: 'Contact person' },
+  { key: 'email', label: 'Email' },
+  { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'gst', label: 'GST number' },
+  { key: 'pan', label: 'PAN' },
+  { key: 'address', label: 'Address' },
+  { key: 'city', label: 'City' },
+  { key: 'state', label: 'State' },
+  { key: 'paymentMode', label: 'Payment mode' },
+  { key: 'creditDays', label: 'Credit days' },
+  { key: 'status', label: 'Status' },
+];
+
 // ---------------------------------------------------------------------------
 // Add / Edit Part Modal — Requirement 3 (learning comboboxes) + Base64 image
 // ---------------------------------------------------------------------------
-function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, onSaveSupplier, onCreateSupplier, isAdmin = true, categoryTree = CATEGORY_TREE, vehicleTree = VEHICLE_TREE, salesHistory = [], onAddCategory, onAddVehicle, asPage = false, demoMode = false }) {
+function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, onSaveSupplier, onCreateSupplier, isAdmin = true, categoryTree = CATEGORY_TREE, vehicleTree = VEHICLE_TREE, salesHistory = [], onAddCategory, onAddVehicle, asPage = false, demoMode = false, readOnly = false, banner = null }) {
   // PRODUCTIVITY: recent sales summary for this part (purchasing aid).
   const saleStats = useMemo(() => {
     if (!part?.id) return null;
@@ -3490,6 +3535,16 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
   // so there is no fixed overlay, no height math, and none of the iOS/Android
   // modal-scroll problems can occur. The form's own sticky footer (Back/Next/Save)
   // pins to the viewport bottom via native scroll.
+  // CONCURRENCY PHASE 1c — a viewer holding this popup open while someone else edits
+  // gets it READ-ONLY (one disabled <fieldset> switches off every control) with the
+  // lease / record-status banner on top, never force-closed.
+  const bodyEl = (
+    <>
+      {banner && <div className="px-5 pt-4">{banner}</div>}
+      <fieldset disabled={readOnly} style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>{formEl}</fieldset>
+    </>
+  );
+
   if (asPage) {
     return (
       <div className="min-h-screen flex flex-col" style={{ background: 'var(--surface-0)' }}>
@@ -3501,10 +3556,10 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
             <ChevronLeft size={24} />
           </button>
           <div className="text-base font-bold bg-gradient-to-r from-[#d4af37] to-[#aa801e] bg-clip-text text-transparent">
-            {isEdit ? 'Edit Part' : 'Add New Part'}
+            {readOnly ? 'View Part' : isEdit ? 'Edit Part' : 'Add New Part'}
           </div>
         </div>
-        {formEl}
+        {bodyEl}
       </div>
     );
   }
@@ -3512,9 +3567,13 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
   return (
     <Modal
       onClose={onClose}
-      title={isEdit ? 'Edit Part' : 'Add New Part'}
+      title={readOnly ? 'View Part' : isEdit ? 'Edit Part' : 'Add New Part'}
       bodyClassName=""
-      footer={(
+      footer={readOnly ? (
+        <div className="flex gap-3">
+          <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Close</button>
+        </div>
+      ) : (
         <div className="flex gap-3">
           <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Cancel</button>
           <button type="submit" form="part-form" disabled={saving || !formValid} className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110 active:scale-[0.98] transition disabled:opacity-60 flex items-center justify-center gap-2">
@@ -3524,7 +3583,7 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
         </div>
       )}
     >
-      {formEl}
+      {bodyEl}
     </Modal>
   );
 }
@@ -3653,7 +3712,7 @@ const PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Credit', 'Cheque'];
 // GST state codes → state name (for auto-detection; GST is optional).
 const GST_STATE_CODES = { '01': 'Jammu & Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab', '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana', '07': 'Delhi', '08': 'Rajasthan', '09': 'Uttar Pradesh', 10: 'Bihar', 11: 'Sikkim', 12: 'Arunachal Pradesh', 13: 'Nagaland', 14: 'Manipur', 15: 'Mizoram', 16: 'Tripura', 17: 'Meghalaya', 18: 'Assam', 19: 'West Bengal', 20: 'Jharkhand', 21: 'Odisha', 22: 'Chhattisgarh', 23: 'Madhya Pradesh', 24: 'Gujarat', 27: 'Maharashtra', 29: 'Karnataka', 30: 'Goa', 32: 'Kerala', 33: 'Tamil Nadu', 34: 'Puducherry', 36: 'Telangana', 37: 'Andhra Pradesh' };
 
-function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demoMode = false }) {  const isEdit = !!supplier?.id;
+function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demoMode = false, readOnly = false, banner = null }) {  const isEdit = !!supplier?.id;
   const [form, setForm] = useState(() => {
     const contacts = getSupplierContacts(supplier);
     const altNames = Array.isArray(supplier?.altNames) ? supplier.altNames : [];
@@ -3993,11 +4052,19 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
           </div>
         </form>
   );
-  const title = isEdit ? 'Edit Supplier' : 'Add New Supplier';
-  if (asPage) return <MobileFormPage title={title} onClose={onClose}>{formEl}</MobileFormPage>;
+  const title = readOnly ? 'View Supplier' : isEdit ? 'Edit Supplier' : 'Add New Supplier';
+  // CONCURRENCY PHASE 1c — read-only view for a viewer holding this popup open while
+  // another user edits; the disabled <fieldset> switches off every control at once.
+  const bodyEl = (
+    <>
+      {banner && <div className="px-5 pt-4">{banner}</div>}
+      <fieldset disabled={readOnly} style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>{formEl}</fieldset>
+    </>
+  );
+  if (asPage) return <MobileFormPage title={title} onClose={onClose}>{bodyEl}</MobileFormPage>;
   return (
     <Modal onClose={onClose} title={title} bodyClassName="">
-      {formEl}
+      {bodyEl}
     </Modal>
   );
 }
@@ -10052,31 +10119,107 @@ export default function InventoryDashboard() {
   const [editSupplier, setEditSupplier] = useState(null);
   const [supplierSaving, setSupplierSaving] = useState(false);
 
-  // CONCURRENCY PHASE 1b — single active editor for parts & suppliers. The lease
-  // is acquired when an editor opens for an EXISTING record and released when it
-  // closes (save or cancel). If another user already holds it, the editor is
-  // closed again immediately with a clear message. New records (no id) never
-  // take a lease. Phase 1a `_rev` remains the authoritative save-time guard.
+  // CONCURRENCY PHASE 1b/1c — single active editor for parts & suppliers. The lease
+  // is acquired when an editor opens for an EXISTING record and released on close
+  // (save or cancel). If another user already holds it, the popup stays OPEN in a
+  // read-only view (Phase 1c) — never force-closed — and becomes editable in place
+  // via [Edit] once the lease frees. New records (no id) never take a lease. Phase
+  // 1a `_rev` remains the authoritative save-time guard.
   const partLease = useEditLease('parts', showModal && editPart && editPart.id ? editPart.id : null);
   const supplierLease = useEditLease('suppliers', showSupplierModal && editSupplier && editSupplier.id ? editSupplier.id : null);
+  const [partViewOnly, setPartViewOnly] = useState(false);
+  const [supplierViewOnly, setSupplierViewOnly] = useState(false);
+  const [partReviewOpen, setPartReviewOpen] = useState(false);
+  const [supplierReviewOpen, setSupplierReviewOpen] = useState(false);
+  const partSync = useRecordSync('parts', showModal && editPart && editPart.id ? editPart.id : null, editPart && editPart._rev);
+  const supplierSync = useRecordSync('suppliers', showSupplierModal && editSupplier && editSupplier.id ? editSupplier.id : null, editSupplier && editSupplier._rev);
+  useLeaseReleaseToast(partLease.status);
+  useLeaseReleaseToast(supplierLease.status);
   useEffect(() => {
-    if (!(showModal && editPart && editPart.id)) return;
+    if (!(showModal && editPart && editPart.id)) { setPartViewOnly(false); return undefined; }
     let cancelled = false;
+    setPartViewOnly(false);
+    partSync.markSynced(revOf(editPart));
     partLease.acquire(editPart.id).then((r) => {
       if (cancelled) return;
-      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this part. You can view it, but editing is unavailable right now.`, { duration: 6000 }); setShowModal(false); setEditPart(null); }
+      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this part. You can view it, but editing is temporarily unavailable.`, { duration: 6000 }); setPartViewOnly(true); }
     });
     return () => { cancelled = true; };
   }, [showModal, editPart && editPart.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!(showSupplierModal && editSupplier && editSupplier.id)) return;
+    if (!(showSupplierModal && editSupplier && editSupplier.id)) { setSupplierViewOnly(false); return undefined; }
     let cancelled = false;
+    setSupplierViewOnly(false);
+    supplierSync.markSynced(revOf(editSupplier));
     supplierLease.acquire(editSupplier.id).then((r) => {
       if (cancelled) return;
-      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this supplier. You can view it, but editing is unavailable right now.`, { duration: 6000 }); setShowSupplierModal(false); setEditSupplier(null); }
+      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this supplier. You can view it, but editing is temporarily unavailable.`, { duration: 6000 }); setSupplierViewOnly(true); }
     });
     return () => { cancelled = true; };
   }, [showSupplierModal, editSupplier && editSupplier.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Phase 1c — a view-only holder claims the editor once the lease frees ([Edit]).
+  const claimPartEdit = useCallback(async () => {
+    if (!editPart || !editPart.id) return;
+    const r = await partLease.acquire(editPart.id);
+    if (!r.ok) { toast.error(`🔒 ${r.heldBy} is still editing this part.`); return; }
+    if (partSync.latest) setEditPart(partSync.latest);
+    partSync.markSynced();
+    setPartViewOnly(false);
+  }, [editPart, partLease, partSync]);
+  const claimSupplierEdit = useCallback(async () => {
+    if (!editSupplier || !editSupplier.id) return;
+    const r = await supplierLease.acquire(editSupplier.id);
+    if (!r.ok) { toast.error(`🔒 ${r.heldBy} is still editing this supplier.`); return; }
+    if (supplierSync.latest) setEditSupplier(supplierSync.latest);
+    supplierSync.markSynced();
+    setSupplierViewOnly(false);
+  }, [editSupplier, supplierLease, supplierSync]);
+
+  // Phase 1c — the lease / record-status strip shown at the top of the part &
+  // supplier popups (view-only OR editing). Built once here, passed to every render
+  // site so the wording can't drift.
+  const closePartModal = useCallback(() => { partLease.release(); setPartReviewOpen(false); setShowModal(false); setEditPart(null); }, [partLease]);
+  const closeSupplierModal = useCallback(() => { supplierLease.release(); setSupplierReviewOpen(false); setShowSupplierModal(false); setEditSupplier(null); }, [supplierLease]);
+  const partBanner = (
+    <>
+      {partViewOnly && partLease.status === 'held' && <EditLeaseBanner status="held" heldByEmail={partLease.heldByEmail} className="mb-2" />}
+      {partViewOnly && partLease.status !== 'held' && <EditAvailableBar onEdit={claimPartEdit} className="mb-2" />}
+      {partViewOnly
+        ? <RecordUpdatedNotice status={partSync.status} onAcknowledge={() => { if (partSync.latest) setEditPart(partSync.latest); partSync.markSynced(); }} className="mb-2" />
+        : <RecordConflictBanner status={partSync.status} onReview={() => setPartReviewOpen(true)} onClose={closePartModal} className="mb-2" />}
+    </>
+  );
+  const supplierBanner = (
+    <>
+      {supplierViewOnly && supplierLease.status === 'held' && <EditLeaseBanner status="held" heldByEmail={supplierLease.heldByEmail} className="mb-2" />}
+      {supplierViewOnly && supplierLease.status !== 'held' && <EditAvailableBar onEdit={claimSupplierEdit} className="mb-2" />}
+      {supplierViewOnly
+        ? <RecordUpdatedNotice status={supplierSync.status} onAcknowledge={() => { if (supplierSync.latest) setEditSupplier(supplierSync.latest); supplierSync.markSynced(); }} className="mb-2" />
+        : <RecordConflictBanner status={supplierSync.status} onReview={() => setSupplierReviewOpen(true)} onClose={closeSupplierModal} className="mb-2" />}
+    </>
+  );
+  const partReviewDialog = (partReviewOpen && editPart && editPart.id && partSync.latest) ? (
+    <ConflictReviewDialog
+      mode="review"
+      title="This part was changed by another user"
+      fields={PART_CONFLICT_FIELDS}
+      opened={editPart}
+      latest={partSync.latest}
+      onUseLatest={(latest) => { setPartReviewOpen(false); partSync.markSynced(revOf(latest)); setEditPart({ ...latest }); }}
+      onClose={() => setPartReviewOpen(false)}
+    />
+  ) : null;
+  const supplierReviewDialog = (supplierReviewOpen && editSupplier && editSupplier.id && supplierSync.latest) ? (
+    <ConflictReviewDialog
+      mode="review"
+      title="This supplier was changed by another user"
+      fields={SUPPLIER_CONFLICT_FIELDS}
+      opened={editSupplier}
+      latest={supplierSync.latest}
+      onUseLatest={(latest) => { setSupplierReviewOpen(false); supplierSync.markSynced(revOf(latest)); setEditSupplier({ ...latest }); }}
+      onClose={() => setSupplierReviewOpen(false)}
+    />
+  ) : null;
 
   // 1.3 Unified inventory state filter — Active | Low Stock | Out of Stock | Archived | All.
   // Active means "not archived" (Issue 6.4) — Low/Out are their own dedicated filters
@@ -13258,9 +13401,13 @@ export default function InventoryDashboard() {
   if (isMobile) {
     if (showModal) {
       return (
+        <>
         <PartModal
+          key={`part:${editPart?.id || 'new'}:${revOf(editPart)}`}
           asPage
           demoMode={demoMode}
+          readOnly={partViewOnly}
+          banner={partBanner}
           part={editPart}
           inventory={inventory}
           suppliers={suppliers}
@@ -13274,20 +13421,28 @@ export default function InventoryDashboard() {
           onSave={handleSave}
           onSaveSupplier={persistSupplierEdit}
           onCreateSupplier={createSupplierNow}
-          onClose={() => { partLease.release(); setShowModal(false); setEditPart(null); duplicateOriginRef.current = null; }}
+          onClose={() => { closePartModal(); duplicateOriginRef.current = null; }}
         />
+        {partReviewDialog}
+        </>
       );
     }
     if (showSupplierModal) {
       return (
+        <>
         <SupplierModal
+          key={`supplier:${editSupplier?.id || 'new'}:${revOf(editSupplier)}`}
           asPage
           demoMode={demoMode}
+          readOnly={supplierViewOnly}
+          banner={supplierBanner}
           supplier={editSupplier}
           saving={supplierSaving}
           onSave={handleSupplierSave}
-          onClose={() => { supplierLease.release(); setShowSupplierModal(false); setEditSupplier(null); }}
+          onClose={closeSupplierModal}
         />
+        {supplierReviewDialog}
+        </>
       );
     }
     if (checkoutPart) {
@@ -14578,7 +14733,10 @@ export default function InventoryDashboard() {
 
       {showModal && (
         <PartModal
+          key={`part:${editPart?.id || 'new'}:${revOf(editPart)}`}
           demoMode={demoMode}
+          readOnly={partViewOnly}
+          banner={partBanner}
           part={editPart}
           inventory={inventory}
           suppliers={suppliers}
@@ -14592,28 +14750,24 @@ export default function InventoryDashboard() {
           onSave={handleSave}
           onSaveSupplier={persistSupplierEdit}
           onCreateSupplier={createSupplierNow}
-          onClose={() => {
-            partLease.release();
-            setShowModal(false);
-            setEditPart(null);
-            duplicateOriginRef.current = null;
-          }}
+          onClose={() => { closePartModal(); duplicateOriginRef.current = null; }}
         />
       )}
+      {partReviewDialog}
 
       {showSupplierModal && (
         <SupplierModal
+          key={`supplier:${editSupplier?.id || 'new'}:${revOf(editSupplier)}`}
           demoMode={demoMode}
+          readOnly={supplierViewOnly}
+          banner={supplierBanner}
           supplier={editSupplier}
           saving={supplierSaving}
           onSave={handleSupplierSave}
-          onClose={() => {
-            supplierLease.release();
-            setShowSupplierModal(false);
-            setEditSupplier(null);
-          }}
+          onClose={closeSupplierModal}
         />
       )}
+      {supplierReviewDialog}
 
       {showLogoutConfirm && (
         <LogoutConfirmModal

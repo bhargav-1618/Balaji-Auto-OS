@@ -24,7 +24,13 @@ import { exportReportPDF } from '../../lib/pdfTheme';
 import { resolveSelectedRecords, countHiddenSelections } from '../../lib/selectionScope';
 import { useDeferredSearch, useSearchIndex, searchAndRank, indexBy, phoneKey } from '../../lib/useSearch';
 import { useEditLease } from '../../hooks/useEditLease';
+import { useRecordSync } from '../../hooks/useRecordSync';
+import { useLeaseReleaseToast } from '../../hooks/useLeaseReleaseToast';
+import { revOf } from '../../lib/concurrency';
 import EditLeaseBanner from '../common/EditLeaseBanner';
+import RecordUpdatedNotice from '../common/RecordUpdatedNotice';
+import RecordConflictBanner from '../common/RecordConflictBanner';
+import ConflictReviewDialog from '../common/ConflictReviewDialog';
 import { variantsFor, FUELS, TRANSMISSIONS } from '../../lib/vehicleCatalog';
 import { INDIAN_STATES } from '../../lib/indianStates';
 import { INDIAN_DISTRICTS, CITY_MASTER_DATA } from '../../lib/indianDistricts';
@@ -214,8 +220,38 @@ function F({ label, req, error, warn, children, className = '' }) {
   );
 }
 
-function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMode = false }) {
+// CONCURRENCY PHASE 1c — the fields the conflict rebase is allowed to touch:
+// form-owned identity / contact / address / business / status / notes + the whole
+// vehicles[] array (one conflict unit, never element-merged). Server-managed rollups
+// (totalSpent, outstanding, visits), the append-only history[], the code and _rev are
+// deliberately excluded.
+const CUSTOMER_CONFLICT_FIELDS = [
+  { key: 'name', label: 'Name' },
+  { key: 'type', label: 'Customer type' },
+  { key: 'phone', label: 'Primary mobile' },
+  { key: 'altPhone', label: 'Alternate mobile' },
+  { key: 'email', label: 'Email' },
+  { key: 'address', label: 'Address' },
+  { key: 'area', label: 'Area' },
+  { key: 'city', label: 'City' },
+  { key: 'district', label: 'District' },
+  { key: 'state', label: 'State' },
+  { key: 'pincode', label: 'Pincode' },
+  { key: 'gst', label: 'GST number' },
+  { key: 'pan', label: 'PAN' },
+  { key: 'companyName', label: 'Company' },
+  { key: 'occupation', label: 'Occupation' },
+  { key: 'referenceBy', label: 'Reference by' },
+  { key: 'status', label: 'Status' },
+  { key: 'notes', label: 'Notes' },
+  { key: 'vehicles', label: 'Vehicles', format: (v) => `${(v || []).length} vehicle${(v || []).length === 1 ? '' : 's'}` },
+];
+
+function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMode = false, formValuesRef, conflict }) {
   const [f, setF] = useState(initial);
+  // Phase 1c — expose the in-progress form so the module can build a conflict rebase
+  // ("Keep my changes") without lifting all of this component's state.
+  useEffect(() => { if (formValuesRef) formValuesRef.current = f; }, [f, formValuesRef]);
   const [step, setStep] = useState(0);
   // `patch` may be a plain object (unchanged, existing behaviour — most callers just
   // set a scalar field from its own input's onChange, never batched with anything
@@ -670,6 +706,12 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
           <button onClick={onClose} disabled={saving} aria-label="Close" className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"><X size={17} /></button>
         </div>
 
+        {conflict && (conflict.status === 'updated' || conflict.status === 'deleted') && (
+          <div className="px-5 pt-3 flex-shrink-0">
+            <RecordConflictBanner status={conflict.status} onReview={conflict.onReview} onClose={conflict.onClose} />
+          </div>
+        )}
+
         <div className="flex-1 min-h-0 flex flex-col sm:flex-row">
           <div className="sm:w-44 flex-shrink-0 flex sm:flex-col gap-1 p-3 overflow-x-auto sm:overflow-visible" style={{ borderRight: '1px solid rgba(var(--fg-rgb),0.06)' }}>
             {STEPS.map((s, i) => (
@@ -1047,13 +1089,25 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
   // customer's editor is open, else the one whose detail panel is selected (so a
   // viewer's Edit button disables live when someone else starts editing).
   const lease = useEditLease('customers', editCust && editCust.id ? editCust.id : selId);
+  // CONCURRENCY PHASE 1c — watch the open customer's document (detail panel viewer
+  // OR wizard editor) for changes another session makes. Baseline is re-set on
+  // editor open / merge; own saves advance it so they don't self-alarm.
+  const watchedCustId = (editCust && editCust.id) || selId;
+  const watchedCustRev = (editCust && editCust._rev) != null
+    ? editCust._rev
+    : customers.find((c) => c.id === selId)?._rev;
+  const recordSync = useRecordSync('customers', watchedCustId, watchedCustRev);
+  useLeaseReleaseToast(lease.status);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const wizardValuesRef = useRef(null);
   const openCustomerEditor = useCallback(async (c) => {
     if (!c || !c.id) { setEditCust(c); return; }          // new customer — no lease
     const r = await lease.acquire(c.id);
     if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this customer. You can view it, but editing is unavailable right now.`, { duration: 6000 }); return; }
+    recordSync.markSynced(revOf(c));   // acknowledge the revision we're opening with
     setEditCust(c);
-  }, [lease]);
-  const closeCustomerEditor = useCallback(() => { lease.release(); setEditCust(null); }, [lease]);
+  }, [lease, recordSync]);
+  const closeCustomerEditor = useCallback(() => { lease.release(); setReviewOpen(false); setEditCust(null); }, [lease]);
   const [editVeh, setEditVeh] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [detailTab, setDetailTab] = useState(V.detailTab || 'Vehicles');
@@ -1340,7 +1394,8 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
         const oldVehIds = new Set((existingCust.vehicles || []).map((v) => v.id));
         (c.vehicles || []).forEach((v) => { if (!oldVehIds.has(v.id)) hist.push(histEntry('Vehicle Added', `${v.regNo} ${v.model || ''}`.trim())); });
         hist.push(histEntry('Customer Edited', c.name));
-        await onSaveCustomerEdit({ ...c, history: hist }, Number.isInteger(c._rev) && c._rev >= 0 ? c._rev : 0);
+        const fresh = await onSaveCustomerEdit({ ...c, history: hist }, Number.isInteger(c._rev) && c._rev >= 0 ? c._rev : 0);
+        if (fresh && Number.isInteger(fresh._rev)) recordSync.markSynced(fresh._rev); // Phase 1c — don't alarm on our own save
       } else {
         await setCustomers((prev) => {
           const exists = prev.some((x) => x.id === c.id);
@@ -1882,6 +1937,8 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
               <p className="text-[11px] text-white/45 mb-3">{selected.code} <Badge color={typeColor(selected.type)}>{t(`customerType.${selected.type}`, selected.type)}</Badge></p>
               <EditLeaseBanner status={lease.status} heldByEmail={lease.heldByEmail} className="mb-3" />
               {lease.status === 'mine' && <div role="status" className="flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs mb-3" style={{ background: 'rgba(212,175,55,0.10)', border: '1px solid rgba(212,175,55,0.28)' }}><Edit3 size={13} className="text-[#d4af37]" /><span className="text-[#e8c46a]">You are editing this customer.</span></div>}
+              {/* Phase 1c — another user saved/deleted this customer while it was open here. */}
+              {!editCust && <RecordUpdatedNotice status={recordSync.status} onAcknowledge={() => recordSync.markSynced()} className="mb-3" />}
               {/* Defect #46 — major-section gaps in this drawer used to alternate 16/12/16/12
                   (mb-4, mb-3, mb-4, mb-3) across contact info -> KPI strip -> secondary
                   grid -> tabs with no reason for the difference; measured live via
@@ -2111,7 +2168,31 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
         )}
       </DetailsPanel>
 
-      {editCust && <CustomerWizard initial={editCust} existing={customers} canManage={canManage} onSave={saveCustomer} onClose={editCust.id ? closeCustomerEditor : () => setEditCust(null)} demoMode={demoMode} />}
+      {editCust && (
+        <CustomerWizard
+          key={`${editCust.id || 'new'}:${revOf(editCust)}`}
+          initial={editCust}
+          existing={customers}
+          canManage={canManage}
+          onSave={saveCustomer}
+          onClose={editCust.id ? closeCustomerEditor : () => setEditCust(null)}
+          demoMode={demoMode}
+          formValuesRef={wizardValuesRef}
+          conflict={editCust.id ? { status: recordSync.status, onReview: () => setReviewOpen(true), onClose: closeCustomerEditor } : null}
+        />
+      )}
+      {reviewOpen && editCust && editCust.id && recordSync.latest && (
+        <ConflictReviewDialog
+          title="Review the latest customer"
+          fields={CUSTOMER_CONFLICT_FIELDS}
+          opened={editCust}
+          local={wizardValuesRef.current}
+          latest={recordSync.latest}
+          onKeepMine={(merged) => { setReviewOpen(false); recordSync.markSynced(revOf(merged)); setEditCust(merged); }}
+          onUseLatest={(latest) => { setReviewOpen(false); recordSync.markSynced(revOf(latest)); setEditCust({ ...latest }); }}
+          onClose={() => setReviewOpen(false)}
+        />
+      )}
       {editVeh && selected && <VehicleModal initial={editVeh} onSave={saveVehicle} onClose={() => setEditVeh(null)} />}
       </div>
     </>

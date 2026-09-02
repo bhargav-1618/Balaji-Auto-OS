@@ -114,34 +114,42 @@ ok('Customers: editor open acquires, close/save releases (nested vehicles ride t
   /const lease = useEditLease\('customers', editCust && editCust\.id \? editCust\.id : selId\)/.test(cust)
   && /const r = await lease\.acquire\(c\.id\);/.test(cust)
   && /if \(!r\.ok\) \{ toast\.error\(`🔒 \$\{r\.heldBy\} is editing this customer/.test(cust)
-  && /const closeCustomerEditor = useCallback\(\(\) => \{ lease\.release\(\); setEditCust\(null\); \}/.test(cust)
+  && /const closeCustomerEditor = useCallback\(\(\) => \{ lease\.release\(\); setReviewOpen\(false\); setEditCust\(null\); \}/.test(cust)
   && /lease\.release\(\);[^\n]*\n\s*setEditCust\(null\);\s*\n\s*toast\.success\('Customer saved'\)/.test(cust));
 ok('Customers: a viewer\'s Edit button disables live when the lease is held',
   /disabled=\{c\.id === selId && lease\.status === 'held'\}/.test(cust)
   && /<EditLeaseBanner status=\{lease\.status\} heldByEmail=\{lease\.heldByEmail\}/.test(cust));
-ok('Parts: editor open acquires, close/successful-save releases',
+// PHASE 1c — a lost lease race NO LONGER closes the popup: it stays open read-only
+// (viewOnly flag) and [Edit] re-acquires. Assert the close calls are gone from those
+// branches and the view-only path is in place.
+ok('Parts: lost lease race keeps the popup open read-only (not force-closed); successful save still releases',
   /const partLease = useEditLease\('parts', showModal && editPart && editPart\.id \? editPart\.id : null\)/.test(dash)
   && /partLease\.acquire\(editPart\.id\)\.then\(\(r\) => \{/.test(dash)
+  && /if \(!r\.ok\) \{ toast\.error\([^\n]*setPartViewOnly\(true\); \}/.test(dash)
+  && !/if \(!r\.ok\) \{ toast\.error\(`🔒 \$\{r\.heldBy\} is editing this part[\s\S]{0,120}setShowModal\(false\)/.test(dash)
   && /if \(!concRejected\) \{ partLease\.release\(\); setShowModal\(false\); setEditPart\(null\); \}/.test(dash)
-  && /partLease\.release\(\);\s*\n\s*setShowModal\(false\)/.test(dash));
-ok('Suppliers: editor open acquires, close/successful-save releases',
+  && /const claimPartEdit = useCallback\(async \(\) => \{[\s\S]{0,240}partLease\.acquire\(editPart\.id\)/.test(dash));
+ok('Suppliers: lost lease race keeps the popup open read-only; successful save still releases',
   /const supplierLease = useEditLease\('suppliers', showSupplierModal && editSupplier && editSupplier\.id/.test(dash)
   && /supplierLease\.acquire\(editSupplier\.id\)\.then/.test(dash)
+  && /if \(!r\.ok\) \{ toast\.error\([^\n]*setSupplierViewOnly\(true\); \}/.test(dash)
   && /if \(!concRejected\) \{ supplierLease\.release\(\); setShowSupplierModal\(false\)/.test(dash));
-ok('Invoices: an EXISTING invoice editor acquires; new/draft invoices take no lease',
+ok('Invoices: an EXISTING invoice editor acquires; lost race keeps the popup open read-only',
   /const isPersistedEdit = !!\(edit && edit\.id && \(invoices \|\| \[\]\)\.some\(\(iv\) => iv\.id === edit\.id\)\)/.test(bill)
   && /const invoiceLease = useEditLease\('invoices', isPersistedEdit \? edit\.id : null\)/.test(bill)
   && /invoiceLease\.acquire\(edit\.id\)\.then/.test(bill)
-  && /const closeInvoiceEditor = useCallback\(\(\) => \{ invoiceLease\.release\(\); setEdit\(null\); \}/.test(bill));
-ok('Job Cards: loading a SAVED card acquires; a new card takes no lease; save/clear releases',
+  && /if \(!r\.ok\) \{ toast\.error\([^\n]*setInvoiceViewOnly\(true\); \}/.test(bill)
+  && !/if \(!r\.ok\) \{ toast\.error\(`🔒 \$\{r\.heldBy\} is editing this invoice[\s\S]{0,120}setEdit\(null\)/.test(bill)
+  && /const closeInvoiceEditor = useCallback\(\(\) => \{ invoiceLease\.release\(\); setInvoiceReviewOpen\(false\); setEdit\(null\); \}/.test(bill));
+ok('Job Cards: loading a SAVED card acquires; a lost race loads it read-only (not refused); save/clear releases',
   /const jcLease = useEditLease\('jobCards', leasedJobNo\)/.test(jc)
   && /const isSaved = !!\(jc && jc\.jobNo && \(savedRef\.current \|\| \[\]\)\.some\(\(c\) => c\.jobNo === jc\.jobNo\)\)/.test(jc)
-  && /const r = await jcLease\.acquire\(jc\.jobNo\);/.test(jc)
-  && /jcLease\.release\(\); setLeasedJobNo\(null\);\s+\/\/ Phase 1b/.test(jc));
+  && /const r = await jcLease\.acquire\(jc\.jobNo\);\s*\n\s*setJcViewOnly\(!r\.ok\);/.test(jc)
+  && /jcLease\.release\(\); setLeasedJobNo\(null\); setJcViewOnly\(false\);\s+\/\/ Phase 1b/.test(jc));
 
 // ── separation of concerns: the lease is NOT the data-integrity layer ─────
-ok('the Phase 1a guarded save (repo / store / lib/concurrency) never reads a lease',
-  !/editLease|editLocks|acquireLease|useEditLease/.test(read('../repositories/firestoreRepository.js') + read('../services/persistenceStore.js') + read('../lib/concurrency.js')));
+ok('the Phase 1a guarded save (repo / store / lib/concurrency) never reads a lease or the record-sync layer',
+  !/editLease|editLocks|acquireLease|useEditLease|recordSync|useRecordSync/.test(read('../repositories/firestoreRepository.js') + read('../services/persistenceStore.js') + read('../lib/concurrency.js')));
 ok('a stale/deleted Phase 1a rejection keeps the editor AND the lease (does not release on failed save)',
   /if \(!concRejected\) \{ partLease\.release\(\)/.test(dash)
   && /if \(!concRejected\) \{ supplierLease\.release\(\)/.test(dash));
