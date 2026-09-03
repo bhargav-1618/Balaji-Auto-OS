@@ -151,10 +151,12 @@ seed('customers', [{ id: 'legacy1', name: 'Legacy', phone: '9000000001' }]); // 
     /store\.saveGuarded\(COLLECTIONS\.INVOICES, target, revOf\(target\)/.test(dash)
     && /collectInvoicePayment/.test(dash));
   ok('J: Customers editor save is guarded via onSaveCustomerEdit → saveCustomerEdit → store.saveGuarded',
-    /const saveCustomerEdit = useCallback\(async \(record, expectedRev\) => \{[\s\S]{0,300}store\.saveGuarded\(COLLECTIONS\.CUSTOMERS, record, expectedRev/.test(dash)
+    // Phase 3b (CWF-03) — signature gained an `opts` arg (clientBefore) and the
+    // guarded save now id-array-replays `vehicles`; the _rev guard is unchanged.
+    /const saveCustomerEdit = useCallback\(async \(record, expectedRev, opts = \{\}\) => \{[\s\S]{0,600}store\.saveGuarded\(COLLECTIONS\.CUSTOMERS, record, expectedRev/.test(dash)
     && /onSaveCustomerEdit=\{saveCustomerEdit\}/.test(dash)
     && /if \(existingCust && onSaveCustomerEdit\)/.test(cust_src)
-    && /await onSaveCustomerEdit\(\{ \.\.\.c, history: hist \}/.test(cust_src));
+    && /await onSaveCustomerEdit\(\s*\{ \.\.\.wizardFields, history: hist \}/.test(cust_src));
 
   // ── K. the payment fix (78794dc) still there and now participates in _rev ──
   ok('K: BUG-CONC-01 payment transaction remains, and bumps _rev so an open invoice editor is rejected as stale',

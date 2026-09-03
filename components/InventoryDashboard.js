@@ -9382,12 +9382,21 @@ export default function InventoryDashboard() {
   // Phase 1a — the Customer WIZARD save (an edit of an existing customer, which
   // also carries the nested vehicles[]) goes through the revision-guarded
   // transaction. Every other setCustomers() mutation (add note, quick vehicle,
-  // bulk archive, billing's totals write-back) is unchanged — those touch narrow
-  // fields off the live listener state and must not start rejecting.
-  const saveCustomerEdit = useCallback(async (record, expectedRev) => {
-    const fresh = await store.saveGuarded(COLLECTIONS.CUSTOMERS, record, expectedRev, { label: 'This customer' });
+  // bulk archive, billing's totals write-back) now persists field-by-field via
+  // store.syncAll's Phase-3b path — those touch narrow fields off the live listener
+  // state and must not start rejecting.
+  // Phase 3b (CWF-03) — `opts.clientBefore` (the record the wizard opened) lets the
+  // guarded save replay ONLY the vehicles this editor changed onto server truth,
+  // so a vehicle added from the detail panel while the wizard was open isn't
+  // dropped by the wizard's save.
+  const saveCustomerEdit = useCallback(async (record, expectedRev, opts = {}) => {
+    const fresh = await store.saveGuarded(COLLECTIONS.CUSTOMERS, record, expectedRev, {
+      label: 'This customer',
+      idArrayKeys: ['vehicles'],
+      clientBefore: opts.clientBefore || null,
+    });
     const prev = customersRef.current;
-    const next = prev.map((c) => (c.id === record.id ? { ...c, ...record, _rev: fresh._rev } : c));
+    const next = prev.map((c) => (c.id === record.id ? { ...c, ...record, vehicles: fresh.vehicles || record.vehicles, _rev: fresh._rev } : c));
     customersRef.current = next;
     setCustomersRaw(next);
     return fresh;
@@ -9930,13 +9939,23 @@ export default function InventoryDashboard() {
   //
   // Fix: post the payment inside a Firestore transaction that RE-READS the invoice and
   // appends to the server's current `payments`, so two legitimate concurrent payments
-  // are both preserved and paid/balance/status are recomputed from server truth. The
-  // realized-revenue / stock cascade (runInvoiceTransaction) is diff-based and
-  // idempotent, so it runs AFTER the atomic money write with no double-counting.
+  // are both preserved and paid/balance/status are recomputed from server truth.
+  //
+  // Phase 3b (CWF-01) — the realized stock/ledger/audit cascade
+  // (runInvoiceTransaction) is diff-based, so it is only idempotent if `prior` is
+  // the invoice's TRUE pre-payment state. It used to read `prior` from
+  // `invoicesRef.current` — stale React state — so two cashiers both closing the
+  // balance at once each saw `prior = unpaid`, `fresh = Paid`, and BOTH ran the
+  // full realization (double stock deduction, double revenue). The transaction now
+  // returns its OWN server pre-image (`serverPrior`, read before the write); the
+  // cascade diffs against that. Firestore serialises the two attempts, so the
+  // second payment's committed attempt re-reads an already-Paid invoice → its
+  // `serverPrior` is Paid → `Paid -> Paid` is a zero delta → realization runs
+  // exactly once, on whichever payment actually crossed unpaid -> Paid.
   // Demo mode has one client and no server — it keeps the existing in-memory path.
   const collectInvoicePayment = async (invoiceId, pay) => {
     const invRef = doc(db, COLLECTIONS.INVOICES, invoiceId);
-    const fresh = await runTransaction(db, async (tx) => {
+    const { serverPrior, fresh } = await runTransaction(db, async (tx) => {
       const snap = await tx.get(invRef);
       if (!snap.exists()) {
         const err = new Error('This invoice was deleted by another user. Reload before collecting payment.');
@@ -9949,6 +9968,9 @@ export default function InventoryDashboard() {
         err.code = 'conc/estimate';
         throw err;
       }
+      // Authoritative pre-payment image — captured from the transaction's own read,
+      // BEFORE any mutation. This, not client state, is what the cascade diffs against.
+      const serverPrior = { ...data, id: invoiceId };
       const payments = [...(Array.isArray(data.payments) ? data.payments : []), pay];
       const merged = { ...data, id: invoiceId, payments };
       const t = invTotals(merged);
@@ -9969,13 +9991,16 @@ export default function InventoryDashboard() {
           { at: Date.now(), action: `Payment ${pay.amount} (${pay.mode})`, by: user?.email || 'Staff' }],
         updatedAt: serverTimestamp(),
       });
-      return { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status, _rev: nextRev };
+      return {
+        serverPrior,
+        fresh: { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status, _rev: nextRev },
+      };
     });
     // Money is committed atomically. Now run the (idempotent, diff-based) realized
-    // stock + sales/services ledger + audit cascade against the fresh invoice —
-    // WITHOUT re-persisting the invoice doc (that would re-open the race).
-    const prior = invoicesRef.current.find((x) => x.id === invoiceId) || null;
-    runInvoiceTransaction(prior, fresh, 'persist');
+    // stock + sales/services ledger + audit cascade — diffing the transaction's OWN
+    // server pre-image against `fresh`, never client state. Not re-persisting the
+    // invoice doc here (that would re-open the payment race).
+    runInvoiceTransaction(serverPrior, fresh, 'persist');
     const next = [...invoicesRef.current.filter((x) => x.id !== invoiceId), fresh];
     invoicesRef.current = next;
     setInvoicesRaw(next);
@@ -9984,15 +10009,37 @@ export default function InventoryDashboard() {
   };
 
   const deleteInvoice = async (iv) => {
-    const prior = invoicesRef.current.find((x) => x.id === iv.id) || iv;
-    // Deleting a paid invoice must fully unwind it: stock back, ledgers reversed.
-    runInvoiceTransaction(prior, null, 'delete');
+    // Phase 3b (CWF-01) — same root cause as the payment path: the unwind cascade
+    // (stock back, ledgers reversed) is diff-based and must see the invoice's TRUE
+    // server state, not stale local state. In production, read + delete atomically
+    // in a transaction and unwind against the transaction's own pre-image, so a
+    // payment that landed on this invoice from another client just before the delete
+    // is still correctly reversed. Demo has one client — local state IS the truth.
+    let serverPrior = null;
+    if (!demoMode) {
+      const invRef = doc(db, COLLECTIONS.INVOICES, iv.id);
+      try {
+        serverPrior = await runTransaction(db, async (tx) => {
+          const snap = await tx.get(invRef);
+          if (!snap.exists()) return null; // already gone — nothing to unwind or delete
+          const data = { ...snap.data(), id: iv.id };
+          tx.delete(invRef);
+          return data;
+        });
+      } catch (err) {
+        console.error('Invoice delete failed:', err);
+        toast.error('Could not delete the invoice. Check your connection and try again.');
+        throw err;
+      }
+    }
+    const prior = demoMode ? (invoicesRef.current.find((x) => x.id === iv.id) || iv) : serverPrior;
+    if (prior) runInvoiceTransaction(prior, null, 'delete');
     // Same prev-before-mutation fix as persistInvoice above.
     const prev = invoicesRef.current;
     const next = prev.filter((x) => x.id !== iv.id);
     invoicesRef.current = next;
     setInvoicesRaw(next);
-    await persistDocsDiff(COLLECTIONS.INVOICES, prev, next);
+    if (demoMode) await persistDocsDiff(COLLECTIONS.INVOICES, prev, next);
     syncCustomerTotals(iv.customerId, next);
   };
   const writeJobCardDraft = (c, token) => {
@@ -12606,10 +12653,20 @@ export default function InventoryDashboard() {
         return;
       }
       try {
-        await poReceiveDoc(po, receivedLines, user?.email);
-        writeAudit('po_receive', { poNumber: po.poNumber }, { status, lines: receivedLines.length });
-        toast.success(fullyReceived ? `${po.poNumber}: received` : `${po.poNumber}: partially received`);
-      } catch (e) { console.error(e); toast.error('Receiving failed.'); }
+        // Phase 3b (CWF-02) — poReceiveDoc runs a transaction: it re-reads the PO,
+        // adds each delta to the SERVER's current receivedQty, and returns the
+        // authoritative post-receive state. Use THAT for the audit + toast, not the
+        // stale client-side computation above.
+        const res = await poReceiveDoc(po, receivedLines, user?.email);
+        const serverStatus = res?.status || status;
+        writeAudit('po_receive', { poNumber: po.poNumber }, { status: serverStatus, lines: receivedLines.length });
+        toast.success(serverStatus === 'received' ? `${po.poNumber}: received` : `${po.poNumber}: partially received`);
+      } catch (e) {
+        console.error(e);
+        if (e?.code === 'po/over-receipt' || e?.code === 'po/deleted') toast.error(e.message);
+        else toast.error('Receiving failed.');
+        return false; // keep the receive form open (ReceivePOForm's onSubmit checks `ok !== false`)
+      }
     } finally {
       poAdvancing.current.delete(po.id);
     }

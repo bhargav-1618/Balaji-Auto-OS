@@ -1,10 +1,15 @@
 // services/purchaseOrderService.js
 // Purchase Order business writes, decoupled from UI/state. The component keeps
 // demo (in-memory) handling and toasts; production Firestore writes live here.
-import { collection, doc, addDoc, updateDoc, writeBatch, serverTimestamp, increment } from 'firebase/firestore';
+import { collection, doc, addDoc, updateDoc, serverTimestamp, increment, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+// Pure receive logic (Phase 3b, CWF-02) — kept firebase-free in lib/ so it is
+// unit-testable and importable from the security-rules test SDK context.
+import { applyPoReceive } from '../lib/poReceive';
 
 const n = (x) => Number(x) || 0;
+
+export { applyPoReceive };
 
 // ---------------------------------------------------------------------------
 // H-5D — workflow orchestration extracted from InventoryDashboard.js.
@@ -79,46 +84,56 @@ export function poAdvanceDoc(po, next, userEmail) {
  * confirmed the diff with the user (mirrors RestockModal's explicit confirm-before-
  * overwrite pattern — this never silently stomps a part's default price).
  *
- * Firestore has no per-array-element increment, so the PO's own `items` array is
- * rewritten whole with each line's receivedQty bumped by its delta. Status is derived
- * AFTER applying every delta: every line fully received -> 'received'; at least one
- * line partially received -> 'partial'; otherwise unchanged.
+ * Phase 3b (CWF-02) — this now runs inside a Firestore `runTransaction` that
+ * RE-READS the PO and derives every line's new `receivedQty` from the server's
+ * current value, not the caller's (possibly stale) `po`. Two partial receipts
+ * landing at once therefore both count. Over-receipt past the ordered quantity is
+ * rejected as a whole (`po/over-receipt`) — the transaction aborts, so no stock
+ * moves and no restock row is written. Retry-safe: a retried attempt re-reads and
+ * its aborted writes (including the auto-id restock docs) never commit, so there
+ * are no duplicate restock rows.
+ *
+ * @returns {Promise<{ status, items }>} the authoritative post-receive PO state
  */
 export function poReceiveDoc(po, receivedLines, userEmail) {
-  const batch = writeBatch(db);
-  const items = po.items || [];
-  const nextItems = items.map((it) => {
-    const line = receivedLines.find((r) => r.partId === it.partId);
-    const delta = line ? n(line.receiveQty) : 0;
-    return delta > 0 ? { ...it, receivedQty: n(it.receivedQty) + delta } : it;
-  });
-  const fullyReceived = nextItems.length > 0 && nextItems.every((it) => n(it.receivedQty) >= n(it.qty));
-  const anyReceived = nextItems.some((it) => n(it.receivedQty) > 0);
-  const status = fullyReceived ? 'received' : anyReceived ? 'partial' : po.status;
-  const poUpdate = { items: nextItems, status };
-  if (fullyReceived) poUpdate.receivedAt = serverTimestamp();
-  batch.update(doc(db, 'purchaseOrders', po.id), poUpdate);
-  receivedLines.forEach((line) => {
-    if (!line.partId || n(line.receiveQty) <= 0) return;
-    const partUpdate = { stock: increment(n(line.receiveQty)), lastRestockedAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    if (line.updateDefaultPrice) partUpdate.purchasePrice = n(line.unitCost) || 0;
-    batch.update(doc(db, 'parts', line.partId), partUpdate);
-    const it = items.find((x) => x.partId === line.partId) || {};
-    batch.set(doc(collection(db, 'restocks')), {
-      partId: line.partId, partName: it.name, sku: it.sku,
-      qty: n(line.receiveQty), quantity: n(line.receiveQty), unitCost: n(line.unitCost),
-      total: n(line.receiveQty) * n(line.unitCost),
-      // Issue 6 backfill: PO-driven restocks never stamped supplierId, only the name —
-      // the same string-matching fragility fixed in SupplierDirectory.jsx's Transactions tab.
-      // Issue 8: also missing the singular `supplier` alias that buildRestockRecord and
-      // RestockModal's own write both include — the dashboard's "Restock Spend by Supplier"
-      // aggregation groups by THAT field, so every PO-receipt restock bucketed under
-      // "Unknown" there without it.
-      supplier: po.supplierName, supplierId: po.supplierId || null, supplierName: po.supplierName,
-      poNumber: po.poNumber, createdAt: serverTimestamp(), byEmail: userEmail || null,
+  const poRef = doc(db, 'purchaseOrders', po.id);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(poRef);
+    if (!snap.exists()) {
+      const e = new Error('This purchase order no longer exists. Reload before receiving.');
+      e.code = 'po/deleted';
+      throw e;
+    }
+    const server = snap.data();
+    const { items: nextItems, status, fullyReceived, over } =
+      applyPoReceive(server.items || [], receivedLines, server.status);
+    if (over) {
+      const e = new Error(
+        `Can't receive ${over.delta} of "${over.name}" — only ${Math.max(0, over.ordered - over.already)} ` +
+        `left to receive on this order (${over.already} of ${over.ordered} already received).`,
+      );
+      e.code = 'po/over-receipt';
+      throw e;
+    }
+    const poUpdate = { items: nextItems, status };
+    if (fullyReceived) poUpdate.receivedAt = serverTimestamp();
+    tx.update(poRef, poUpdate);
+    (receivedLines || []).forEach((line) => {
+      if (!line.partId || n(line.receiveQty) <= 0) return;
+      const partUpdate = { stock: increment(n(line.receiveQty)), lastRestockedAt: serverTimestamp(), updatedAt: serverTimestamp() };
+      if (line.updateDefaultPrice) partUpdate.purchasePrice = n(line.unitCost) || 0;
+      tx.update(doc(db, 'parts', line.partId), partUpdate);
+      const it = (server.items || []).find((x) => x.partId === line.partId) || {};
+      tx.set(doc(collection(db, 'restocks')), {
+        partId: line.partId, partName: it.name, sku: it.sku,
+        qty: n(line.receiveQty), quantity: n(line.receiveQty), unitCost: n(line.unitCost),
+        total: n(line.receiveQty) * n(line.unitCost),
+        supplier: po.supplierName, supplierId: po.supplierId || null, supplierName: po.supplierName,
+        poNumber: po.poNumber, createdAt: serverTimestamp(), byEmail: userEmail || null,
+      });
     });
+    return { status, items: nextItems };
   });
-  return batch.commit();
 }
 
 export function poCancelDoc(poId) {

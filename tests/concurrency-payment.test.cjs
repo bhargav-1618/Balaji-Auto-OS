@@ -57,8 +57,15 @@ ok('it recomputes paid / balance / status from server truth inside the tx',
   /invTotals\(merged\)/.test(block) && /invStatus\(merged\)/.test(block) &&
   /tx\.update\(invRef, \{[\s\S]{0,400}paid: t\.paid[\s\S]{0,400}balance: t\.balance[\s\S]{0,400}status,/.test(block));
 ok('the realized stock / ledger cascade runs AFTER the atomic money write, not a re-persist',
-  /runInvoiceTransaction\(prior, fresh, 'persist'\)/.test(block) &&
+  /runInvoiceTransaction\(serverPrior, fresh, 'persist'\)/.test(block) &&
   !/persistDocsDiff\(COLLECTIONS\.INVOICES/.test(block));
+// Phase 3b (CWF-01) — the cascade must diff against the TRANSACTION'S OWN pre-image,
+// never `invoicesRef.current` (stale React state), or two concurrent payments each
+// see prior=unpaid / fresh=Paid and both run the full realization.
+ok('CWF-01: the realization `prior` is the transaction\'s server pre-image, not client state',
+  /const serverPrior = \{ \.\.\.data, id: invoiceId \}/.test(block) &&
+  /return \{\s*serverPrior,\s*fresh:/.test(block) &&
+  !/const prior = invoicesRef\.current\.find\(\(x\) => x\.id === invoiceId\)/.test(block));
 
 // ── 2. wiring ───────────────────────────────────────────────────────────────
 ok('BillingModule is handed onCollectPayment in production only (undefined in demo)',

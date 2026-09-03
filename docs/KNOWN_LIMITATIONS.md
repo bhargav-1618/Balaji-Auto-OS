@@ -19,8 +19,33 @@ These are configuration, cannot be fixed in the codebase, and must be verified f
 deployment. *(The reference deployment — Firebase project `balaji-auto-os-7` — has the
 rules published.)*
 
-## 🟠 Concurrency (single-location safe; fix before multi-terminal)
+## 🟢 Concurrency (multi-terminal safe for the covered workflows)
 
+- **Cross-workflow data integrity IS concurrency-safe** (CONCURRENCY PHASE 3b —
+  shipped, verified with two independent clients against the real emulator + on
+  production). Three races found in the Phase 3 audit are closed:
+  - *Concurrent payment collection* no longer double-runs invoice realization. The
+    stock/ledger/audit cascade diffs against the payment **transaction's own server
+    pre-image** (`collectInvoicePayment` / `deleteInvoice` in
+    `components/InventoryDashboard.js`), not stale React state — so two cashiers both
+    closing a balance at once still deduct stock and post revenue exactly once, on
+    whichever payment actually crossed unpaid → Paid. Both payments are still kept.
+  - *Concurrent purchase-order receive* (`services/purchaseOrderService.js` +
+    `lib/poReceive.js`) runs inside a `runTransaction` that re-reads the PO and adds
+    each delta to the **server's** current `receivedQty` — 4 + 3 lands as 7, not
+    last-writer-wins 3. Over-receipt past the ordered quantity is now rejected
+    server-side as a whole (no partial stock move); the client-side cap was never
+    authoritative across terminals.
+  - *Concurrent secondary customer writes* (add note, add vehicle, star default,
+    totals write-back) persist **only the changed fields**, and id-keyed arrays
+    (`vehicles`, `noteEntries`) are replayed onto the server's current array inside a
+    transaction (`store.syncAll` → `repo.applySecondaryMerge`,
+    `lib/concurrency.js` `replayIdArray`). A note added from the detail panel while
+    the wizard is open is no longer dropped by the wizard's save, and vice versa.
+  - Residual, low severity: two workflows that concurrently append to a customer's
+    `history[]` or replace the same `documents[]` entry are still last-writer-wins on
+    that one field (the real audit trail is the `auditLog` collection); two clients
+    editing the **same** vehicle sub-object at once is element-level last-writer-wins.
 - **Invoice numbering IS concurrency-safe** (CONCURRENCY PHASE 2 — shipped, rules
   published, production-verified with 1/2/3 concurrent clients). The `INV-`/`EST-`
   serial is allocated at save time by a Firestore transaction on `counters/invoices` /
@@ -38,8 +63,9 @@ rules published.)*
     `counters/invoices` document in the Firebase Console — it re-seeds from
     `max(existing) + 1` on the next save. Clients cannot lower it (`allow delete: if
     false`, `next >= resource.data.next`).
-- **Concurrent stock decrement** still has the last-write-wins race — a `runTransaction`
-  on the invoice-driven stock path is the one remaining pre-multi-terminal item.
+- **Raw stock quantities** were already race-safe (atomic `increment()` on every
+  path — quick-sell also re-reads inside a transaction and refuses to go negative).
+  Negative / over-received stock is deliberately recorded as the truth, not clamped.
 
 ## 🟡 Performance (fine at current scale)
 

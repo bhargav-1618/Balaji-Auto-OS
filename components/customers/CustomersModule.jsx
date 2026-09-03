@@ -1401,7 +1401,18 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
         const oldVehIds = new Set((existingCust.vehicles || []).map((v) => v.id));
         (c.vehicles || []).forEach((v) => { if (!oldVehIds.has(v.id)) hist.push(histEntry('Vehicle Added', `${v.regNo} ${v.model || ''}`.trim())); });
         hist.push(histEntry('Customer Edited', c.name));
-        const fresh = await onSaveCustomerEdit({ ...c, history: hist }, Number.isInteger(c._rev) && c._rev >= 0 ? c._rev : 0);
+        // Phase 3b (CWF-03) — the wizard only owns profile fields + vehicles. Do NOT
+        // let its save carry the detail-panel-managed arrays (noteEntries, documents)
+        // or the engine-derived figures (totalSpent, outstanding, visits) — writing
+        // its stale copies of those would clobber a note added from the panel while
+        // the wizard was open. `clientBefore` lets the guarded save replay only the
+        // vehicle changes THIS wizard made onto the server's current vehicles[].
+        const { noteEntries, documents, totalSpent, outstanding, visits, ...wizardFields } = c;
+        const fresh = await onSaveCustomerEdit(
+          { ...wizardFields, history: hist },
+          Number.isInteger(c._rev) && c._rev >= 0 ? c._rev : 0,
+          { clientBefore: existingCust },
+        );
         if (fresh && Number.isInteger(fresh._rev)) recordSync.markSynced(fresh._rev); // Phase 1c — don't alarm on our own save
       } else {
         await setCustomers((prev) => {

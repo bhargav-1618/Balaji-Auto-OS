@@ -24,9 +24,41 @@
  *     the permanent owner admin even with no appSettings/roles doc at all.
  *   - the deny-by-default fallback for any unlisted path.
  */
-const { doc, getDoc, setDoc, updateDoc, deleteDoc, runTransaction, Timestamp } = require('firebase/firestore');
+const {
+  doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc,
+  runTransaction, increment, Timestamp,
+} = require('firebase/firestore');
 const { assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
 const { makeTestEnv, seedAdmins, seedDoc, OWNER_EMAIL, ADMIN_EMAIL, STAFF_EMAIL } = require('./helpers.cjs');
+// Pure, firebase-free — safe to import into the rules-test SDK context.
+const { applyPoReceive } = require('../../lib/poReceive.js');
+
+// lib/concurrency.js is ES-module; inline a faithful copy of the ONE pure helper
+// this test needs (same contract, same code — see lib/concurrency.js replayIdArray).
+function replayIdArray(before, after, server) {
+  const b = Array.isArray(before) ? before : [];
+  const a = Array.isArray(after) ? after : [];
+  const s = Array.isArray(server) ? server : [];
+  const beforeById = new Map(b.filter((x) => x && x.id != null).map((x) => [x.id, x]));
+  const afterById = new Map(a.filter((x) => x && x.id != null).map((x) => [x.id, x]));
+  const removedIds = new Set(b.filter((x) => x && x.id != null && !afterById.has(x.id)).map((x) => x.id));
+  const out = [];
+  const seen = new Set();
+  for (const el of s) {
+    const id = el && el.id;
+    if (id != null && removedIds.has(id)) continue;
+    if (id != null) seen.add(id);
+    const mine = id != null ? afterById.get(id) : undefined;
+    const orig = id != null ? beforeById.get(id) : undefined;
+    if (mine && orig && JSON.stringify(mine) !== JSON.stringify(orig)) out.push(mine);
+    else out.push(el);
+  }
+  for (const el of a) {
+    const id = el && el.id;
+    if (id != null && !beforeById.has(id) && !seen.has(id)) { out.push(el); seen.add(id); }
+  }
+  return out;
+}
 
 let PASS = 0, FAIL = 0;
 const ok = (n, c) => { if (c) { PASS++; console.log(`  ok ${n}`); } else { FAIL++; console.log(`  FAIL ${n}`); } };
@@ -277,6 +309,154 @@ async function main() {
         JSON.stringify([...got2].sort((x, y) => x - y)) === JSON.stringify([11, 12])
         && got2.every((n) => !got.includes(n)));
       ok('counters: after 5 total allocations from 8, next = 13', (await getDoc(ctr(aDb))).data().next === 13);
+    }
+
+    // =========================================================================
+    // CONCURRENCY PHASE 3b — cross-workflow data-integrity fixes, run against
+    // the real emulator with two independent clients. The transaction bodies
+    // mirror the app services (the rules-test SDK cannot import lib/firebase),
+    // and no rules change was needed — every write is already signed-in-allowed.
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      const aDb = testEnv.authenticatedContext('uid-A', { email: STAFF_EMAIL }).firestore();
+      const bDb = testEnv.authenticatedContext('uid-B', { email: ADMIN_EMAIL }).firestore();
+
+      // ---- helpers mirroring the app ----
+      const invPaid = (data) => {
+        const paid = (data.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+        const grand = (data.lines || []).reduce((s, l) => s + Number(l.qty) * Number(l.rate), 0);
+        return { paid, grand, balance: grand - paid };
+      };
+      const isRealized = (iv) => !!iv && !iv.isEstimate
+        && !['Cancelled', 'Refunded', 'Returned'].includes(iv.status)
+        && iv.grand > 0 && iv.balance <= 0;
+      // the Phase 3b collectInvoicePayment transaction — returns its OWN pre-image
+      const collectPayment = (db, invId, pay) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'invoices', invId);
+        const snap = await tx.get(ref);
+        const data = snap.data();
+        const serverPrior = { ...data, id: invId, ...invPaid(data) };
+        const payments = [...(data.payments || []), pay];
+        const merged = { ...data, payments };
+        const t = invPaid(merged);
+        tx.update(ref, { payments, paid: t.paid, balance: t.balance, status: t.balance <= 0 ? 'Paid' : 'Invoice', _rev: (data._rev || 0) + 1 });
+        return { serverPrior, fresh: { ...merged, id: invId, ...t, status: t.balance <= 0 ? 'Paid' : 'Invoice' } };
+      });
+
+      // ---- CWF-01 — concurrent payment realizes the invoice exactly once ----
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'invoices/INV-C1', {
+        invNo: 'INV-C1', isEstimate: false, status: 'Invoice', _rev: 0,
+        lines: [{ id: 'l1', kind: 'Part', partId: 'pX', qty: 2, rate: 500 }], payments: [],
+      });
+      const [rA, rB] = await Promise.all([
+        collectPayment(aDb, 'INV-C1', { id: 'pA', mode: 'Cash', amount: 1000 }),
+        collectPayment(bDb, 'INV-C1', { id: 'pB', mode: 'UPI', amount: 1000 }),
+      ]);
+      const crossings = [rA, rB].filter((r) => !isRealized(r.serverPrior) && isRealized(r.fresh)).length;
+      const invC1 = (await getDoc(doc(aDb, 'invoices/INV-C1'))).data();
+      ok('CWF-01: exactly ONE of the two concurrent payments crossed unpaid -> Paid',
+        crossings === 1, `crossings=${crossings}`);
+      ok('CWF-01: both payment records survived', (invC1.payments || []).length === 2);
+      ok('CWF-01: final invoice is Paid with paid total 2000 (overpayment recorded truthfully)',
+        invC1.status === 'Paid' && invC1.paid === 2000);
+      ok('CWF-01: _rev advanced by exactly 2 (one bump per payment)', invC1._rev === 2);
+
+      // ---- CWF-02 — concurrent PO receive ----
+      const receive = (db, poId, lines) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'purchaseOrders', poId);
+        const snap = await tx.get(ref);
+        const server = snap.data();
+        const { items, status, over } = applyPoReceive(server.items || [], lines, server.status);
+        if (over) { const e = new Error('over-receipt'); e.code = 'po/over-receipt'; throw e; }
+        tx.update(ref, { items, status });
+        lines.forEach((ln) => {
+          if (!ln.partId || Number(ln.receiveQty) <= 0) return;
+          tx.update(doc(db, 'parts', ln.partId), { stock: increment(Number(ln.receiveQty)) });
+          tx.set(doc(collection(db, 'restocks')), { partId: ln.partId, qty: Number(ln.receiveQty), poNumber: server.poNumber });
+        });
+        return { status, items };
+      });
+
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'parts/pRcv', { name: 'Pad', stock: 0 });
+      await seedDoc(testEnv, 'purchaseOrders/PO-C2', {
+        poNumber: 'PO-C2', status: 'approved',
+        items: [{ partId: 'pRcv', name: 'Pad', qty: 10, receivedQty: 0 }],
+      });
+      await Promise.all([
+        receive(aDb, 'PO-C2', [{ partId: 'pRcv', receiveQty: 4 }]),
+        receive(bDb, 'PO-C2', [{ partId: 'pRcv', receiveQty: 3 }]),
+      ]);
+      const poC2 = (await getDoc(doc(aDb, 'purchaseOrders/PO-C2'))).data();
+      const partC2 = (await getDoc(doc(aDb, 'parts/pRcv'))).data();
+      const restocksC2 = (await getDocs(collection(aDb, 'restocks'))).size;
+      ok('CWF-02: concurrent 4 + 3 -> PO receivedQty = 7 (no lost receive)',
+        poC2.items[0].receivedQty === 7, `receivedQty=${poC2.items[0].receivedQty}`);
+      ok('CWF-02: part stock = 7 (matches PO tracking — consistent)', partC2.stock === 7, `stock=${partC2.stock}`);
+      ok('CWF-02: exactly 2 restock rows (one per receipt, no duplicate from a retry)', restocksC2 === 2, `rows=${restocksC2}`);
+
+      // 6 + 6 against ordered 10 — one must be rejected whole, stock stays +6
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'parts/pRcv2', { name: 'Pad', stock: 0 });
+      await seedDoc(testEnv, 'purchaseOrders/PO-C3', {
+        poNumber: 'PO-C3', status: 'approved',
+        items: [{ partId: 'pRcv2', name: 'Pad', qty: 10, receivedQty: 0 }],
+      });
+      const settled = await Promise.allSettled([
+        receive(aDb, 'PO-C3', [{ partId: 'pRcv2', receiveQty: 6 }]),
+        receive(bDb, 'PO-C3', [{ partId: 'pRcv2', receiveQty: 6 }]),
+      ]);
+      const rejected = settled.filter((s) => s.status === 'rejected').length;
+      const poC3 = (await getDoc(doc(aDb, 'purchaseOrders/PO-C3'))).data();
+      const partC3 = (await getDoc(doc(aDb, 'parts/pRcv2'))).data();
+      ok('CWF-02: 6 + 6 vs ordered 10 — exactly one receive is rejected', rejected === 1, `rejected=${rejected}`);
+      ok('CWF-02: over-receipt did NOT silently reach 12 — PO receivedQty = 6', poC3.items[0].receivedQty === 6, `receivedQty=${poC3.items[0].receivedQty}`);
+      ok('CWF-02: rejected transaction moved NO stock — part stock = 6', partC3.stock === 6, `stock=${partC3.stock}`);
+
+      // ---- CWF-03 — concurrent secondary customer writes ----
+      const mergeArray = (db, custId, key, before, after) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'customers', custId);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) { const e = new Error('deleted'); e.code = 'conc/deleted'; throw e; }
+        tx.set(ref, { [key]: replayIdArray(before, after, snap.data()[key]) }, { merge: true });
+      });
+
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'customers/C3', { name: 'ZZ QA', noteEntries: [], vehicles: [], phone: '9000000000' });
+      await Promise.all([
+        mergeArray(aDb, 'C3', 'noteEntries', [], [{ id: 'n1', text: 'A note' }]),
+        mergeArray(bDb, 'C3', 'vehicles', [], [{ id: 'v1', regNo: 'AP01AA1111' }]),
+      ]);
+      let cC3 = (await getDoc(doc(aDb, 'customers/C3'))).data();
+      ok('CWF-03 (note + vehicle): BOTH survive — the note is not reverted by the vehicle write',
+        (cC3.noteEntries || []).length === 1 && (cC3.vehicles || []).length === 1
+        && cC3.phone === '9000000000', JSON.stringify({ n: cC3.noteEntries, v: cC3.vehicles }));
+
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'customers/C4', { name: 'ZZ QA', noteEntries: [], vehicles: [] });
+      await Promise.all([
+        mergeArray(aDb, 'C4', 'noteEntries', [], [{ id: 'nA', text: 'from A' }]),
+        mergeArray(bDb, 'C4', 'noteEntries', [], [{ id: 'nB', text: 'from B' }]),
+      ]);
+      cC3 = (await getDoc(doc(aDb, 'customers/C4'))).data();
+      ok('CWF-03 (note + note): BOTH notes survive (same-array concurrent append)',
+        (cC3.noteEntries || []).length === 2
+        && cC3.noteEntries.some((x) => x.id === 'nA') && cC3.noteEntries.some((x) => x.id === 'nB'),
+        JSON.stringify(cC3.noteEntries));
+
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'customers/C5', { name: 'ZZ QA', vehicles: [{ id: 'v0', regNo: 'AP01OLD' }] });
+      await Promise.all([
+        mergeArray(aDb, 'C5', 'vehicles', [{ id: 'v0', regNo: 'AP01OLD' }], [{ id: 'v0', regNo: 'AP01OLD' }, { id: 'vA', regNo: 'AP01AAA' }]),
+        mergeArray(bDb, 'C5', 'vehicles', [{ id: 'v0', regNo: 'AP01OLD' }], [{ id: 'v0', regNo: 'AP01OLD' }, { id: 'vB', regNo: 'AP01BBB' }]),
+      ]);
+      cC3 = (await getDoc(doc(aDb, 'customers/C5'))).data();
+      ok('CWF-03 (vehicle + vehicle): the pre-existing vehicle and BOTH new vehicles survive',
+        (cC3.vehicles || []).length === 3
+        && ['v0', 'vA', 'vB'].every((id) => cC3.vehicles.some((v) => v.id === id)),
+        JSON.stringify(cC3.vehicles.map((v) => v.id)));
     }
 
     // =========================================================================

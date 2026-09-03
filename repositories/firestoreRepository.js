@@ -21,7 +21,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { COLLECTIONS, LIMITS } from '../constants/index';
-import { revState, conflictError } from '../lib/concurrency';
+import {
+  revState, conflictError, replayIdArray, ConcurrencyError, CONC_DELETED,
+} from '../lib/concurrency';
 
 /** Normalise a Firestore snapshot into plain objects with their id. */
 const mapSnap = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -171,16 +173,65 @@ export async function remove(collectionName, id) {
  *
  * @returns the merged document as it now stands on the server (optimistic view)
  */
-export async function guardedSet(collectionName, id, data, expectedRev, label) {
+export async function guardedSet(collectionName, id, data, expectedRev, label, opts = {}) {
   const ref = doc(db, collectionName, String(id));
+  const { idArrayKeys = [], clientBefore = null } = opts;
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const state = revState(snap.exists() ? snap.data() : null, expectedRev);
     const err = conflictError(state, label);
     if (err) throw err;
+    const server = snap.data() || {};
     const { id: _dropId, _rev: _dropRev, ...clean } = data || {};
+    // Phase 3b (CWF-03) — for id-keyed array fields the editor manages (customer
+    // `vehicles`), don't blind-overwrite the server array with the editor's stale
+    // copy: replay only the elements THIS editor added/removed/changed onto server
+    // truth, so a note or vehicle added from the detail panel while the wizard was
+    // open is not silently dropped by the wizard's save.
+    for (const k of idArrayKeys) {
+      if (Object.prototype.hasOwnProperty.call(clean, k)) {
+        clean[k] = replayIdArray(clientBefore ? clientBefore[k] : undefined, clean[k], server[k]);
+      }
+    }
     tx.set(ref, { ...clean, _rev: state.nextRev, updatedAt: serverTimestamp() }, { merge: true });
-    return { ...snap.data(), ...clean, _rev: state.nextRev };
+    return { ...server, ...clean, _rev: state.nextRev };
+  });
+}
+
+/**
+ * SECONDARY (non-wizard) WRITE to an existing document — Phase 3b (CWF-03).
+ *
+ * "Add a note", "add a vehicle", "star the default", "write back customer totals"
+ * used to persist the WHOLE customer document, so two of them racing meant the
+ * last writer's whole-doc `set` reverted the other's change to a DIFFERENT field.
+ *
+ * This writes ONLY the fields that actually changed:
+ *   - plain fields  -> `updateDoc` (throws — never resurrects — if the doc was
+ *                      deleted concurrently, unlike a `set(..,{merge:true})`)
+ *   - id-keyed arrays (`vehicles`, `noteEntries`) -> a transaction that re-reads
+ *     the server array and replays this client's add/remove/edit onto it, so a
+ *     concurrent add by someone else survives.
+ *
+ * `_rev` is deliberately NOT touched: a secondary write is not a document-wide
+ * edit, and bumping `_rev` here would make every open wizard reject on save.
+ */
+export async function applySecondaryMerge(collectionName, id, plainFields = {}, idArrayReplays = []) {
+  const ref = doc(db, collectionName, String(id));
+  if (!idArrayReplays.length) {
+    await updateDoc(ref, { ...plainFields, updatedAt: serverTimestamp() });
+    return;
+  }
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) {
+      throw new ConcurrencyError(CONC_DELETED, 'This record was deleted by another user.');
+    }
+    const server = snap.data() || {};
+    const patch = { ...plainFields };
+    for (const { key, before, after } of idArrayReplays) {
+      patch[key] = replayIdArray(before, after, server[key]);
+    }
+    tx.set(ref, { ...patch, updatedAt: serverTimestamp() }, { merge: true });
   });
 }
 

@@ -170,8 +170,9 @@ ok('Customers — stale save shows an explicit "changes not saved" message (BUG 
 ok('Customers — stale save still keeps the wizard open + does not bypass _rev (unchanged)',
   // the guarded path is unchanged: onSaveCustomerEdit still runs with the opened _rev,
   // and the catch still `return`s BEFORE lease.release()/setEditCust(null) so nothing
-  // typed is lost and no stale write happens.
-  /const fresh = await onSaveCustomerEdit\(\{ \.\.\.c, history: hist \}, Number\.isInteger\(c\._rev\) && c\._rev >= 0 \? c\._rev : 0\);/.test(cust)
+  // typed is lost and no stale write happens. Phase 3b (CWF-03) — the payload dropped
+  // panel-owned arrays (noteEntries/documents) + derived figures and passes clientBefore.
+  /const fresh = await onSaveCustomerEdit\(\s*\{ \.\.\.wizardFields, history: hist \},\s*Number\.isInteger\(c\._rev\) && c\._rev >= 0 \? c\._rev : 0,\s*\{ clientBefore: existingCust \},\s*\);/.test(cust)
   && /\}\s*\n\s*return;\s*\n\s*\}\s*\n\s*lease\.release\(\);\s+\/\/ Phase 1b/.test(cust));
 
 ok('Parts — useRecordSync + view-only mode + review dialog (mode="review")',

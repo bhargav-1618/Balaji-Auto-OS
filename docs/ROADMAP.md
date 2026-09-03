@@ -25,11 +25,23 @@ current release.
   read/advance for any signed-in user, never-decreasing (`next >= resource.data.next`),
   no client delete. A one-off reset (e.g. after test invoices) is a Console delete of
   the `counters/invoices` doc — it re-seeds from `max(existing) + 1` on the next save.
-- **Transactional stock decrement on the billing path.** The inventory "quick sell"
-  path already re-reads stock inside a `runTransaction`
-  (`components/InventoryDashboard.js`); invoice-driven stock consumption does not yet.
-  Wrap that path the same way — see `services/README.md` for where it belongs. This is
-  now the only remaining pre-multi-terminal concurrency item.
+- ~~**Cross-workflow data integrity.**~~ **DONE — CONCURRENCY PHASE 3b, shipped and
+  verified with two independent emulator clients + on production.** The Phase 3 audit
+  found three cross-workflow races; all are closed:
+  - concurrent payment collection double-ran invoice realization → the cascade now
+    diffs the payment transaction's own server pre-image, not stale React state
+    (`collectInvoicePayment` / `deleteInvoice`), so realization runs exactly once;
+  - concurrent PO receive did last-writer-wins on `receivedQty` and never capped
+    over-receipt → `poReceiveDoc` is now a `runTransaction` that adds deltas to the
+    server value (4 + 3 → 7) and rejects over-receipt server-side
+    (`lib/poReceive.js` `applyPoReceive`);
+  - concurrent secondary customer writes (note / vehicle / totals) overwrote the whole
+    document → `store.syncAll` now writes only the changed fields, replaying id-keyed
+    arrays onto server truth inside a transaction (`repo.applySecondaryMerge`,
+    `lib/concurrency.js` `replayIdArray`).
+  Raw stock quantities were already atomic (`increment()` everywhere; quick-sell
+  re-reads in a transaction). Residual low-severity item: a customer's `history[]` /
+  same `documents[]` entry is still last-writer-wins on that one field under a race.
 
 ## Scale — before large datasets
 

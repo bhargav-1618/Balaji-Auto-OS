@@ -40,7 +40,7 @@ import { where } from 'firebase/firestore';
 import { STORAGE } from '../constants';
 import * as repo from '../repositories/firestoreRepository';
 import { allocateNumber as allocateCounterNumber, allocationStep } from '../lib/docCounter';
-import { revState, conflictError } from '../lib/concurrency';
+import { revState, conflictError, replayIdArray, isIdKeyedArray } from '../lib/concurrency';
 
 /** Which localStorage/sessionStorage key backs each collection in demo mode. */
 const DEMO_KEY = {
@@ -113,7 +113,9 @@ export function createStore(demoMode) {
        * backends cannot drift. It rejects if the row is gone or its `_rev` moved,
        * and otherwise merges + increments `_rev` exactly once.
        */
-      async saveGuarded(collectionName, record, expectedRev, { idField = 'id', label } = {}) {
+      async saveGuarded(collectionName, record, expectedRev, {
+        idField = 'id', label, idArrayKeys = [], clientBefore = null,
+      } = {}) {
         const key = DEMO_KEY[collectionName];
         if (!key) throw new Error(`[store] no demo backing key for "${collectionName}"`);
         const rows = readAll(key) || [];
@@ -122,6 +124,13 @@ export function createStore(demoMode) {
         const err = conflictError(state, label);
         if (err) throw err;
         const { [idField]: _dropId, _rev: _dropRev, ...clean } = record;
+        // Phase 3b (CWF-03) — same id-keyed array replay as production guardedSet
+        // so the two backends keep an identical contract (a no-op with one client).
+        for (const k of idArrayKeys) {
+          if (Object.prototype.hasOwnProperty.call(clean, k)) {
+            clean[k] = replayIdArray(clientBefore ? clientBefore[k] : undefined, clean[k], idx >= 0 ? rows[idx][k] : undefined);
+          }
+        }
         const merged = { ...rows[idx], ...clean, _rev: state.nextRev };
         rows[idx] = merged;
         writeAll(key, rows);
@@ -267,8 +276,13 @@ export function createStore(demoMode) {
      * merge + bump `_rev` atomically. Throws ConcurrencyError('conc/deleted' |
      * 'conc/stale') — the caller surfaces a safe message and keeps the editor open.
      */
-    async saveGuarded(collectionName, record, expectedRev, { idField = 'id', label } = {}) {
-      return repo.guardedSet(collectionName, record[idField], record, expectedRev, label);
+    async saveGuarded(collectionName, record, expectedRev, {
+      idField = 'id', label, idArrayKeys, clientBefore,
+    } = {}) {
+      return repo.guardedSet(
+        collectionName, record[idField], record, expectedRev, label,
+        { idArrayKeys, clientBefore },
+      );
     },
 
     /**
@@ -304,28 +318,65 @@ export function createStore(demoMode) {
     async syncAll(collectionName, prev, next, idField = 'id') {
       const prevMap = new Map((prev || []).map((d) => [d[idField], d]));
       const nextMap = new Map((next || []).map((d) => [d[idField], d]));
-      const ops = [];
+      const batchOps = [];      // creates + deletes — safe to commit together
+      const merges = [];        // changed EXISTING docs — field-level, one at a time
 
       (next || []).forEach((d) => {
         const before = prevMap.get(d[idField]);
-        if (!before || JSON.stringify(before) !== JSON.stringify(d)) {
-          ops.push({
+        if (!before) {
+          batchOps.push({
             type: 'set',
             collection: collectionName,
             id: String(d[idField]),
             data: { ...d, createdAt: d.createdAt || Date.now(), updatedAt: new Date() },
             merge: true,
           });
+          return;
+        }
+        if (JSON.stringify(before) === JSON.stringify(d)) return;   // nothing changed
+
+        // Phase 3b (CWF-03) — write ONLY the top-level keys that actually changed,
+        // not the whole document. A concurrent secondary write to a DIFFERENT field
+        // then can't be reverted, and a `batch.update` (not `set merge`) can't
+        // resurrect a doc deleted concurrently. For id-keyed array fields (customer
+        // `vehicles`, `noteEntries`) the change is applied by replaying this
+        // client's add/remove/edit onto the server's current array inside a
+        // transaction, so a concurrent add to the SAME array also survives.
+        const plainFields = {};
+        const idArrayReplays = [];
+        Object.keys(d).forEach((k) => {
+          if (k === idField) return;
+          if (JSON.stringify(before[k]) === JSON.stringify(d[k])) return;
+          if (isIdKeyedArray(before[k]) || isIdKeyedArray(d[k])) {
+            idArrayReplays.push({ key: k, before: before[k], after: d[k] });
+          } else {
+            plainFields[k] = d[k];
+          }
+        });
+        if (!Object.keys(plainFields).length && !idArrayReplays.length) return;
+        if (!idArrayReplays.length) {
+          // scalar-only change — an atomic field update, batched with the rest
+          batchOps.push({
+            type: 'update',
+            collection: collectionName,
+            id: String(d[idField]),
+            data: { ...plainFields, updatedAt: new Date() },
+          });
+        } else {
+          merges.push({ id: String(d[idField]), plainFields, idArrayReplays });
         }
       });
       (prev || []).forEach((d) => {
         if (!nextMap.has(d[idField])) {
-          ops.push({ type: 'delete', collection: collectionName, id: String(d[idField]) });
+          batchOps.push({ type: 'delete', collection: collectionName, id: String(d[idField]) });
         }
       });
 
-      if (!ops.length) return;
-      await repo.commitBatch(ops);
+      if (batchOps.length) await repo.commitBatch(batchOps);
+      for (const m of merges) {
+        // eslint-disable-next-line no-await-in-loop
+        await repo.applySecondaryMerge(collectionName, m.id, m.plainFields, m.idArrayReplays);
+      }
     },
 
     async remove(collectionName, id) {
