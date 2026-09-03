@@ -45,7 +45,11 @@ ok('audit export shows a clear demo message instead of a Firestore error',
   ok('Supplier immediate-create handler exists (createSupplierNow)', /function createSupplierNow\(name\)/.test(s));
   // H-9: the container now sources the collection name from COLLECTIONS.SUPPLIERS
   // (constants/index.js) instead of the raw literal — same value, single source of truth.
-  ok('createSupplierNow persists via addDoc to suppliers', /addDoc\(collection\(db, (?:'suppliers'|COLLECTIONS\.SUPPLIERS)\)/.test(s));
+  // Phase 4b (PH4-06) — the quick-create now writes to a deterministic doc id
+  // derived from the name (setDoc merge), so a fire-and-forget retry can't create
+  // a second supplier before the live subscription surfaces the first.
+  ok('createSupplierNow persists via setDoc to a deterministic suppliers doc id',
+    /const quickId = `sup_qc_[\s\S]{0,200}setDoc\(doc\(db, COLLECTIONS\.SUPPLIERS, quickId\)/.test(s));
   ok('createSupplierNow is demo-guarded', /function createSupplierNow[\s\S]{0,200}if \(demoMode\) return/.test(s));
   ok('SupplierPicker.createNew calls onCreateSupplier (immediate availability)',
     /if \(onCreateSupplier\) onCreateSupplier\(name\)/.test(s));

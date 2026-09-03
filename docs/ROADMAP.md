@@ -42,6 +42,32 @@ current release.
   Raw stock quantities were already atomic (`increment()` everywhere; quick-sell
   re-reads in a transaction). Residual low-severity item: a customer's `history[]` /
   same `documents[]` entry is still last-writer-wins on that one field under a race.
+- ~~**Duplicate-action / idempotency.**~~ **DONE — CONCURRENCY PHASE 4b, shipped and
+  verified (emulator + production).** The Phase 4 audit found eight workflows where one
+  user intent could become two business effects (double-click past the in-flight ref,
+  retry after an ambiguous response, lost server ack, Firestore transaction-callback
+  replay). All eight are closed by giving each retryable write a **stable operation
+  id** that its transaction reads before any write:
+  - collect payment → `payments[].id` (PaymentModal ref); duplicate = no-op, no `_rev`
+    bump, no realization re-run;
+  - PO receive → `purchaseOrders.appliedReceiptIds` (bounded list, `lib/opId.js`
+    `APPLIED_RECEIPTS_CAP`);
+  - quick-sell / stock-out → `sales/{opId}`; the whole sale (stock −, `salesCount` +,
+    ledger row, monthly `salesRollups`) is now **one** transaction, not a txn plus
+    fire-and-forget `addDoc`s;
+  - manual stock adjustment → `stockAdjustments/{opId}` (one transaction, was
+    `Promise.allSettled`);
+  - ad-hoc restock → `restocks/{opId}` (same);
+  - create PO / create supplier → client-generated stable doc id via
+    `setDoc(..., {merge:true})` (was `addDoc` auto-id);
+  - new job-card reservation → the reserve delta is applied only **after** the card
+    write is confirmed, from a pinned per-`jobNo` baseline, so a retry neither
+    double-reserves nor drops the reservation.
+  Error messages on these paths changed from "Nothing was changed" to uncertainty-aware
+  wording ("…it may already be recorded — press … again, a repeat is safe"). Residual:
+  the op id is a `useRef` and does not survive a full browser refresh (documented in
+  KNOWN_LIMITATIONS.md); a duplicate delivery may still write a second advisory
+  `auditLog` line.
 
 ## Scale — before large datasets
 

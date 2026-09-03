@@ -1774,6 +1774,12 @@ function PaymentModal({ invoice, onCollect, onClose }) {
   const [saving, setSaving] = useState(false);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
+  // Phase 4b (PH4-01) — ONE stable payment id for the life of this modal. Every
+  // press of "Record Payment" (including a retry after an ambiguous failure) reuses
+  // it, so `collectInvoicePayment`'s transaction can recognise a duplicate delivery
+  // and not append a second payment. It is regenerated only when the modal remounts
+  // for a NEW "collect payment" intent (a genuinely separate payment gets a new id).
+  const payOpIdRef = useRef(`p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
   const confirm = async () => {
     if (savingRef.current) return;
     if (num(amount) <= 0) { toast.error('Enter the amount received.'); return; }
@@ -1781,7 +1787,7 @@ function PaymentModal({ invoice, onCollect, onClose }) {
     savingRef.current = true;
     setSaving(true);
     try {
-      await onCollect(invoice, mode, amount, ref, { notes, paidOn });
+      await onCollect(invoice, mode, amount, ref, { notes, paidOn, opId: payOpIdRef.current });
     } finally {
       savingRef.current = false;
       if (mountedRef.current) setSaving(false);
@@ -2175,7 +2181,11 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
   const collectPayment = async (iv, mode, amount, ref, meta = {}) => {
     if (iv.isEstimate) { toast.error('Convert this estimate to an invoice before collecting payment.'); return; }
     if (num(amount) <= 0) { toast.error('Enter the amount received.'); return; }
-    const pay = { ...emptyPayment(), mode, amount: num(amount), ref, notes: meta.notes || '', date: meta.paidOn || new Date().toISOString().slice(0, 10) };
+    // Phase 4b (PH4-01) — `meta.opId` is a STABLE id owned by PaymentModal for the
+    // life of this "collect payment" intent; every retry reuses it so the backend
+    // transaction can detect and reject a duplicate delivery. Fall back to a fresh
+    // id only if a caller doesn't supply one (keeps the API backward-compatible).
+    const pay = { ...emptyPayment(), id: meta.opId || emptyPayment().id, mode, amount: num(amount), ref, notes: meta.notes || '', date: meta.paidOn || new Date().toISOString().slice(0, 10) };
     // BUG-CONC-01 — in production, post the payment through the transactional path so
     // two cashiers collecting on the same invoice at once cannot lose a payment. The
     // handler re-reads the invoice server-side and appends to the CURRENT payments
@@ -2185,12 +2195,15 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
       try {
         await onCollectPayment(iv.id, pay);
       } catch (e) {
+        // Phase 4b — the payment carries a stable id, so pressing "Record Payment"
+        // again is now safe: the transaction recognises the retry and will not add a
+        // second payment. Word the error so it doesn't falsely promise nothing changed.
         toast.error(
           e?.code === 'conc/deleted'
             ? 'This invoice was changed or deleted by another user. Reload and try again.'
             : e?.code === 'conc/estimate'
             ? 'Convert this estimate to an invoice before collecting payment.'
-            : 'Payment not saved — please reload and try again.',
+            : 'Couldn’t confirm the payment went through. It may already be recorded — check the invoice, or press Record Payment again (a repeat is safe).',
         );
         return;
       }
@@ -2980,7 +2993,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
         </div>
       </div>
 
-      {payFor && <PaymentModal invoice={payFor} onCollect={collectPayment} onClose={() => setPayFor(null)} />}
+      {payFor && <PaymentModal key={`pay:${payFor.id}`} invoice={payFor} onCollect={collectPayment} onClose={() => setPayFor(null)} />}
       {timelineFor && (
         <div className="fixed inset-0 z-[130] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(3px)' }} onClick={() => setTimelineFor(null)}>
           <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>

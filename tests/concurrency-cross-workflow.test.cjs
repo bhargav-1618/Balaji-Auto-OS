@@ -74,7 +74,12 @@ ok('the realization cascade diffs serverPrior (NOT invoicesRef.current)',
   /runInvoiceTransaction\(serverPrior, fresh, 'persist'\)/.test(payBlock)
   && !/const prior = invoicesRef\.current\.find\(\(x\) => x\.id === invoiceId\)/.test(payBlock));
 ok('both payment records still survive the merge (BUG-CONC-01 kept)',
-  /const payments = \[\.\.\.\(Array\.isArray\(data\.payments\) \? data\.payments : \[\]\), pay\]/.test(payBlock));
+  /const priorPayments = Array\.isArray\(data\.payments\) \? data\.payments : \[\];/.test(payBlock)
+  && /const payments = \[\.\.\.priorPayments, pay\];/.test(payBlock));
+// Phase 4b (PH4-01) — the same-id idempotency guard, layered on top of BUG-CONC-01.
+ok('a duplicate delivery of the SAME pay.id is a no-op (Phase 4b idempotency)',
+  /if \(pay && pay\.id && priorPayments\.some\(\(p\) => p && p\.id === pay\.id\)\)/.test(payBlock)
+  && /alreadyApplied: true/.test(payBlock));
 ok('a payment still bumps _rev (Phase 1a — open editor rejected as stale)',
   /const nextRev = revOf\(data\) \+ 1;/.test(payBlock) && /_rev: nextRev,/.test(payBlock));
 ok('overpayment protection is unchanged (BillingModule still guards `overpay`)',

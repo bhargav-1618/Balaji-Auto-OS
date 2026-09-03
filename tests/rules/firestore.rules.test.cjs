@@ -460,6 +460,160 @@ async function main() {
     }
 
     // =========================================================================
+    // PHASE 4b — DUPLICATE-ACTION / IDEMPOTENCY (regression). Each transaction
+    // callback below is re-implemented to MATCH the shipped service code: it reads
+    // an operation-id marker BEFORE any write and applies NOTHING if the marker is
+    // already present. The assertions prove that one user intent, delivered twice
+    // (a lost-ack transaction retry, or an app-level re-click that reuses the same
+    // opId), produces exactly ONE business effect against the real emulator.
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      const aDb = testEnv.authenticatedContext('uid-A', { email: STAFF_EMAIL }).firestore();
+
+      // ---- PH4-01: collectInvoicePayment — pay.id idempotency guard ----
+      // Mirrors InventoryDashboard.js: `priorPayments.some(p => p && p.id === pay.id)`
+      // → return current state, write nothing.
+      const collectPaymentTxn = (db, invId, pay) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'invoices', invId);
+        const data = (await tx.get(ref)).data();
+        const priorPayments = Array.isArray(data.payments) ? data.payments : [];
+        if (pay && pay.id && priorPayments.some((p) => p && p.id === pay.id)) {
+          return { alreadyApplied: true };                        // <-- duplicate delivery: no-op
+        }
+        const payments = [...priorPayments, pay];
+        const grand = (data.lines || []).reduce((s, l) => s + Number(l.qty) * Number(l.rate), 0);
+        const paid = payments.reduce((s, p) => s + Number(p.amount), 0);
+        tx.update(ref, { payments, paid, balance: grand - paid, _rev: (data._rev || 0) + 1 });
+        return { alreadyApplied: false };
+      });
+      await seedDoc(testEnv, 'invoices/PH4-INV', { lines: [{ qty: 1, rate: 500 }], payments: [], _rev: 0 });
+      await collectPaymentTxn(aDb, 'PH4-INV', { id: 'p_x', mode: 'Cash', amount: 500 });   // commit 1
+      const dupPay = await collectPaymentTxn(aDb, 'PH4-INV', { id: 'p_x', mode: 'Cash', amount: 500 }); // lost-ack retry, SAME id
+      let inv = (await getDoc(doc(aDb, 'invoices/PH4-INV'))).data();
+      ok('PH4-01: a re-run of one payment intent (same pay.id) appends the payment ONCE',
+        inv.payments.filter((p) => p.id === 'p_x').length === 1, JSON.stringify(inv.payments.map((p) => p.id)));
+      ok('PH4-01: paid stays 500, balance 0 — the retry is reported alreadyApplied',
+        inv.paid === 500 && inv.balance === 0 && dupPay.alreadyApplied === true, `paid=${inv.paid} balance=${inv.balance} alreadyApplied=${dupPay.alreadyApplied}`);
+      // a genuinely separate second payment (new id) still goes through
+      await collectPaymentTxn(aDb, 'PH4-INV', { id: 'p_y', mode: 'Cash', amount: 200 });
+      inv = (await getDoc(doc(aDb, 'invoices/PH4-INV'))).data();
+      ok('PH4-01: a DIFFERENT payment id is a new intent — it is still recorded',
+        inv.payments.length === 2 && inv.paid === 700, `payments=${inv.payments.length} paid=${inv.paid}`);
+
+      // ---- PH4-02: poReceiveDoc — appliedReceiptIds guard ----
+      // Mirrors services/purchaseOrderService.js: read appliedReceiptIds first; if
+      // this receiptId is present, return server state and apply nothing.
+      const receiveTxn = (db, poId, delta, receiptId) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'purchaseOrders', poId);
+        const s = (await tx.get(ref)).data();
+        const applied = Array.isArray(s.appliedReceiptIds) ? s.appliedReceiptIds : [];
+        if (receiptId && applied.includes(receiptId)) return { alreadyApplied: true };
+        const items = s.items.map((it) => ({ ...it, receivedQty: Number(it.receivedQty) + delta }));
+        tx.update(ref, { items, appliedReceiptIds: [...applied, receiptId].slice(-60) });
+        tx.update(doc(db, 'parts', s.items[0].partId), { stock: increment(delta) });
+        tx.set(doc(collection(db, 'restocks')), { poNumber: s.poNumber, qty: delta });
+        return { alreadyApplied: false };
+      });
+      await seedDoc(testEnv, 'parts/PH4-PART', { stock: 0 });
+      await seedDoc(testEnv, 'purchaseOrders/PH4-PO', { poNumber: 'PH4-PO', status: 'approved', items: [{ partId: 'PH4-PART', qty: 10, receivedQty: 0 }] });
+      await receiveTxn(aDb, 'PH4-PO', 4, 'rcpt_1');   // commit 1
+      await receiveTxn(aDb, 'PH4-PO', 4, 'rcpt_1');   // lost-ack retry of "receive 4" — SAME receiptId
+      const po4 = (await getDoc(doc(aDb, 'purchaseOrders/PH4-PO'))).data();
+      const part4 = (await getDoc(doc(aDb, 'parts/PH4-PART'))).data();
+      const restock4 = (await getDocs(collection(aDb, 'restocks'))).size;
+      ok('PH4-02: receiving 4 once, delivered twice with the same receiptId, stays receivedQty 4',
+        po4.items[0].receivedQty === 4, `receivedQty=${po4.items[0].receivedQty}`);
+      ok('PH4-02: stock +4 and exactly ONE restock ledger row for one receipt',
+        part4.stock === 4 && restock4 === 1, `stock=${part4.stock} restockRows=${restock4}`);
+      // a genuinely separate second receipt (new receiptId) still applies
+      await receiveTxn(aDb, 'PH4-PO', 3, 'rcpt_2');
+      const po4b = (await getDoc(doc(aDb, 'purchaseOrders/PH4-PO'))).data();
+      ok('PH4-02: a DIFFERENT receiptId is a new receipt — it still applies (receivedQty 7)',
+        po4b.items[0].receivedQty === 7, `receivedQty=${po4b.items[0].receivedQty}`);
+
+      // ---- PH4-03: quick sell — sales/{opId} is the marker, whole sale in one txn ----
+      // Mirrors handleSellInner's online path: read sales/{opId} + part; if the sale
+      // doc exists, apply nothing; else set the sale row + decrement stock + rollup.
+      const sellTxn = (db, partId, want, opId) => runTransaction(db, async (tx) => {
+        const saleRef = doc(db, 'sales', opId);
+        const partRef = doc(db, 'parts', partId);
+        const saleSnap = await tx.get(saleRef);
+        const partSnap = await tx.get(partRef);
+        if (saleSnap.exists()) return { alreadyApplied: true };
+        const cur = partSnap.data().stock || 0;
+        if (want > cur) throw new Error('not enough');
+        tx.set(saleRef, { partId, qty: want });
+        tx.update(partRef, { stock: increment(-want), salesCount: increment(want) });
+        tx.set(doc(db, 'salesRollups', '2026-09'), { units: increment(want), orders: increment(1) }, { merge: true });
+        return { alreadyApplied: false };
+      });
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'parts/PH4-SELL', { stock: 10, salesCount: 0 });
+      await sellTxn(aDb, 'PH4-SELL', 3, 'sale_op_1');   // commit 1
+      await sellTxn(aDb, 'PH4-SELL', 3, 'sale_op_1');   // lost-ack retry — SAME opId
+      const sellPart = (await getDoc(doc(aDb, 'parts/PH4-SELL'))).data();
+      const salesRows = (await getDocs(collection(aDb, 'sales'))).size;
+      const roll = (await getDoc(doc(aDb, 'salesRollups/2026-09'))).data();
+      ok('PH4-03: selling 3 once, delivered twice with the same opId, decrements stock by 3 only',
+        sellPart.stock === 7, `stock=${sellPart.stock} (expected 7)`);
+      ok('PH4-03: exactly ONE sales row and the rollup counts one order',
+        salesRows === 1 && roll.units === 3 && roll.orders === 1, `salesRows=${salesRows} units=${roll.units} orders=${roll.orders}`);
+
+      // ---- PH4-04 / PH4-05: stock adjust / restock — natural-id marker ----
+      const adjustTxn = (db, partId, signedQty, adjId) => runTransaction(db, async (tx) => {
+        const adjRef = doc(db, 'stockAdjustments', adjId);
+        const partRef = doc(db, 'parts', partId);
+        const adjSnap = await tx.get(adjRef);
+        const partSnap = await tx.get(partRef);
+        if (adjSnap.exists()) return { alreadyApplied: true };
+        const before = partSnap.data().stock || 0;
+        tx.set(adjRef, { opId: adjId, partId, qty: signedQty, stockBefore: before, stockAfter: before + signedQty });
+        tx.update(partRef, { stock: increment(signedQty) });
+        return { alreadyApplied: false };
+      });
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'parts/PH4-ADJ', { stock: 20 });
+      await adjustTxn(aDb, 'PH4-ADJ', -5, 'adj_op_1');
+      await adjustTxn(aDb, 'PH4-ADJ', -5, 'adj_op_1');   // retry, same adjId
+      const adjPart = (await getDoc(doc(aDb, 'parts/PH4-ADJ'))).data();
+      const adjRows = (await getDocs(collection(aDb, 'stockAdjustments'))).size;
+      ok('PH4-04: adjusting −5 once, delivered twice with the same adjId, applies −5 once (stock 15, 1 ledger row)',
+        adjPart.stock === 15 && adjRows === 1, `stock=${adjPart.stock} rows=${adjRows}`);
+
+      // ---- PH4-06: PO create / supplier create — client-stable doc id ----
+      // Mirrors poCreateDoc / handleSupplierSaveInner: setDoc(doc(db, coll, stableId), data, {merge:true}).
+      await testEnv.clearFirestore();
+      const createWithId = (db, coll, id, data) => setDoc(doc(db, coll, id), data, { merge: true });
+      await createWithId(aDb, 'purchaseOrders', 'po_op_1', { poNumber: 'PO-1', total: 100 });
+      await createWithId(aDb, 'purchaseOrders', 'po_op_1', { poNumber: 'PO-1', total: 100 }); // retry, same id
+      await createWithId(aDb, 'suppliers', 'sup_op_1', { name: 'ZZ QA Supplier' });
+      await createWithId(aDb, 'suppliers', 'sup_op_1', { name: 'ZZ QA Supplier' });           // retry, same id
+      const poCount = (await getDocs(collection(aDb, 'purchaseOrders'))).size;
+      const supCount = (await getDocs(collection(aDb, 'suppliers'))).size;
+      ok('PH4-06: a retried PO create with the same client id writes ONE purchaseOrders doc',
+        poCount === 1, `poCount=${poCount}`);
+      ok('PH4-06: a retried supplier create with the same client id writes ONE suppliers doc',
+        supCount === 1, `supCount=${supCount}`);
+
+      // ---- CLEARED: delete is idempotent (Phase 3b) ----
+      await testEnv.clearFirestore();
+      await seedAdmins(testEnv, [ADMIN_EMAIL]);
+      const adminDb = testEnv.authenticatedContext('uid-admin', { email: ADMIN_EMAIL }).firestore();
+      const deleteTxn = (db, invId) => runTransaction(db, async (tx) => {
+        const snap = await tx.get(doc(db, 'invoices', invId));
+        if (!snap.exists()) return { unwound: false };   // 2nd delivery: no-op
+        tx.delete(doc(db, 'invoices', invId));
+        return { unwound: true };
+      });
+      await seedDoc(testEnv, 'invoices/PH4-DEL', { lines: [{ qty: 1, rate: 100 }], status: 'Paid' });
+      const d1 = await deleteTxn(adminDb, 'PH4-DEL');
+      const d2 = await deleteTxn(adminDb, 'PH4-DEL');   // duplicate delivery
+      ok('CLEARED: delete invoice — 2nd delivery unwinds nothing (idempotent)',
+        d1.unwound === true && d2.unwound === false);
+    }
+
+    // =========================================================================
     // Deny-by-default fallback for any collection not explicitly listed.
     // =========================================================================
     await testEnv.clearFirestore();

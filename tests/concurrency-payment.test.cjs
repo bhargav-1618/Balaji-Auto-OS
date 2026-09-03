@@ -52,7 +52,10 @@ ok('it RE-READS the invoice inside the transaction (tx.get)', /const snap = awai
 ok('it rejects when the invoice was deleted by another user',
   /!snap\.exists\(\)/.test(block) && /conc\/deleted/.test(block));
 ok('it appends to the SERVER payments array, not a client snapshot',
-  /const payments = \[\.\.\.\(Array\.isArray\(data\.payments\) \? data\.payments : \[\]\), pay\]/.test(block));
+  /const priorPayments = Array\.isArray\(data\.payments\) \? data\.payments : \[\];/.test(block)
+  && /const payments = \[\.\.\.priorPayments, pay\];/.test(block));
+ok('it no-ops when this pay.id is already on the server invoice (Phase 4b idempotency)',
+  /priorPayments\.some\(\(p\) => p && p\.id === pay\.id\)/.test(block) && /alreadyApplied: true/.test(block));
 ok('it recomputes paid / balance / status from server truth inside the tx',
   /invTotals\(merged\)/.test(block) && /invStatus\(merged\)/.test(block) &&
   /tx\.update\(invRef, \{[\s\S]{0,400}paid: t\.paid[\s\S]{0,400}balance: t\.balance[\s\S]{0,400}status,/.test(block));

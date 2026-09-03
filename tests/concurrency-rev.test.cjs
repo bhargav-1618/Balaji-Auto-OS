@@ -166,7 +166,7 @@ seed('customers', [{ id: 'legacy1', name: 'Legacy', phone: '9000000001' }]); // 
 
   // ── L. editors carry the _rev they opened with ─────────────────────────
   ok('L: PartModal carries part._rev on save', /out\._rev = part\?\._rev;/.test(dash));
-  ok('L: SupplierModal carries supplier._rev on save', /_rev: supplier\?\._rev \}/.test(dash));
+  ok('L: SupplierModal carries supplier._rev on save', /_rev: supplier\?\._rev[,}]/.test(dash));
 
   // ── M. no editLocks / heartbeat / session infra (Phase 1b/1c is separate) ──
   // M: the `_rev` data-integrity layer is INDEPENDENT of the Phase 1b edit lease AND

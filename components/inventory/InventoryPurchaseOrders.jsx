@@ -253,11 +253,12 @@ export default function InventoryPurchaseOrders({
 
       {receiving && (
         <ReceivePOForm
+          key={`rcv:${receiving.id}`}
           po={receiving}
           inventory={inventory}
           formatINR={formatINR}
           onClose={() => setReceiving(null)}
-          onSubmit={async (receivedLines) => { const ok = await onReceive?.(receiving, receivedLines); if (ok !== false) setReceiving(null); }}
+          onSubmit={async (receivedLines, receiptId) => { const ok = await onReceive?.(receiving, receivedLines, receiptId); if (ok !== false) setReceiving(null); }}
         />
       )}
     </PageHeader>
@@ -369,11 +370,14 @@ function POCreateForm({ suppliers, inventory, formatINR, onClose, onSubmit }) {
   const [partPick, setPartPick] = useState('');
   // Issue 7 (concurrency review) — onSubmit's caller awaits the actual PO write
   // before closing this modal; guard against a double-click creating two POs.
+  // Phase 4b (PH4-06) — stable PO id for the life of this form; a retry after an
+  // ambiguous failure re-writes the same document, not a second PO.
+  const poIdRef = useRef(`po_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
   const [saving, setSaving] = useState(false);
   const submit = async (status) => {
     if (saving || lines.length === 0) return;
     setSaving(true);
-    await onSubmit?.({ supplierId: supplierId || null, supplierName: supplier?.name || '—', items: lines, notes, expectedDate, priority, ...(status ? { status } : {}) });
+    await onSubmit?.({ poId: poIdRef.current, supplierId: supplierId || null, supplierName: supplier?.name || '—', items: lines, notes, expectedDate, priority, ...(status ? { status } : {}) });
     setSaving(false);
   };
   const inr = (n) => (typeof formatINR === 'function' ? formatINR(n) : `₹${Math.round(num(n)).toLocaleString('en-IN')}`);
@@ -553,6 +557,12 @@ function ReceivePOForm({ po, inventory, formatINR, onClose, onSubmit }) {
   // write (updates the PO's receivedQty/status AND increments stock) before
   // closing this modal; guard against a double-click receiving the same
   // delivery twice.
+  // Phase 4b (PH4-02) — ONE stable receipt id for the life of this form. Every
+  // press of "Confirm Receipt" (including a retry after an ambiguous failure)
+  // reuses it, so poReceiveDoc's transaction rejects a duplicate delivery. A
+  // genuinely separate second receive (a later partial delivery) gets a new form
+  // instance and a new id.
+  const receiptIdRef = useRef(`rcpt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
   const [saving, setSaving] = useState(false);
   const submit = async () => {
     if (saving) return;
@@ -565,7 +575,7 @@ function ReceivePOForm({ po, inventory, formatINR, onClose, onSubmit }) {
         updateDefaultPrice: diffLines.some((d) => d.partId === l.partId) ? confirmPriceUpdate : false,
       }));
     setSaving(true);
-    await onSubmit?.(receivedLines);
+    await onSubmit?.(receivedLines, receiptIdRef.current);
     setSaving(false);
   };
 

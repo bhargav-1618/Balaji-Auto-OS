@@ -66,6 +66,31 @@ rules published.)*
 - **Raw stock quantities** were already race-safe (atomic `increment()` on every
   path — quick-sell also re-reads inside a transaction and refuses to go negative).
   Negative / over-received stock is deliberately recorded as the truth, not clamped.
+- **Duplicate business actions ARE idempotent** (CONCURRENCY PHASE 4b — shipped,
+  emulator + production verified). Every retryable money/stock write now carries a
+  stable **operation id** that its Firestore transaction reads *before* any write, so
+  one logical intent delivered any number of times (double-click, retry after an
+  ambiguous response, lost server ack, transaction-callback replay) produces exactly
+  **one** business effect, while a genuinely separate second action (new id) still
+  goes through. Covered: collect payment (`payments[].id`), PO receive
+  (`purchaseOrders.appliedReceiptIds`), quick-sell / stock-out (`sales/{opId}` — the
+  whole sale is now one transaction: stock + ledger row + monthly rollup), manual
+  stock adjustment (`stockAdjustments/{opId}`), ad-hoc restock (`restocks/{opId}`),
+  create PO / create supplier (client-stable doc id via `setDoc(..., {merge:true})`),
+  new job-card stock reservation (applied only after the card write is confirmed,
+  from a pinned per-`jobNo` baseline). `lib/opId.js` documents the contract.
+  Residual, low severity:
+  - The operation id lives in a React `useRef`, so it does **not** survive a full
+    browser refresh. If the user hard-refreshes *between* an ambiguous failure and a
+    retry, the retry is treated as a new intent. If the first attempt had actually
+    committed, the duplicate is still visible in the record for the user to see and
+    correct; nothing is silently corrupted.
+  - Invoice numbering (PHASE 2) is unchanged: a save that fails **after** the
+    `counters/` transaction allocated a number still skips that number (a gap, legal
+    under GST Rule 46(b)). This was a deliberate design choice, not reworked in 4b.
+  - A duplicate delivery may still write a second **audit-log** line for the same
+    action (the `auditLog` collection is append-only and advisory); the business
+    records themselves are single-effect.
 
 ## 🟡 Performance (fine at current scale)
 

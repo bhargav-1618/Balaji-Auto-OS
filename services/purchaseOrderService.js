@@ -1,11 +1,12 @@
 // services/purchaseOrderService.js
 // Purchase Order business writes, decoupled from UI/state. The component keeps
 // demo (in-memory) handling and toasts; production Firestore writes live here.
-import { collection, doc, addDoc, updateDoc, serverTimestamp, increment, runTransaction } from 'firebase/firestore';
+import { collection, doc, addDoc, setDoc, updateDoc, serverTimestamp, increment, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 // Pure receive logic (Phase 3b, CWF-02) — kept firebase-free in lib/ so it is
 // unit-testable and importable from the security-rules test SDK context.
 import { applyPoReceive } from '../lib/poReceive';
+import { APPLIED_RECEIPTS_CAP } from '../lib/opId';
 
 const n = (x) => Number(x) || 0;
 
@@ -60,8 +61,15 @@ export function buildPO({ supplierId, supplierName, items, notes, expectedDate, 
 }
 
 // --- Firestore writes (production) ---
-export function poCreateDoc(base, userEmail) {
-  return addDoc(collection(db, 'purchaseOrders'), { ...base, createdAt: serverTimestamp(), createdBy: userEmail || null });
+// Phase 4b (PH4-06) — if the caller supplies a client-generated `poId` (stable for
+// one "Create PO" intent), write to that exact doc with setDoc(..., {merge:true}).
+// A retry after an ambiguous failure then re-writes the SAME document instead of
+// creating a second PO. Without a poId it falls back to addDoc (bulk-reorder,
+// legacy callers).
+export function poCreateDoc(base, userEmail, poId) {
+  const data = { ...base, createdAt: serverTimestamp(), createdBy: userEmail || null };
+  if (poId) return setDoc(doc(db, 'purchaseOrders', String(poId)), data, { merge: true }).then(() => ({ id: String(poId) }));
+  return addDoc(collection(db, 'purchaseOrders'), data);
 }
 
 // Advance draft→pending→approved→sent. Receiving (full or partial) is a
@@ -89,13 +97,20 @@ export function poAdvanceDoc(po, next, userEmail) {
  * current value, not the caller's (possibly stale) `po`. Two partial receipts
  * landing at once therefore both count. Over-receipt past the ordered quantity is
  * rejected as a whole (`po/over-receipt`) — the transaction aborts, so no stock
- * moves and no restock row is written. Retry-safe: a retried attempt re-reads and
- * its aborted writes (including the auto-id restock docs) never commit, so there
- * are no duplicate restock rows.
+ * moves and no restock row is written.
  *
- * @returns {Promise<{ status, items }>} the authoritative post-receive PO state
+ * Phase 4b (PH4-02) — IDEMPOTENCY. `receiptId` is stable for one "Confirm Receipt"
+ * intent (ReceivePOForm holds it). The transaction records applied receipt ids in
+ * a bounded `appliedReceiptIds` list on the PO and reads it BEFORE any write: if
+ * this receiptId is already there, the delivery is a duplicate (double-click,
+ * retry after an ambiguous failure, transaction-callback replay, lost ack) →
+ * return the current state, apply NOTHING (no second `receivedQty` bump, no second
+ * stock increment, no second restock row). A genuinely separate later receipt
+ * carries a different id and flows through normally.
+ *
+ * @returns {Promise<{ status, items, alreadyApplied? }>} authoritative post-receive PO state
  */
-export function poReceiveDoc(po, receivedLines, userEmail) {
+export function poReceiveDoc(po, receivedLines, userEmail, receiptId) {
   const poRef = doc(db, 'purchaseOrders', po.id);
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(poRef);
@@ -105,6 +120,10 @@ export function poReceiveDoc(po, receivedLines, userEmail) {
       throw e;
     }
     const server = snap.data();
+    const applied = Array.isArray(server.appliedReceiptIds) ? server.appliedReceiptIds : [];
+    if (receiptId && applied.includes(receiptId)) {
+      return { status: server.status, items: server.items || [], alreadyApplied: true };
+    }
     const { items: nextItems, status, fullyReceived, over } =
       applyPoReceive(server.items || [], receivedLines, server.status);
     if (over) {
@@ -117,6 +136,7 @@ export function poReceiveDoc(po, receivedLines, userEmail) {
     }
     const poUpdate = { items: nextItems, status };
     if (fullyReceived) poUpdate.receivedAt = serverTimestamp();
+    if (receiptId) poUpdate.appliedReceiptIds = [...applied, receiptId].slice(-APPLIED_RECEIPTS_CAP);
     tx.update(poRef, poUpdate);
     (receivedLines || []).forEach((line) => {
       if (!line.partId || n(line.receiveQty) <= 0) return;

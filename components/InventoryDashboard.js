@@ -982,6 +982,8 @@ function RestockModal({ part, suppliers = [], onConfirm, onClose, asPage = false
   const [notes, setNotes] = useState('');
   const [updateDefaultPrice, setUpdateDefaultPrice] = useState(false);
   const [updateDefaultSupplier, setUpdateDefaultSupplier] = useState(false);
+  // Phase 4b (PH4-05) — stable restock-op id for the life of this modal.
+  const restockOpIdRef = useRef(`rs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
 
   const n = Math.max(0, parseInt(qty, 10) || 0);
   const cost = Math.max(0, parseFloat(unitCost) || 0);
@@ -1016,6 +1018,7 @@ function RestockModal({ part, suppliers = [], onConfirm, onClose, asPage = false
       notes: notes.trim(),
       updateDefaultPrice: priceDiffers && updateDefaultPrice,
       updateDefaultSupplier: supplierDiffers && updateDefaultSupplier,
+      opId: restockOpIdRef.current,
     });
   }
 
@@ -1164,6 +1167,11 @@ function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPage = fal
   const [qty, setQty] = useState('1');
   const [price, setPrice] = useState(String(mrp || ''));
   const [error, setError] = useState('');
+  // Phase 4b (PH4-03) — ONE stable sale-operation id for the life of this modal.
+  // Every "Confirm Sale" press (including a retry after an ambiguous failure)
+  // reuses it; handleSell's transaction writes the sale as `sales/{saleOpId}` and
+  // no-ops on a repeat. A genuinely separate later sale opens a fresh modal.
+  const saleOpIdRef = useRef(`sale_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
 
   const blockKeys = (e) => ['e', 'E', '+', '-', '.'].includes(e.key) && e.preventDefault();
 
@@ -1191,7 +1199,7 @@ function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPage = fal
       }
       return;
     }
-    onConfirm(q, p, floor > 0 && p < floor); // 3rd arg = belowFloorOverride
+    onConfirm(q, p, floor > 0 && p < floor, saleOpIdRef.current); // 3rd arg = belowFloorOverride, 4th = stable sale-op id
   }
 
   const fieldLabel = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1.5';
@@ -1375,6 +1383,8 @@ function StockAdjustModal({ part, history = [], onConfirm, onClose, asPage = fal
   // adjustment" button clickable for the round-trip — a fast double-click could
   // fire two separate stock-adjustment writes for one intended action.
   const [saving, setSaving] = useState(false);
+  // Phase 4b (PH4-04) — stable adjustment-op id for the life of this modal.
+  const adjustOpIdRef = useRef(`adj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
   const blockKeys = (e) => ['e', 'E', '+', '-', '.'].includes(e.key) && e.preventDefault();
   const isCorrection = direction === 'correction';
 
@@ -1414,6 +1424,7 @@ function StockAdjustModal({ part, history = [], onConfirm, onClose, asPage = fal
       reason: isCorrection ? 'Correction' : reason,
       notes: notes.trim(),
       correctsId: isCorrection ? (correctsId || null) : null,
+      opId: adjustOpIdRef.current,
     });
     setSaving(false);
   }
@@ -1528,7 +1539,9 @@ function StockAdjustModal({ part, history = [], onConfirm, onClose, asPage = fal
 function BulkAdjustModal({ parts, onSubmit, onClose }) {
   useBodyScrollLock();
   const modalRef = useRef(null);
-  const [rows, setRows] = useState(() => parts.map((p) => ({ part: p, qty: '1', reason: '', notes: '' })));
+  // Phase 4b (PH4-04) — one stable adjustment-op id per row, fixed at mount so a
+  // whole-batch retry reuses them (each line is deduped server-side by its opId).
+  const [rows, setRows] = useState(() => parts.map((p) => ({ part: p, qty: '1', reason: '', notes: '', opId: `adj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}_${p.id.slice(0, 6)}` })));
   const updateRow = (partId, patch) => setRows((prev) => prev.map((r) => (r.part.id === partId ? { ...r, ...patch } : r)));
   const removeRow = (partId) => setRows((prev) => prev.filter((r) => r.part.id !== partId));
   const isRowValid = (r) => { const q = parseInt(r.qty, 10) || 0; return q > 0 && q <= (r.part.stock || 0) && !!r.reason; };
@@ -1540,7 +1553,7 @@ function BulkAdjustModal({ parts, onSubmit, onClose }) {
   const submit = async () => {
     if (saving) return;
     setSaving(true);
-    await onSubmit(rows.map((r) => ({ part: r.part, qty: parseInt(r.qty, 10) || 0, reason: r.reason, notes: r.notes })));
+    await onSubmit(rows.map((r) => ({ part: r.part, qty: parseInt(r.qty, 10) || 0, reason: r.reason, notes: r.notes, opId: r.opId })));
     setSaving(false);
   };
 
@@ -2676,6 +2689,11 @@ const SUPPLIER_CONFLICT_FIELDS = [
 // Add / Edit Part Modal — Requirement 3 (learning comboboxes) + Base64 image
 // ---------------------------------------------------------------------------
 function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, onSaveSupplier, onCreateSupplier, isAdmin = true, categoryTree = CATEGORY_TREE, vehicleTree = VEHICLE_TREE, salesHistory = [], onAddCategory, onAddVehicle, asPage = false, demoMode = false, readOnly = false, banner = null }) {
+  // Phase 4b (PH4-06 class) — one stable id per "Add Part" intent, created once for
+  // the life of this modal instance (the parent keys the render per part id), so a
+  // retry after an ambiguous save re-writes the SAME part doc instead of creating a
+  // second one. Unused on edit (the doc id is already known).
+  const createOpIdRef = useRef(`part_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
   // PRODUCTIVITY: recent sales summary for this part (purchasing aid).
   const saleStats = useMemo(() => {
     if (!part?.id) return null;
@@ -3022,6 +3040,7 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
     // Phase 1a — carry the `_rev` this part had when the editor opened, so the
     // guarded save can reject a stale overwrite. Concurrency metadata, not a form field.
     out._rev = part?._rev;
+    if (!isEdit) out.createOpId = createOpIdRef.current;
     onSave(out);
   }
 
@@ -3760,6 +3779,12 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
   });
   const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
 
+  // Phase 4b (PH4-06) — one stable id per "Add Supplier" intent. Created once for
+  // the life of this modal instance (the parent forces a remount per intent), so a
+  // retry after an ambiguous save re-writes the SAME supplier doc rather than
+  // creating a second one. Unused on edit (the doc id is already known).
+  const createOpIdRef = useRef(`sup_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+
   // FIX 3: labeled multi-contact phone cards
   const updateContact = (idx, key, val) =>
     setForm((f) => {
@@ -3852,7 +3877,7 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
     if (form.email && !isValidEmail(form.email)) { toast.error(`${EMAIL_ERROR}, or leave it blank.`); return; }
     clearSupDraft();
     // Phase 1a — carry the `_rev` this supplier had when the editor opened.
-    onSave({ ...form, gst: (form.gst || '').trim().toUpperCase(), state: stateFromGst, _rev: supplier?._rev });
+    onSave({ ...form, gst: (form.gst || '').trim().toUpperCase(), state: stateFromGst, _rev: supplier?._rev, createOpId: createOpIdRef.current });
   }
 
   const fieldLabel = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1.5';
@@ -5541,7 +5566,9 @@ function BulkReceiveModal({ inventory, suppliers = [], onSubmit, onClose }) {
   }, [inventory, pickerQ, lines, pickerSearchIndex]);
 
   const addLine = (part) => {
-    setLines((prev) => [...prev, { part, qty: 1, unitCost: part.purchasePrice || 0 }]);
+    // Phase 4b (PH4-05) — one stable restock-op id per line, fixed when the line is
+    // added so a whole-batch retry reuses it (server dedups by opId).
+    setLines((prev) => [...prev, { part, qty: 1, unitCost: part.purchasePrice || 0, opId: `rs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}_${part.id.slice(0, 6)}` }]);
     setPickerQ('');
     setPickerOpen(false);
   };
@@ -5675,7 +5702,7 @@ function BulkReceiveModal({ inventory, suppliers = [], onSubmit, onClose }) {
           <div className="flex-shrink-0 flex gap-2.5 px-5 py-4 safe-bottom-pad" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.08)' }}>
             <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Cancel</button>
             <button
-              onClick={() => onSubmit({ supplierName, invoiceNumber, purchaseDate, lines: lines.map((l) => ({ part: l.part, qty: parseInt(l.qty, 10) || 0, unitCost: parseFloat(l.unitCost) || 0 })) })}
+              onClick={() => onSubmit({ supplierName, invoiceNumber, purchaseDate, lines: lines.map((l) => ({ part: l.part, qty: parseInt(l.qty, 10) || 0, unitCost: parseFloat(l.unitCost) || 0, opId: l.opId })) })}
               disabled={!canSubmit}
               className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition ${canSubmit ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110' : 'bg-white/5 text-white/45 cursor-not-allowed'}`}
             >
@@ -9955,7 +9982,7 @@ export default function InventoryDashboard() {
   // Demo mode has one client and no server — it keeps the existing in-memory path.
   const collectInvoicePayment = async (invoiceId, pay) => {
     const invRef = doc(db, COLLECTIONS.INVOICES, invoiceId);
-    const { serverPrior, fresh } = await runTransaction(db, async (tx) => {
+    const { serverPrior, fresh, alreadyApplied } = await runTransaction(db, async (tx) => {
       const snap = await tx.get(invRef);
       if (!snap.exists()) {
         const err = new Error('This invoice was deleted by another user. Reload before collecting payment.');
@@ -9968,10 +9995,23 @@ export default function InventoryDashboard() {
         err.code = 'conc/estimate';
         throw err;
       }
+      const priorPayments = Array.isArray(data.payments) ? data.payments : [];
+      // Phase 4b (PH4-01) — IDEMPOTENCY. `pay.id` is generated ONCE per logical
+      // "collect payment" intent (PaymentModal holds it in a ref) and reused for
+      // every retry / double-submit / transaction-callback replay. If this payment
+      // id is already on the server invoice, this is a duplicate delivery — return
+      // the authoritative current state, write NOTHING (no second payment row, no
+      // _rev bump, no history entry, no realization). A genuinely separate payment
+      // carries a different id and flows through normally.
+      if (pay && pay.id && priorPayments.some((p) => p && p.id === pay.id)) {
+        const t0 = invTotals({ ...data, id: invoiceId });
+        const image = { ...data, id: invoiceId, paid: t0.paid, grandTotal: t0.grand, balance: t0.balance, gstAmount: t0.gst, status: invStatus({ ...data, id: invoiceId }) };
+        return { serverPrior: image, fresh: image, alreadyApplied: true };
+      }
       // Authoritative pre-payment image — captured from the transaction's own read,
       // BEFORE any mutation. This, not client state, is what the cascade diffs against.
       const serverPrior = { ...data, id: invoiceId };
-      const payments = [...(Array.isArray(data.payments) ? data.payments : []), pay];
+      const payments = [...priorPayments, pay];
       const merged = { ...data, id: invoiceId, payments };
       const t = invTotals(merged);
       const status = invStatus(merged);
@@ -9996,6 +10036,8 @@ export default function InventoryDashboard() {
         fresh: { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status, _rev: nextRev },
       };
     });
+    // Duplicate delivery — nothing changed on the server, so run nothing downstream.
+    if (alreadyApplied) return fresh;
     // Money is committed atomically. Now run the (idempotent, diff-based) realized
     // stock + sales/services ledger + audit cascade — diffing the transaction's OWN
     // server pre-image against `fresh`, never client state. Not re-persisting the
@@ -10110,19 +10152,38 @@ export default function InventoryDashboard() {
   // used) instead of computing `next` inside the setJobCards updater — a promise cannot be
   // returned from inside a state updater. This lets both functions return the real
   // persistence promise so callers (JobCardModule's saveCard) can await genuine success.
-  const deleteJobCard = (jobNo) => {
+  // Phase 4b (PH4-07) — reservation idempotency baseline. Maps jobNo → the card
+  // object whose reserved-stock effect is currently reflected in `inventory`
+  // (absent = no reservation applied yet). The reserve delta for a save/delete is
+  // ALWAYS computed as reserveDelta(baseline, card) and the baseline is advanced
+  // ONLY after the job-card doc write is confirmed. So a retry after a failed write
+  // recomputes the SAME delta from the SAME baseline (no double-reserve, and — the
+  // trap the naïve "move one line down" fix falls into — no LOST reservation
+  // either), while a genuine later edit diffs from the now-advanced baseline.
+  // In-memory only (like every opId ref this phase) — documented limitation.
+  const reserveBaselineRef = useRef(new Map());
+  const pinReserveBaseline = (jobNo, prior) => {
+    const m = reserveBaselineRef.current;
+    if (!m.has(jobNo)) m.set(jobNo, prior || null);
+    return m.get(jobNo);
+  };
+  const deleteJobCard = async (jobNo) => {
     const prev = jobCardsRef.current;
     const prior = prev.find((c) => c.jobNo === jobNo);
-    // release any reservation this card held (H-5A: reserveDelta from inventoryService)
-    applyReserveDelta(reserveDelta(prior, null));
+    const baseline = pinReserveBaseline(jobNo, prior);
     const next = prev.filter((c) => c.jobNo !== jobNo);
     jobCardsRef.current = next;
     setJobCards(next);
-    return persistJobCardsDiff(prev, next);
+    await persistJobCardsDiff(prev, next);
+    // release any reservation this card held — only after the delete is confirmed,
+    // so a failed delete + retry doesn't free reserved stock while the card lives.
+    await applyReserveDelta(reserveDelta(baseline, null));
+    reserveBaselineRef.current.delete(jobNo);
   };
   const persistJobCard = async (card) => {
     const prev = jobCardsRef.current;
     const prior = prev.find((c) => c.jobNo === card.jobNo);
+    const reserveBaseline = pinReserveBaseline(card.jobNo, prior);
     // preserve creation order for the Firestore orderBy('createdAt') subscription
     const stamped = prior ? card : { ...card, createdAt: card.createdAt || serverTimestamp(), createdAtMs: card.createdAtMs || Date.now() };
     // Phase 1a — editing an EXISTING job card goes through the revision-guarded
@@ -10136,11 +10197,14 @@ export default function InventoryDashboard() {
         if (isConcurrencyError(err)) concToast(err, 'job card');
         throw err; // JobCardModule's own catch leaves the editor untouched
       }
-      applyReserveDelta(reserveDelta(prior, card));
       const merged = { ...card, _rev: fresh._rev };
       const next = [...prev.filter((c) => c.jobNo !== card.jobNo), merged];
       jobCardsRef.current = next;
       setJobCards(next);
+      // PH4-07 — reservation delta from the pinned baseline, after the guarded
+      // write is confirmed; advance the baseline so a later edit diffs from here.
+      await applyReserveDelta(reserveDelta(reserveBaseline, card));
+      reserveBaselineRef.current.set(card.jobNo, card);
       const label = `${merged.jobNo} · ${merged.customer || ''}${merged.vehicle ? ` · ${merged.vehicle}` : ''}`;
       if (prior.status !== merged.status) {
         pushAudit({ action: 'Job Card Status Changed', entity: 'Job Card', entityId: merged.jobNo, detail: `${label} · ${prior.status || ''} → ${merged.status || ''}` });
@@ -10149,12 +10213,15 @@ export default function InventoryDashboard() {
       }
       return;
     }
-    // H-5A: reserveDelta from inventoryService (pure) replaces the inline diff.
-    applyReserveDelta(reserveDelta(prior, card));
     const next = [...prev.filter((c) => c.jobNo !== card.jobNo), stamped];
     jobCardsRef.current = next;
     setJobCards(next);
     await persistJobCardsDiff(prev, next);
+    // PH4-07 — apply the reservation delta ONLY after the job-card doc write is
+    // confirmed, computed from the pinned baseline so a retry after a failed write
+    // neither double-reserves nor drops the reservation. H-5A: reserveDelta (pure).
+    await applyReserveDelta(reserveDelta(reserveBaseline, card));
+    reserveBaselineRef.current.set(card.jobNo, card);
     // Audit AFTER the write above has actually succeeded (an awaited call that
     // throws on failure) — one entry per save, picking status-change over a
     // generic "Updated" when that's what actually happened, same rule as invoices.
@@ -11101,10 +11168,15 @@ export default function InventoryDashboard() {
     if (demoMode) return; // demo: row selection already reflects it; no Firestore write
     const exists = suppliers.some((s) => safeLower(s.name) === safeLower(cleanName));
     if (exists) return;
-    addDoc(collection(db, COLLECTIONS.SUPPLIERS), {
+    // Phase 4b (PH4-06) — deterministic doc id derived from the name. A retry of
+    // this fire-and-forget quick-create re-writes the SAME doc (merge) instead of
+    // creating a second supplier, even before the live subscription has surfaced
+    // the first write into `suppliers`.
+    const quickId = `sup_qc_${safeLower(cleanName).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || Date.now().toString(36)}`;
+    setDoc(doc(db, COLLECTIONS.SUPPLIERS, quickId), {
       name: cleanName, phoneNumbers: [], primaryPhone: '', phones: [], phone: '',
       createdAt: serverTimestamp(),
-    }).catch((e) => console.error('Supplier create sync will retry:', e));
+    }, { merge: true }).catch((e) => console.error('Supplier create sync will retry:', e));
   }
 
   // ---- Supplier save (multi-phone / alt-names) + cascade to linked parts ----
@@ -11224,15 +11296,19 @@ export default function InventoryDashboard() {
           }
         });
       } else {
-        const ref = await addDoc(collection(db, COLLECTIONS.SUPPLIERS), { ...payload, createdAt: serverTimestamp() });
-        writeAudit('create_supplier', { supplierId: ref.id, name: primaryName });
+        // Phase 4b (PH4-06) — `formData.createOpId` is a stable client id for one
+        // "Add Supplier" intent; setDoc to that exact doc so a retry after an
+        // ambiguous failure re-writes it instead of creating a second supplier.
+        const newId = formData.createOpId || `sup_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        await setDoc(doc(db, COLLECTIONS.SUPPLIERS, newId), { ...payload, createdAt: serverTimestamp() }, { merge: true });
+        writeAudit('create_supplier', { supplierId: newId, name: primaryName });
       }
       toast.success(formData.id ? 'Supplier updated — synced to linked parts' : 'Supplier added');
     } catch (err) {
       if (isConcurrencyError(err)) { concRejected = true; concToast(err, 'supplier'); }
       else {
         console.error('Supplier save failed:', err);
-        toast.error('Could not save supplier.');
+        toast.error('Couldn’t confirm the supplier saved. It may already exist — check Suppliers, or press Save again (a repeat is safe).');
       }
     } finally {
       setSupplierSaving(false);
@@ -12030,14 +12106,17 @@ export default function InventoryDashboard() {
       // transaction (re-read, verify it still exists, verify `_rev` hasn't moved
       // under this editor, merge, bump `_rev`). stock & salesCount are not in
       // `payload` so Sell/Receive's atomic counters are still never overwritten.
-      let writeResult = null;
+      let newPartId = null;
       if (formData.id) {
         await store.saveGuarded(COLLECTIONS.PARTS, { ...payload, id: formData.id }, revOf(formData), { label: 'This part' });
       } else {
-        writeResult = await addDoc(collection(db, COLLECTIONS.PARTS), { ...payload, stock: nonNegInt(formData.stock), salesCount: 0, copiedFrom, archived: !!copiedFrom, createdAt: serverTimestamp() });
+        // Phase 4b (PH4-06 class) — write the new part to a client-stable doc id so a
+        // retry after an ambiguous failure re-writes the SAME doc, never a duplicate.
+        newPartId = formData.createOpId || `part_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        await setDoc(doc(db, COLLECTIONS.PARTS, newPartId), { ...payload, stock: nonNegInt(formData.stock), salesCount: 0, copiedFrom, archived: !!copiedFrom, createdAt: serverTimestamp() }, { merge: true });
       }
       duplicateOriginRef.current = null;
-      const partId = formData.id || writeResult?.id;
+      const partId = formData.id || newPartId;
 
       // ADD-06: record price changes (cost/margin edits are sensitive).
       if (formData.id) {
@@ -12058,7 +12137,9 @@ export default function InventoryDashboard() {
       if (isConcurrencyError(err)) { concRejected = true; concToast(err, 'part'); }
       else {
         console.error('Save failed:', err);
-        toast.error('Could not save part. Please check the details and try again.');
+        toast.error(formData.id
+          ? 'Could not save part. Please check the details and try again.'
+          : 'Couldn’t confirm the part saved. It may already exist — check the parts list, or press Save again (a repeat is safe).');
       }
     } finally {
       setSaving(false);
@@ -12211,18 +12292,18 @@ export default function InventoryDashboard() {
   // subsequent sales (and retries after a blocked/invalid sale) are never stuck.
   const sellLockRef = useRef(false);
 
-  async function handleSell(qty, pricePerUnit, belowFloorOverride = false) {
+  async function handleSell(qty, pricePerUnit, belowFloorOverride = false, saleOpId = null) {
     if (sellLockRef.current) return;
     sellLockRef.current = true;
     try {
-      return await handleSellInner(qty, pricePerUnit, belowFloorOverride);
+      return await handleSellInner(qty, pricePerUnit, belowFloorOverride, saleOpId);
     } finally {
       sellLockRef.current = false;
     }
   }
 
   // ---- Issue 3: complete a checkout sale (price already floor-validated) ----
-  async function handleSellInner(qty, pricePerUnit, belowFloorOverride = false) {
+  async function handleSellInner(qty, pricePerUnit, belowFloorOverride = false, saleOpId = null) {
     const part = checkoutPart;
     if (!part) return;
     if (demoMode) {
@@ -12243,57 +12324,110 @@ export default function InventoryDashboard() {
       // string "Parts") silently vanished from Sales cards, list AND search. Confirmed
       // live: a real seeded sale record has category:"Parts", revenueType:"Parts" —
       // matching that exact shape, not inventing a new field.
-      setSales((prev) => [{ id: 'demo-sale-' + now.getTime(), partId: part.id, name: part.name, partName: part.name, sku: part.sku, category: 'Parts', revenueType: 'Parts', brands: [part.vehicle].filter(Boolean), qty: sold, quantity: sold, unitPrice: pricePerUnit, unitCost, costPrice: unitCost, revenue, total: revenue, totalPrice: revenue, cost, profit: revenue - cost, soldByEmail: 'demo@balajiautoos.com', createdAt: stamp }, ...prev]);
+      const demoOpId = saleOpId || 'demo-sale-' + now.getTime();
+      if (sales.some((s) => s.id === demoOpId || s.opId === demoOpId)) { setCheckoutPart(null); toast.success(`${part.name} — this sale is already recorded (demo)`); return; }
+      setSales((prev) => [{ id: demoOpId, opId: demoOpId, partId: part.id, name: part.name, partName: part.name, sku: part.sku, category: 'Parts', revenueType: 'Parts', brands: [part.vehicle].filter(Boolean), qty: sold, quantity: sold, unitPrice: pricePerUnit, unitCost, costPrice: unitCost, revenue, total: revenue, totalPrice: revenue, cost, profit: revenue - cost, soldByEmail: 'demo@balajiautoos.com', createdAt: stamp }, ...prev]);
       setCheckoutPart(null);
       toast.success(`Sold ${sold} × ${part.name} (demo)`);
       writeAudit('sell_part', { partId: part.id, name: part.name || '' }, { qty: sold, unitPrice: pricePerUnit, revenue });
       return;
     }
     const want = Math.max(1, Math.floor(qty || 0));
+    const unitCost = part.purchasePrice || 0;
+    const revenue = want * pricePerUnit;
+    const cost = want * unitCost;
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    // Phase 4b (PH4-03) — the sale's ledger identity. Stable per "Confirm Sale"
+    // intent (CheckoutModal ref); falls back to a fresh id only if a caller doesn't
+    // supply one. The sales ledger row IS this doc, so a duplicate delivery can't
+    // create a second one.
+    const opId = saleOpId || `sale_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    const saleRecord = {
+      opId,
+      partId: part.id,
+      name: part.name || '',
+      qty: want,
+      unitPrice: pricePerUnit,
+      unitCost,
+      revenue,
+      cost,
+      profit: revenue - cost,
+      category: 'Parts',
+      revenueType: 'Parts',
+      brands: brandsOf(part),
+      soldBy: user?.uid || null,
+      soldByEmail: user?.email || null,
+      belowFloor: !!belowFloorOverride,
+      floorPrice: part.minSellingPrice || 0,
+      source: 'quick-sell',
+      createdAt: serverTimestamp(),
+    };
+    const rollupPatch = {
+      month: monthKey,
+      revenue: increment(revenue),
+      cost: increment(cost),
+      profit: increment(revenue - cost),
+      units: increment(want),
+      orders: increment(1),
+      updatedAt: serverTimestamp(),
+    };
 
-    // Issue 6: when online, run a Firestore TRANSACTION that re-reads stock on the
-    // server and refuses to let it go negative — so two simultaneous sales of the
-    // last units can't both succeed. Offline (no server round-trip possible), fall
-    // back to the atomic-increment path so the shop can still sell on one device.
     let sold = want;
+    let alreadyApplied = false;
     if (online) {
+      // Phase 4b (PH4-03) — ONE atomic transaction for the WHOLE sale: stock
+      // decrement + salesCount + the sales ledger row + the monthly rollup, keyed
+      // by the sale-op id. All reads (op marker, part) happen before any write.
+      // A duplicate delivery (double-click past the ref guard, retry after an
+      // ambiguous failure, lost ack, transaction-callback replay) sees the
+      // `sales/{opId}` doc already present and applies NOTHING.
       try {
-        sold = await runTransaction(db, async (tx) => {
-          const ref = doc(db, COLLECTIONS.PARTS, part.id);
-          const snap = await tx.get(ref);
-          if (!snap.exists()) throw new Error('This part no longer exists.');
-          const cur = snap.data().stock || 0;
+        const result = await runTransaction(db, async (tx) => {
+          const saleRef = doc(db, COLLECTIONS.SALES, opId);
+          const partRef = doc(db, COLLECTIONS.PARTS, part.id);
+          const saleSnap = await tx.get(saleRef);
+          const partSnap = await tx.get(partRef);
+          if (saleSnap.exists()) return { sold: Number(saleSnap.data().qty) || want, alreadyApplied: true };
+          if (!partSnap.exists()) throw new Error('This part no longer exists.');
+          const cur = partSnap.data().stock || 0;
           if (want > cur) throw new Error(`Cannot sell ${want} — only ${cur} left in stock.`);
-          tx.update(ref, { stock: increment(-want), salesCount: increment(want), updatedAt: serverTimestamp() });
-          return want;
+          tx.set(saleRef, saleRecord);
+          tx.update(partRef, { stock: increment(-want), salesCount: increment(want), updatedAt: serverTimestamp() });
+          tx.set(doc(db, 'salesRollups', monthKey), rollupPatch, { merge: true });
+          return { sold: want, alreadyApplied: false };
         });
+        sold = result.sold;
+        alreadyApplied = result.alreadyApplied;
       } catch (err) {
-        // Data-integrity rule: if the write fails while we believe we're online,
-        // do NOT optimistically update stock/analytics or claim a sale. Surface a
-        // clear error and stop — UI and database stay consistent.
         console.error('Sale transaction failed:', err);
-        // Universal Notification Architecture review (Issue 7) — the fallback used to
-        // show err.message verbatim, which is fine for the two messages WE throw
-        // inside the transaction above (already business-friendly, and Firebase SDK
-        // errors always carry a `.code` while ours never do — that's what
-        // distinguishes them here) but would leak a raw Firestore/Firebase string for
-        // any other coded error this doesn't already special-case.
         const friendly = /has not been used|disabled/i.test(err?.message || '')
           ? 'Sale not saved — the database (Firestore) is not enabled for this project. Enable it, then retry.'
           : err?.code === 'permission-denied'
           ? 'Sale not saved — permission denied by security rules.'
           : !err?.code && err?.message
           ? err.message
-          : 'Sale could not be completed. Nothing was changed.';
+          : 'Couldn’t confirm the sale saved. It may already be recorded — check Stock Out, or press Confirm Sale again (a repeat is safe).';
         toast.error(friendly);
         return;
       }
     } else {
-      // Genuinely offline: queue the write (IndexedDB replays on reconnect) and
-      // update optimistically so the shop can keep selling on one device.
+      // Genuinely offline: no transaction possible. Queue keyed writes (IndexedDB
+      // replays them on reconnect, each to its stable doc id — so a replay is a
+      // no-op create) and update optimistically so the shop keeps selling.
       sold = Math.max(1, Math.min(want, part.stock || 0));
+      setDoc(doc(db, COLLECTIONS.SALES, opId), { ...saleRecord, qty: sold, revenue: sold * pricePerUnit, cost: sold * unitCost, profit: sold * (pricePerUnit - unitCost) })
+        .catch((e) => console.error('Sale ledger write will retry when online:', e));
       updateDoc(doc(db, COLLECTIONS.PARTS, part.id), { stock: increment(-sold), salesCount: increment(sold), updatedAt: serverTimestamp() })
         .catch((e) => console.error('Sale sync will retry when online:', e));
+      setDoc(doc(db, 'salesRollups', monthKey), { ...rollupPatch, revenue: increment(sold * pricePerUnit), cost: increment(sold * unitCost), profit: increment(sold * (pricePerUnit - unitCost)), units: increment(sold) }, { merge: true })
+        .catch((e) => console.error('Rollup write will retry when online:', e));
+    }
+
+    if (alreadyApplied) {
+      setCheckoutPart(null);
+      toast.success(`${part.name} — this sale is already recorded`);
+      return;
     }
 
     const newStock = Math.max(0, (part.stock || 0) - sold);
@@ -12302,60 +12436,16 @@ export default function InventoryDashboard() {
       prev.map((p) => (p.id === part.id ? { ...p, stock: newStock, salesCount: newSalesCount } : p))
     );
 
-    // Append to the sales ledger so analytics (Monthly Profit Trend, etc.) build
-    // up real history going forward. Revenue uses the actual sale price; cost uses
-    // the part's purchase price snapshot.
-    const unitCost = part.purchasePrice || 0;
-    const revenue = sold * pricePerUnit;
-    const cost = sold * unitCost;
-    addDoc(collection(db, COLLECTIONS.SALES), {
-      partId: part.id,
-      name: part.name || '',
-      qty: sold,
-      unitPrice: pricePerUnit,
-      unitCost,
-      revenue,
-      cost,
-      profit: revenue - cost,
-      category: 'Parts', // same fix as the demo branch above — this must be the coarse
-      revenueType: 'Parts', // ledger type, not the part's own inventory category
-      brands: brandsOf(part),
-      soldBy: user?.uid || null,
-      soldByEmail: user?.email || null,
-      belowFloor: !!belowFloorOverride, // Task 4: flag override sales
-      floorPrice: part.minSellingPrice || 0,
-      createdAt: serverTimestamp(),
-    }).catch((err) => console.error('Sale ledger write will retry when online:', err));
-
     // Task 4: audit any below-floor override sale (who, floor vs actual).
     if (belowFloorOverride) {
       writeAudit(
         'below_floor_sale',
         { partId: part.id, name: part.name || '' },
-        { floor: part.minSellingPrice || 0, actual: pricePerUnit, qty: sold, override: true }
+        { floor: part.minSellingPrice || 0, actual: pricePerUnit, qty: sold, override: true, opId }
       );
     } else {
-      writeAudit('sell_part', { partId: part.id, name: part.name || '' }, { qty: sold, unitPrice: pricePerUnit, revenue });
+      writeAudit('sell_part', { partId: part.id, name: part.name || '' }, { qty: sold, unitPrice: pricePerUnit, revenue: sold * pricePerUnit, opId });
     }
-
-    // FIX-07: keep an aggregated monthly rollup so "All Time" analytics are never
-    // capped by the 2,000-doc ledger window. One tiny doc per month, updated with
-    // atomic increments (safe under concurrent sales).
-    const now = new Date();
-    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    setDoc(
-      doc(db, 'salesRollups', monthKey),
-      {
-        month: monthKey,
-        revenue: increment(revenue),
-        cost: increment(cost),
-        profit: increment(revenue - cost),
-        units: increment(sold),
-        orders: increment(1),
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    ).catch((err) => console.error('Rollup write will retry when online:', err));
 
     setCheckoutPart(null);
     toast.success(`Sold ${sold} × ${part.name} — ${formatINR(sold * pricePerUnit)}${belowFloorOverride ? ' (below floor)' : ''}`);
@@ -12388,17 +12478,17 @@ export default function InventoryDashboard() {
   const stockReceiveLock = useRef(new Set());
   const poCreateLock = useRef(false);
 
-  async function adjustStockLine({ part, qty, reason, notes, direction = 'reduce', correctsId = null }) {
+  async function adjustStockLine({ part, qty, reason, notes, direction = 'reduce', correctsId = null, opId = null }) {
     if (!part || qty <= 0) return { ok: false };
     if (stockAdjustLock.current.has(part.id)) return { ok: false, duplicate: true };
     stockAdjustLock.current.add(part.id);
     try {
-      return await adjustStockLineInner({ part, qty, reason, notes, direction, correctsId });
+      return await adjustStockLineInner({ part, qty, reason, notes, direction, correctsId, opId });
     } finally {
       stockAdjustLock.current.delete(part.id);
     }
   }
-  async function adjustStockLineInner({ part, qty, reason, notes, direction = 'reduce', correctsId = null }) {
+  async function adjustStockLineInner({ part, qty, reason, notes, direction = 'reduce', correctsId = null, opId = null }) {
     // CAPACITY GUARD — the ONE choke point every stock-adjustment path (single modal,
     // bulk adjust) already funnels through, so gating here covers all of them instead
     // of each call site separately. Checked before any state/Firestore write below.
@@ -12407,57 +12497,63 @@ export default function InventoryDashboard() {
     // H-5A: before/after/delta/signedQty math now lives in inventoryService's
     // computeStockAdjustment (pure) — same formula, single source of truth.
     const { before, delta, after, signedQty, isCorrection } = computeStockAdjustment({ currentStock: part.stock, qty, direction });
-    setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: after } : p)));
+    // Phase 4b (PH4-04) — the adjustment's ledger identity. Stable per intent (the
+    // modal holds it); the `stockAdjustments/{adjId}` doc IS the marker.
+    const adjId = opId || `adj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     if (demoMode) {
+      if (stockAdjustments.some((a) => a.id === adjId || a.opId === adjId)) return { ok: true, delta, isCorrection, reason, alreadyApplied: true };
       const now = new Date();
       const stamp = { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toDate: () => now, toMillis: () => now.getTime() };
-      setStockAdjustments((prev) => [{ id: 'demo-adj-' + now.getTime() + '-' + part.id, partId: part.id, name: part.name, partName: part.name, sku: part.sku, qty: signedQty, quantity: signedQty, reason, notes: notes || '', correctsId: correctsId || null, byEmail: 'demo@balajiautoos.com', createdAt: stamp }, ...prev]);
-      writeAudit('stock_adjustment', { partId: part.id, name: part.name || '' }, { qty: signedQty, reason, stockBefore: before, stockAfter: after, notes: notes || '' });
+      setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: after } : p)));
+      setStockAdjustments((prev) => [{ id: adjId, opId: adjId, partId: part.id, name: part.name, partName: part.name, sku: part.sku, qty: signedQty, quantity: signedQty, reason, notes: notes || '', correctsId: correctsId || null, byEmail: 'demo@balajiautoos.com', createdAt: stamp }, ...prev]);
+      writeAudit('stock_adjustment', { partId: part.id, name: part.name || '' }, { qty: signedQty, reason, stockBefore: before, stockAfter: after, notes: notes || '', opId: adjId });
       return { ok: true, delta, isCorrection, reason };
     }
-    const writes = [
-      updateDoc(doc(db, COLLECTIONS.PARTS, part.id), { stock: increment(signedQty), updatedAt: serverTimestamp() }),
-      addDoc(collection(db, COLLECTIONS.STOCK_ADJUSTMENTS), {
-        partId: part.id,
-        name: part.name || '',
-        // Issue 7.7/7.8 data-integrity fix — sku was missing from this write (unlike
-        // the demo-mode equivalent above and the PO-receive restocks write), so a
-        // stock adjustment could never be found by SKU search or show one in its
-        // detail view. partName kept alongside `name` for parity with restocks docs.
-        sku: part.sku || '',
-        partName: part.name || '',
-        qty: signedQty, // negative = reduction, positive = correction
-        reason,
-        notes: notes || '',
-        stockBefore: before,
-        stockAfter: after,
-        // Issue 7.6 — optional link to the specific earlier reduction this
-        // correction is reversing, so movement history can show the relationship
-        // instead of two unrelated-looking entries. null when not linked.
-        correctsId: correctsId || null,
-        by: user?.uid || null,
-        byEmail: user?.email || null,
-        createdAt: serverTimestamp(),
-      }),
-    ];
-    const results = await Promise.allSettled(writes);
-    const failed = results.filter((r) => r.status === 'rejected');
-    if (failed.length) {
-      console.error(`[TXN] Stock adjustment sync failed (${failed.length} of ${writes.length} writes) — local state may not match Firestore.`, failed.map((r) => r.reason));
+    // Phase 4b (PH4-04) — ONE atomic transaction: the adjustment ledger row +
+    // the stock increment, keyed by adjId. Reads (the op marker, the part) happen
+    // before any write. A duplicate delivery finds `stockAdjustments/{adjId}` and
+    // applies NOTHING.
+    let alreadyApplied = false;
+    try {
+      const res = await runTransaction(db, async (tx) => {
+        const adjRef = doc(db, COLLECTIONS.STOCK_ADJUSTMENTS, adjId);
+        const partRef = doc(db, COLLECTIONS.PARTS, part.id);
+        const adjSnap = await tx.get(adjRef);
+        const partSnap = await tx.get(partRef);
+        if (adjSnap.exists()) return { alreadyApplied: true };
+        if (!partSnap.exists()) throw new Error('This part no longer exists.');
+        const serverBefore = partSnap.data().stock || 0;
+        tx.set(adjRef, {
+          opId: adjId, partId: part.id, name: part.name || '', sku: part.sku || '', partName: part.name || '',
+          qty: signedQty, reason, notes: notes || '',
+          stockBefore: serverBefore, stockAfter: serverBefore + signedQty,
+          correctsId: correctsId || null, by: user?.uid || null, byEmail: user?.email || null,
+          createdAt: serverTimestamp(),
+        });
+        tx.update(partRef, { stock: increment(signedQty), updatedAt: serverTimestamp() });
+        return { alreadyApplied: false };
+      });
+      alreadyApplied = res.alreadyApplied;
+    } catch (err) {
+      console.error('[TXN] Stock adjustment failed:', err);
       return { ok: false };
     }
-    writeAudit('stock_adjustment', { partId: part.id, name: part.name || '' }, { qty: signedQty, reason, stockBefore: before, stockAfter: after, notes: notes || '' });
-    return { ok: true, delta, isCorrection, reason };
+    if (!alreadyApplied) {
+      setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: after } : p)));
+      writeAudit('stock_adjustment', { partId: part.id, name: part.name || '' }, { qty: signedQty, reason, stockBefore: before, stockAfter: after, notes: notes || '', opId: adjId });
+    }
+    return { ok: true, delta, isCorrection, reason, alreadyApplied };
   }
 
-  async function handleAdjustStock({ qty, reason, notes, direction = 'reduce', correctsId = null }) {
+  async function handleAdjustStock({ qty, reason, notes, direction = 'reduce', correctsId = null, opId = null }) {
     const part = adjustTarget;
     if (!part || qty <= 0) return;
-    const result = await adjustStockLine({ part, qty, reason, notes, direction, correctsId });
+    const result = await adjustStockLine({ part, qty, reason, notes, direction, correctsId, opId });
     if (result.blocked) { notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('stockAdjustments'); return; } // modal stays open, unsaved input preserved
     if (result.permissionDenied) return; // protectedDemoToast already shown; modal stays open
-    if (!result.ok) { toast.error('Could not save the stock adjustment. Check your connection and try again.'); return; } // modal stays open so the user can retry
+    if (!result.ok) { toast.error('Couldn’t confirm the adjustment saved. It may already be recorded — check Movement History, or press Record adjustment again (a repeat is safe).'); return; } // modal stays open so the user can retry
     setAdjustTarget(null);
+    if (result.alreadyApplied) { toast.success(`${part.name} — this adjustment is already recorded`); return; }
     toast.success(result.isCorrection ? `Correction +${result.delta} × ${part.name}${demoMode ? ' (demo)' : ''}` : `Adjusted −${result.delta} × ${part.name} (${result.reason})${demoMode ? ' (demo)' : ''}`);
   }
 
@@ -12475,7 +12571,7 @@ export default function InventoryDashboard() {
     if (demoMode && !demoAdmin && !demoPerms.changeStock) { protectedDemoToast(true); return; }
     const { blocked } = await checkCapacityGuard('stockAdjustments', { demoMode });
     if (blocked) { notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('stockAdjustments'); return; }
-    const results = await Promise.all(valid.map((l) => adjustStockLine({ part: l.part, qty: l.qty, reason: l.reason, notes: l.notes || '', direction: 'reduce' })));
+    const results = await Promise.all(valid.map((l) => adjustStockLine({ part: l.part, qty: l.qty, reason: l.reason, notes: l.notes || '', direction: 'reduce', opId: l.opId })));
     const okCount = results.filter((r) => r.ok).length;
     setShowBulkAdjust(false);
     clearSelection();
@@ -12563,16 +12659,21 @@ export default function InventoryDashboard() {
     const built = buildPO(input, extraKnownOrders.length ? [...purchaseOrders, ...extraKnownOrders] : purchaseOrders);
     if (built.error) { toast.error(built.error); return false; }
     const { base, total, clean } = built;
+    // Phase 4b (PH4-06) — `input.poId` is a stable client-generated id for one
+    // "Create PO" intent; a retry after an ambiguous failure re-writes the SAME
+    // document instead of creating a second PO.
+    const poId = input.poId || `po_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     if (demoMode) {
-      setPurchaseOrders((prev) => [{ id: 'demo-po-' + Date.now(), ...base, createdAt: demoStamp() }, ...prev]);
+      if (purchaseOrders.some((p) => p.id === poId)) { toast.success(`${base.poNumber}: already created (demo)`); return base; }
+      setPurchaseOrders((prev) => [{ id: poId, ...base, createdAt: demoStamp() }, ...prev]);
       writeAudit('po_create', { poNumber: base.poNumber, supplier: base.supplierName }, { total, items: clean.length });
       toast.success(`${base.poNumber} created (demo)`); return base;
     }
     try {
-      await poCreateDoc(base, user?.email);
-      writeAudit('po_create', { poNumber: base.poNumber, supplier: base.supplierName }, { total, items: clean.length });
-      toast.success(`${base.poNumber} created`); return base;
-    } catch (e) { console.error(e); toast.error('Could not create the purchase order.'); return false; }
+      await poCreateDoc(base, user?.email, poId);
+      writeAudit('po_create', { poNumber: base.poNumber, supplier: base.supplierName }, { total, items: clean.length, poId });
+      toast.success(`${base.poNumber} created`); return { ...base, id: poId };
+    } catch (e) { console.error(e); toast.error('Couldn’t confirm the purchase order saved. It may already exist — check Purchase Orders, or press Create PO again (a repeat is safe).'); return false; }
   }
   const poAdvancing = useRef(new Set());
   // draft → pending → approved → sent only. Receiving (full or partial) is handled by
@@ -12611,9 +12712,16 @@ export default function InventoryDashboard() {
   // true once the caller (the Receive modal) has already shown the user a diff-confirmation,
   // mirroring RestockModal's existing confirm-before-overwrite pattern — receiving a PO can
   // no longer silently stomp a part's default purchase price.
-  async function receivePO(po, receivedLines) {
+  async function receivePO(po, receivedLines, receiptId) {
     if (!receivedLines || !receivedLines.length) return;
     if (poAdvancing.current.has(po.id)) return;
+    // Phase 4b (PH4-02) — client-side fast path: if this receive intent was already
+    // applied (visible in state), don't even round-trip. The transaction repeats
+    // this check server-side authoritatively.
+    if (receiptId && Array.isArray(po.appliedReceiptIds) && po.appliedReceiptIds.includes(receiptId)) {
+      toast.success(`${po.poNumber}: already received`);
+      return;
+    }
     poAdvancing.current.add(po.id);
     try {
       const items = po.items || [];
@@ -12631,6 +12739,7 @@ export default function InventoryDashboard() {
           if (p.id !== po.id) return p;
           const upd = { ...p, items: nextItems, status };
           if (fullyReceived) upd.receivedAt = stamp;
+          if (receiptId) upd.appliedReceiptIds = [...(p.appliedReceiptIds || []), receiptId].slice(-60);
           return upd;
         }));
         setInventory((prev) => prev.map((pt) => {
@@ -12657,14 +12766,18 @@ export default function InventoryDashboard() {
         // adds each delta to the SERVER's current receivedQty, and returns the
         // authoritative post-receive state. Use THAT for the audit + toast, not the
         // stale client-side computation above.
-        const res = await poReceiveDoc(po, receivedLines, user?.email);
+        // Phase 4b (PH4-02) — `receiptId` is stable for this receive intent; the
+        // transaction records it on the PO and no-ops (alreadyApplied) on a retry.
+        const res = await poReceiveDoc(po, receivedLines, user?.email, receiptId);
         const serverStatus = res?.status || status;
-        writeAudit('po_receive', { poNumber: po.poNumber }, { status: serverStatus, lines: receivedLines.length });
+        if (!res?.alreadyApplied) {
+          writeAudit('po_receive', { poNumber: po.poNumber }, { status: serverStatus, lines: receivedLines.length });
+        }
         toast.success(serverStatus === 'received' ? `${po.poNumber}: received` : `${po.poNumber}: partially received`);
       } catch (e) {
         console.error(e);
         if (e?.code === 'po/over-receipt' || e?.code === 'po/deleted') toast.error(e.message);
-        else toast.error('Receiving failed.');
+        else toast.error('Couldn’t confirm the receipt saved. It may already be recorded — check the PO, or press Confirm Receipt again (a repeat is safe).');
         return false; // keep the receive form open (ReceivePOForm's onSubmit checks `ok !== false`)
       }
     } finally {
@@ -12690,17 +12803,17 @@ export default function InventoryDashboard() {
   // line instead of a second, parallel implementation that could drift from
   // this one or skip part of the audit trail. Takes `part` explicitly instead
   // of reading `restockTarget`, since a bulk receipt has no single target.
-  async function receiveStockLine({ part, qty, unitCost, supplierName, invoiceNumber, purchaseDate, notes, updateDefaultPrice, updateDefaultSupplier }) {
+  async function receiveStockLine({ part, qty, unitCost, supplierName, invoiceNumber, purchaseDate, notes, updateDefaultPrice, updateDefaultSupplier, opId = null }) {
     if (!part) return;
     if (stockReceiveLock.current.has(part.id)) return { ok: false, duplicate: true };
     stockReceiveLock.current.add(part.id);
     try {
-      return await receiveStockLineInner({ part, qty, unitCost, supplierName, invoiceNumber, purchaseDate, notes, updateDefaultPrice, updateDefaultSupplier });
+      return await receiveStockLineInner({ part, qty, unitCost, supplierName, invoiceNumber, purchaseDate, notes, updateDefaultPrice, updateDefaultSupplier, opId });
     } finally {
       stockReceiveLock.current.delete(part.id);
     }
   }
-  async function receiveStockLineInner({ part, qty, unitCost, supplierName, invoiceNumber, purchaseDate, notes, updateDefaultPrice, updateDefaultSupplier }) {
+  async function receiveStockLineInner({ part, qty, unitCost, supplierName, invoiceNumber, purchaseDate, notes, updateDefaultPrice, updateDefaultSupplier, opId = null }) {
     // CAPACITY GUARD — the ONE choke point every restock path (single modal, bulk
     // receive) already funnels through. Checked before any state/Firestore write below.
     { const { blocked } = await checkCapacityGuard('restocks', { demoMode }); if (blocked) return { ok: false, blocked: true }; }
@@ -12726,71 +12839,60 @@ export default function InventoryDashboard() {
     }
 
     const purchaseDateObj = purchaseDate ? new Date(`${purchaseDate}T12:00:00`) : new Date();
+    // Phase 4b (PH4-05) — the receipt's ledger identity. Stable per intent (the
+    // modal holds it); the `restocks/{restockOpId}` doc IS the marker.
+    const restockOpId = opId || `rs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
     if (demoMode) {
+      if (restocks.some((r) => r.id === restockOpId || r.opId === restockOpId)) return { ok: true, alreadyApplied: true };
       const now = new Date();
       const stamp = { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toDate: () => now, toMillis: () => now.getTime() };
       const purchaseStamp = { seconds: Math.floor(purchaseDateObj.getTime() / 1000), nanoseconds: 0, toDate: () => purchaseDateObj, toMillis: () => purchaseDateObj.getTime() };
       setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: (p.stock || 0) + qty, ...masterPatch } : p)));
       setRestocks((prev) => [buildRestockRecord({
-        id: 'demo-rs-' + now.getTime() + '-' + part.id, partId: part.id, name: part.name, sku: part.sku,
+        id: restockOpId, opId: restockOpId, partId: part.id, name: part.name, sku: part.sku,
         qty, unitCost, supplierName, supplierId: chosenSupplier?.id || '', reference: invoiceNumber, purchaseDate: purchaseStamp, notes,
         byEmail: 'demo@balajiautoos.com', createdAt: stamp,
       }), ...prev]);
-      writeAudit('receive_stock', { partId: part.id, name: part.name || '' }, { qty, unitCost, supplierName: supplierName || '' });
+      writeAudit('receive_stock', { partId: part.id, name: part.name || '' }, { qty, unitCost, supplierName: supplierName || '', opId: restockOpId });
       return { ok: true };
     }
-    // Universal Notification Architecture review — both writes below used to be
-    // fire-and-forget (their own .catch only logged to console), so every caller
-    // toasted "Received…" unconditionally regardless of whether Firestore actually
-    // accepted either write — inconsistent with adjustStockLine just above, which
-    // already awaits its writes and reports { ok } to its callers. Same fix here:
-    // await both, and let the caller decide what to tell the user.
-    const writes = [
-      updateDoc(doc(db, COLLECTIONS.PARTS, part.id), {
-        stock: increment(qty),
-        lastRestockedAt: serverTimestamp(), // UPDATE-06: drives aging
-        updatedAt: serverTimestamp(),
-        ...masterPatch,
-      }),
-      addDoc(collection(db, COLLECTIONS.RESTOCKS), {
-        partId: part.id,
-        name: part.name || '',
-        // Issue 7.7/7.8 data-integrity fix — sku was missing from this write (the
-        // PO-receive path and demo mode both already include it via
-        // buildRestockRecord), so an ad-hoc receipt could never be found by SKU
-        // search or show one in its movement-history detail view.
-        sku: part.sku || '',
-        qty,
-        unitCost,
-        total: qty * unitCost,
-        supplier: supplierName || '',
-        supplierName: supplierName || '', // H-Batch2.1: kept in sync with `supplier` — SupplierDirectory's
-        // Transactions tab and StockInView both read supplierName; the live (non-demo)
-        // write path previously only wrote `supplier`, leaving those views blank in
-        // production even though demo mode (via buildRestockRecord) always wrote both.
-        supplierId: chosenSupplier?.id || '',
-        reference: invoiceNumber || '',
-        purchaseDate: purchaseDateObj,
-        notes: notes || '',
-        by: user?.uid || null,
-        byEmail: user?.email || null,
-        createdAt: serverTimestamp(),
-      }),
-    ];
-    const results = await Promise.allSettled(writes);
-    const failed = results.filter((r) => r.status === 'rejected');
-    if (failed.length) {
-      console.error(`[TXN] Receive stock sync failed (${failed.length} of ${writes.length} writes) — local state may not match Firestore.`, failed.map((r) => r.reason));
+    // Phase 4b (PH4-05) — ONE atomic transaction: the restock ledger row + the
+    // stock increment (+ the optional master-record patch), keyed by restockOpId.
+    // Reads (op marker, part) before any write. A duplicate delivery finds
+    // `restocks/{restockOpId}` and applies NOTHING.
+    let alreadyApplied = false;
+    try {
+      const res = await runTransaction(db, async (tx) => {
+        const rsRef = doc(db, COLLECTIONS.RESTOCKS, restockOpId);
+        const partRef = doc(db, COLLECTIONS.PARTS, part.id);
+        const rsSnap = await tx.get(rsRef);
+        const partSnap = await tx.get(partRef);
+        if (rsSnap.exists()) return { alreadyApplied: true };
+        if (!partSnap.exists()) throw new Error('This part no longer exists.');
+        tx.set(rsRef, {
+          opId: restockOpId, partId: part.id, name: part.name || '', sku: part.sku || '',
+          qty, unitCost, total: qty * unitCost,
+          supplier: supplierName || '', supplierName: supplierName || '', supplierId: chosenSupplier?.id || '',
+          reference: invoiceNumber || '', purchaseDate: purchaseDateObj, notes: notes || '',
+          by: user?.uid || null, byEmail: user?.email || null, createdAt: serverTimestamp(),
+        });
+        tx.update(partRef, { stock: increment(qty), lastRestockedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...masterPatch });
+        return { alreadyApplied: false };
+      });
+      alreadyApplied = res.alreadyApplied;
+    } catch (err) {
+      console.error('[TXN] Receive stock failed:', err);
       return { ok: false };
     }
+    if (alreadyApplied) return { ok: true, alreadyApplied: true };
     if (updateDefaultPrice || updateDefaultSupplier) {
       writeAudit('update_part_defaults_via_restock', { partId: part.id, name: part.name || '' }, {
         ...(updateDefaultPrice ? { purchasePriceBefore: part.purchasePrice || 0, purchasePriceAfter: unitCost } : {}),
         ...(updateDefaultSupplier ? { supplierBefore: (getPartSuppliers(part).find((s) => s.isPreferred) || {}).name || '', supplierAfter: supplierName } : {}),
       });
     }
-    writeAudit('receive_stock', { partId: part.id, name: part.name || '' }, { qty, unitCost, supplierName: supplierName || '' });
+    writeAudit('receive_stock', { partId: part.id, name: part.name || '' }, { qty, unitCost, supplierName: supplierName || '', opId: restockOpId });
     return { ok: true };
   }
 
@@ -12800,9 +12902,9 @@ export default function InventoryDashboard() {
     const result = await receiveStockLine({ part, ...payload });
     if (result.blocked) { notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('restocks'); return; } // modal stays open, unsaved input preserved
     if (result.permissionDenied) return; // protectedDemoToast already shown; modal stays open
-    if (!result.ok) { toast.error('Could not save this stock receipt. Check your connection and try again.'); return; } // modal stays open so the user can retry
+    if (!result.ok) { toast.error('Couldn’t confirm the receipt saved. It may already be recorded — check Stock In, or press Receive again (a repeat is safe).'); return; } // modal stays open so the user can retry
     setRestockTarget(null);
-    toast.success(`Received ${payload.qty} × ${part.name}${demoMode ? ' (demo)' : ''}`);
+    toast.success(result.alreadyApplied ? `${part.name} — this receipt is already recorded` : `Received ${payload.qty} × ${part.name}${demoMode ? ' (demo)' : ''}`);
   }
 
   // Issue 7.12 — Bulk Receive Stock: one supplier + invoice/reference + delivery
@@ -12821,7 +12923,7 @@ export default function InventoryDashboard() {
     if (blocked) { notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('restocks'); return; }
     const results = await Promise.all(valid.map((l) => receiveStockLine({
       part: l.part, qty: l.qty, unitCost: l.unitCost || 0, supplierName, invoiceNumber, purchaseDate, notes: l.notes || '',
-      updateDefaultPrice: false, updateDefaultSupplier: false,
+      updateDefaultPrice: false, updateDefaultSupplier: false, opId: l.opId,
     })));
     const okCount = results.filter((r) => r.ok).length;
     setShowBulkReceive(false);
@@ -13530,17 +13632,17 @@ export default function InventoryDashboard() {
     }
     if (checkoutPart) {
       return (
-        <CheckoutModal asPage part={checkoutPart} onConfirm={handleSell} isAdmin={isAdmin || demoAdmin} onClose={() => setCheckoutPart(null)} />
+        <CheckoutModal key={`co:${checkoutPart.id}`} asPage part={checkoutPart} onConfirm={handleSell} isAdmin={isAdmin || demoAdmin} onClose={() => setCheckoutPart(null)} />
       );
     }
     if (restockTarget) {
       return (
-        <RestockModal asPage part={restockTarget} suppliers={suppliers} onConfirm={handleReceiveStock} onClose={() => setRestockTarget(null)} />
+        <RestockModal key={`rs:${restockTarget.id}`} asPage part={restockTarget} suppliers={suppliers} onConfirm={handleReceiveStock} onClose={() => setRestockTarget(null)} />
       );
     }
     if (adjustTarget) {
       return (
-        <StockAdjustModal asPage part={adjustTarget} history={stockAdjustments} onConfirm={handleAdjustStock} onClose={() => setAdjustTarget(null)} />
+        <StockAdjustModal key={`adj:${adjustTarget.id}`} asPage part={adjustTarget} history={stockAdjustments} onConfirm={handleAdjustStock} onClose={() => setAdjustTarget(null)} />
       );
     }
   }
@@ -14911,6 +15013,7 @@ export default function InventoryDashboard() {
 
       {checkoutPart && (
         <CheckoutModal
+          key={`co:${checkoutPart.id}`}
           part={checkoutPart}
           onConfirm={handleSell}
           isAdmin={isAdmin || demoAdmin}
@@ -14967,6 +15070,7 @@ export default function InventoryDashboard() {
 
       {restockTarget && (
         <RestockModal
+          key={`rs:${restockTarget.id}`}
           part={restockTarget}
           suppliers={suppliers}
           onConfirm={handleReceiveStock}
@@ -14976,6 +15080,7 @@ export default function InventoryDashboard() {
 
       {adjustTarget && (
         <StockAdjustModal
+          key={`adj:${adjustTarget.id}`}
           part={adjustTarget}
           history={stockAdjustments}
           onConfirm={handleAdjustStock}
