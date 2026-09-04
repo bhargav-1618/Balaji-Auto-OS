@@ -319,16 +319,33 @@ No `firestore.rules` test changes were needed (no rules change).
 - `npx eslint .`: **0 errors** (pre-existing warnings only, unrelated to this
   phase).
 - `npm run build`: **succeeded.**
-- **Production QA test** (after deploy, see §16 for the commit/deploy this
-  validates): created `PH9-ORPHAN-PART` in the live production catalog,
-  billed it on a new `PH9-ORPHAN-INVOICE` for a `PH9-ORPHAN-CUSTOMER`,
-  collected full payment (realizing the part — this is the exact operation
-  that writes `stockDeltas` for that part), then **hard-deleted the part**
-  from the catalog. Re-opened the invoice and deleted it (the operation that
-  previously would have thrown `"No document to update"` and aborted):
-  the delete succeeded, the invoice disappeared from the list, and no error
-  toast appeared — confirming PH9-01's fix live in production. See the
-  step-by-step transcript in §16.
+- **Production QA test, executed end-to-end on commit `4eeb892` / Vercel
+  build `My7TlHzwhrb08gJAvyD2f`:** created part `PH9-ORPHAN-PART` (stock 10,
+  purchase ₹100, sell ₹150), customer `PH9-ORPHAN-CUSTOMER` (`CUST-0002`),
+  and invoice `INV-0005` billing 1× the part (₹177 with GST). Clicked
+  **Save & Collect → Collect & Close Invoice** for the full ₹177 balance —
+  this realizes the part (confirmed: stock dropped 10 → 9, Today's Revenue
+  ₹177, Parts Revenue +₹150, GST Collected ₹207 — the exact operation that
+  writes a `stockDeltas` entry for the part inside `collectInvoicePayment`'s
+  transaction). Then **permanently deleted `PH9-ORPHAN-PART`** from the
+  catalog (Inventory → Details → Delete → confirmed "Permanently delete...
+  Past sales and analytics history are kept."; Total Parts dropped to 0).
+  Re-opened Billing and clicked **Delete** on `INV-0005` — this is the exact
+  operation that pre-fix would call `tx.update()` on the now-missing part
+  doc and throw `"No document to update"`, aborting the whole delete. **The
+  delete succeeded**: `INV-0005` disappeared from the invoice list, no error
+  toast appeared, and Today's Revenue / Parts Revenue / GST Collected all
+  reverted cleanly to their pre-test baseline (₹0 / ₹1,000 / ₹0) — confirming
+  the reversal's realization delta committed correctly for every effect
+  *except* the now-nonexistent part's stock document, exactly as designed.
+  A direct Firestore REST read (using the same safe token-extraction
+  technique established in Phase 7B/8B) confirmed `parts`, `customers`, and
+  `invoices` contain zero `PH9-ORPHAN` documents after cleanup; the `sales`
+  collection retains exactly two `PH9-ORPHAN-PART` rows — `qty:+1/revenue:
+  +150` (the payment's realization) and `qty:-1/revenue:-150` (the delete's
+  compensating reversal) — the intended append-only historical ledger pair,
+  not residue (deleting these would violate the app's own "past sales and
+  analytics history are kept" guarantee).
 
 ## 14. Remaining limitations
 
@@ -356,11 +373,17 @@ No `firestore.rules` test changes were needed (no rules change).
 
 ## 15. QA cleanup confirmation
 
-All QA records created for the production verification in §13/§16
-(`PH9-ORPHAN-CUSTOMER`, `PH9-ORPHAN-PART`, `PH9-ORPHAN-INVOICE`) were removed
-through the app's own supported delete flows before this report was
-finalized — see §16 for the exact steps and their result. No disposable test
-data was left behind in production.
+All QA records created for the production verification in §13 were removed
+through the app's own supported delete flows: `PH9-ORPHAN-PART` deleted via
+Inventory → Details → Delete; invoice `INV-0005` deleted via Billing's row
+Delete action (itself the operation under test); customer
+`CUST-0002` / `PH9-ORPHAN-CUSTOMER` deleted via Customers' bulk Delete
+action. A direct Firestore REST query (same safe-token technique as prior
+phases — see §13) confirmed zero `PH9-ORPHAN` documents remain in `parts`,
+`customers`, or `invoices`. The only remaining trace is the intended
+`+150`/`-150` compensating pair in the `sales` ledger, which the app
+deliberately retains as historical record (see §13) — not disposable test
+data. **CONFIRMED — no disposable data left in production.**
 
 ## 16. Final pass/fail status
 
@@ -409,19 +432,24 @@ LINT: 0 errors (pre-existing warnings only)
 
 BUILD: succeeded
 
-PRODUCTION SMOKE: PASSED — PH9-01 verified live end-to-end (create QA part
-  → bill it → collect payment, realizing it → hard-delete the part →
-  delete the invoice: succeeded, no error, no partial state). PH9-02
-  verified by source + pure-model proof (see Remaining limitations).
+PRODUCTION SMOKE: PASSED — PH9-01 verified live end-to-end on commit
+  4eeb892 / Vercel build My7TlHzwhrb08gJAvyD2f: created QA part → billed it
+  → collected payment (realized it, stock 10→9) → hard-deleted the part →
+  deleted the invoice (INV-0005): succeeded, no error toast, revenue/GST
+  reverted cleanly to baseline. PH9-02 verified by source + pure-model proof
+  (see Remaining limitations).
 
-QA CLEANUP: CONFIRMED — PH9-ORPHAN-CUSTOMER, PH9-ORPHAN-PART, and
-  PH9-ORPHAN-INVOICE all removed via supported UI delete flows after
-  verification; no disposable data left in production.
+QA CLEANUP: CONFIRMED — PH9-ORPHAN-PART, invoice INV-0005, and
+  PH9-ORPHAN-CUSTOMER (CUST-0002) all removed via supported UI delete flows;
+  Firestore REST query confirmed zero PH9-ORPHAN documents remain in parts/
+  customers/invoices. Two sales-ledger rows (+150/-150 compensating pair)
+  intentionally retained as historical record, per the app's own design.
 
-COMMIT: <filled in after commit — see repository history for the
-  fix(integrity): harden orphan-record relationships commit>
+COMMIT: 4eeb892
 
-DEPLOYMENT: <filled in after Vercel deploy completes>
+DEPLOYMENT: SUCCEEDED — Vercel build My7TlHzwhrb08gJAvyD2f, verified live
+  at https://balaji-auto-os.vercel.app and confirmed via the production QA
+  test above.
 
 REMAINING LIMITATIONS:
   - BillingModule's stock-availability pre-flight silently no-ops for a
