@@ -69,7 +69,7 @@ ok('it recomputes paid / balance / status from server truth inside the tx',
 // failing to commit its stock/ledger effect, or vice versa).
 ok('PH8-01b: the realized stock/ledger/rollup cascade is applied INSIDE the SAME atomic transaction as the money write, not a separate re-persist or a separate un-awaited call',
   /const plan = planInvoiceRealization\(serverPrior, fresh\);/.test(block) &&
-  /applyRealizationPlanInTx\(tx, plan\);/.test(block) &&
+  /applyRealizationPlanInTx\(tx, plan, existingPartIds\);/.test(block) &&
   !/persistDocsDiff\(COLLECTIONS\.INVOICES/.test(block) &&
   !/runInvoiceTransaction/.test(block));
 // Phase 3b (CWF-01) — the cascade must diff against the TRANSACTION'S OWN pre-image,

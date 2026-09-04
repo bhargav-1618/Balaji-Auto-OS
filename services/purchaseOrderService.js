@@ -136,15 +136,31 @@ export function poReceiveDoc(po, receivedLines, userEmail, receiptId) {
       e.code = 'po/over-receipt';
       throw e;
     }
+    // PHASE 9 (PH9-02) — a part can be permanently deleted from the catalog
+    // (no dependency check blocks it) while a Purchase Order still has an
+    // unreceived line for it — intentional, mirroring how a hard-deleted
+    // part's historical invoice lines are kept. tx.update() throws "No
+    // document to update" against a missing doc, which would abort receiving
+    // of every OTHER line on this same PO too. Resolve which lines' parts
+    // still exist with reads BEFORE any write (Firestore's read-before-write
+    // rule) — a line whose part is gone still advances the PO's own
+    // receivedQty and keeps its restock-ledger entry (historical record,
+    // same as sales/audit history elsewhere), it just has no catalog stock
+    // document left to increment.
+    const activeLines = (receivedLines || []).filter((line) => line.partId && n(line.receiveQty) > 0);
+    const partSnaps = await Promise.all(activeLines.map((line) => tx.get(doc(db, 'parts', line.partId))));
+    const existingPartIds = new Set(activeLines.filter((_, i) => partSnaps[i].exists()).map((line) => line.partId));
+
     const poUpdate = { items: nextItems, status };
     if (fullyReceived) poUpdate.receivedAt = serverTimestamp();
     if (receiptId) poUpdate.appliedReceiptIds = [...applied, receiptId].slice(-APPLIED_RECEIPTS_CAP);
     tx.update(poRef, poUpdate);
-    (receivedLines || []).forEach((line) => {
-      if (!line.partId || n(line.receiveQty) <= 0) return;
-      const partUpdate = { stock: increment(n(line.receiveQty)), lastRestockedAt: serverTimestamp(), updatedAt: serverTimestamp() };
-      if (line.updateDefaultPrice) partUpdate.purchasePrice = n(line.unitCost) || 0;
-      tx.update(doc(db, 'parts', line.partId), partUpdate);
+    activeLines.forEach((line) => {
+      if (existingPartIds.has(line.partId)) {
+        const partUpdate = { stock: increment(n(line.receiveQty)), lastRestockedAt: serverTimestamp(), updatedAt: serverTimestamp() };
+        if (line.updateDefaultPrice) partUpdate.purchasePrice = n(line.unitCost) || 0;
+        tx.update(doc(db, 'parts', line.partId), partUpdate);
+      }
       const it = (server.items || []).find((x) => x.partId === line.partId) || {};
       tx.set(doc(collection(db, 'restocks')), {
         partId: line.partId, partName: it.name, sku: it.sku,

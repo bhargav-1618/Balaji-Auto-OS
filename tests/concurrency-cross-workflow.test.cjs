@@ -78,7 +78,7 @@ ok('the transaction returns its OWN pre-payment server image',
 // invoicesRef.current.
 ok('the realization cascade diffs serverPrior (NOT invoicesRef.current), now applied INSIDE the same transaction',
   /const plan = planInvoiceRealization\(serverPrior, fresh\);/.test(payBlock)
-  && /applyRealizationPlanInTx\(tx, plan\);/.test(payBlock)
+  && /applyRealizationPlanInTx\(tx, plan, existingPartIds\);/.test(payBlock)
   && !/const prior = invoicesRef\.current\.find\(\(x\) => x\.id === invoiceId\)/.test(payBlock));
 ok('both payment records still survive the merge (BUG-CONC-01 kept)',
   /const priorPayments = Array\.isArray\(data\.payments\) \? data\.payments : \[\];/.test(payBlock)
@@ -106,9 +106,9 @@ const delBlock = (() => {
 })();
 ok('deleteInvoice unwinds against a transactional server pre-image in production',
   // Phase 6b (PH6-03) — withTimeout(...) wraps the transaction; behavior unchanged.
-  /withTimeout\(runTransaction\(db, async \(tx\) => \{[\s\S]{0,300}tx\.delete\(invRef\)/.test(delBlock)
+  /withTimeout\(runTransaction\(db, async \(tx\) => \{[\s\S]{0,500}tx\.delete\(invRef\)/.test(delBlock)
   && /const plan = planInvoiceRealization\(prior, null\);/.test(delBlock)
-  && /applyRealizationPlanInTx\(tx, plan\);/.test(delBlock)
+  && /applyRealizationPlanInTx\(tx, plan, existingPartIds\);/.test(delBlock)
   && /const prior = demoMode \? \(invoicesRef\.current\.find/.test(delBlock));
 
 // --- pure logic: Paid -> Paid is a zero delta (2nd concurrent payment is a no-op)

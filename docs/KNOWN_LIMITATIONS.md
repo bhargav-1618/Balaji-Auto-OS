@@ -305,6 +305,39 @@ rules published.)*
     already been confirmed, so an audit failure can never retroactively cause
     a false business-failure claim.
 
+- **Deleting a Part no longer breaks an invoice or Purchase Order that still
+  references it** (PHASE 9 — orphan-record audit, shipped and
+  production-verified; see `docs/testing/PHASE_9_ORPHAN_RECORD_REPORT.md`).
+  Parts can be permanently hard-deleted at any time with no dependency check
+  ("past sales and analytics history are kept" by design) — but the invoice
+  realization transaction and PO-receive transaction both used to call
+  `tx.update()` unconditionally on the part's stock document for every line
+  that touched it. Firestore throws "No document to update" against a
+  missing doc, which aborted the WHOLE transaction: a paid invoice
+  referencing a since-deleted part could never be edited, paid, or deleted
+  again, and receiving a multi-line PO where just one line's part had been
+  deleted blocked receiving of every OTHER line on that same PO too. Both are
+  fixed the same way — `resolveExistingPartIds` (invoice side) and an
+  equivalent inline read (`poReceiveDoc`) resolve, via reads that run before
+  any write in the same transaction, which of the touched parts still exist;
+  a delta for a part that's gone is silently skipped (there is no stock
+  document left to adjust) while every other effect — the invoice's own
+  financial fields, the sales-ledger row, the salesRollups delta, the PO's
+  own `receivedQty`, and the restock-ledger entry — commits exactly as
+  before. No resurrection risk: every relationship audited (Customer→Job
+  Card/Invoice, Supplier→Purchase Order, Vehicle→Job Card) already stores a
+  denormalized snapshot rather than a live-only pointer, and the two
+  customer-derived-data writers (`syncCustomerTotals`, `touchVehicleHistory`)
+  only ever `.map()` the existing customers array, so they can never create
+  an entry for a deleted id.
+  Residual, by design (not defects):
+  - `BillingModule`'s pre-flight stock-availability check silently skips
+    validation for a billed line whose `partId` no longer resolves in
+    `inventory` (`if (!part) return;`) — pre-existing, low-severity, and now
+    the *correct* counterpart to the transaction-side fix: there is no
+    catalog stock left to check a quantity against, so no availability error
+    is meaningful for that line.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

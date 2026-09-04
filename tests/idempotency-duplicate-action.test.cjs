@@ -453,7 +453,7 @@ ok('every idempotent txn reads its marker BEFORE writing (PH4-01/03/04/05)',
 // payment transaction itself — strictly stronger than "runs after."
 ok('the realized cascade is applied INSIDE the payment transaction, not after it resolves',
   /if \(alreadyApplied\) return fresh;[\s\S]{0,600}applyPlanToLocalInventory\(plan\);/.test(payTxn)
-  && /const plan = planInvoiceRealization\(serverPrior, fresh\);[\s\S]{0,600}applyRealizationPlanInTx\(tx, plan\);/.test(payTxn));
+  && /const plan = planInvoiceRealization\(serverPrior, fresh\);[\s\S]{0,600}applyRealizationPlanInTx\(tx, plan, existingPartIds\);/.test(payTxn));
 ok('the payment txn callback is now safe to run more than once (append guarded by pay.id)',
   /priorPayments\.some\(\(p\) => p && p\.id === pay\.id\)/.test(payTxn));
 ok('poReceiveDoc restock rows are still tx.set(doc(collection(...))) inside the txn (aborted retry never commits)',

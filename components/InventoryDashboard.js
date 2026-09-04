@@ -10025,15 +10025,41 @@ export default function InventoryDashboard() {
     return { stockDeltas, salesLines, rollupDeltas: monthAgg };
   };
 
+  // PHASE 9 (PH9-01) — a part can be permanently, HARD-deleted from the catalog
+  // (handleDelete does deleteDoc, no dependency check) while a historical
+  // invoice still references it — intentional: "Past sales and analytics
+  // history are kept." tx.update() throws "No document to update" against a
+  // missing doc, which would abort the WHOLE invoice transaction (create,
+  // edit, payment, or delete) — silently making that invoice permanently
+  // impossible to pay or delete. This resolves, via reads that (per
+  // Firestore's read-before-write rule) MUST run before the caller issues its
+  // own invoice write, which of a plan's stockDeltas target parts that still
+  // exist. Called once per transaction, right after planInvoiceRealization and
+  // before any write.
+  const resolveExistingPartIds = async (tx, stockDeltas) => {
+    const ids = Object.keys(stockDeltas);
+    if (!ids.length) return new Set();
+    const snaps = await Promise.all(ids.map((id) => tx.get(doc(db, COLLECTIONS.PARTS, id))));
+    return new Set(ids.filter((_, i) => snaps[i].exists()));
+  };
+
   /**
    * Applies a planInvoiceRealization() plan's writes onto an ALREADY-OPEN
    * Firestore transaction (`tx`). Never opens its own transaction — the
    * caller's runTransaction is the one and only atomic boundary. Every doc
    * ref used here is generated client-side (no reads), so this is safe to
    * call after the caller's own reads inside the same transaction.
+   *
+   * `existingPartIds` (PH9-01) — a Set, resolved by resolveExistingPartIds
+   * BEFORE any write in this transaction. A stock delta for a part id NOT in
+   * this set targets a since-deleted catalog part: there is no stock document
+   * left to adjust, so that one delta is skipped — the invoice's own
+   * financial fields, sales-ledger row, and salesRollups delta (which never
+   * depended on the part still existing) are unaffected.
    */
-  const applyRealizationPlanInTx = (tx, plan) => {
+  const applyRealizationPlanInTx = (tx, plan, existingPartIds) => {
     Object.entries(plan.stockDeltas).forEach(([partId, delta]) => {
+      if (!existingPartIds.has(partId)) return; // PH9-01: part deleted from catalog — nothing to adjust
       tx.update(doc(db, COLLECTIONS.PARTS, partId), { stock: increment(delta), updatedAt: serverTimestamp() });
     });
     plan.salesLines.forEach((record) => {
@@ -10149,8 +10175,9 @@ export default function InventoryDashboard() {
       }
       const stamped = { ...target, _rev: 0 };
       const plan = planInvoiceRealization(null, stamped);
+      const existingPartIds = await resolveExistingPartIds(tx, plan.stockDeltas); // PH9-01 — read before any write
       tx.set(invRef, { ...stamped, createdAt: target.createdAt || serverTimestamp(), updatedAt: serverTimestamp() });
-      applyRealizationPlanInTx(tx, plan);
+      applyRealizationPlanInTx(tx, plan, existingPartIds);
       return { alreadyApplied: false, invoice: stamped, plan };
     }), TX_TIMEOUT_MS, 'This invoice');
   };
@@ -10173,8 +10200,9 @@ export default function InventoryDashboard() {
       const { id: _dropId, _rev: _dropRev, ...clean } = target;
       const merged = { ...clean, _rev: state.nextRev };
       const plan = planInvoiceRealization(prior, merged);
+      const existingPartIds = await resolveExistingPartIds(tx, plan.stockDeltas); // PH9-01 — read before any write
       tx.set(invRef, { ...clean, _rev: state.nextRev, updatedAt: serverTimestamp() }, { merge: true });
-      applyRealizationPlanInTx(tx, plan);
+      applyRealizationPlanInTx(tx, plan, existingPartIds);
       return { merged: { ...server, ...clean, _rev: state.nextRev }, prior, plan };
     }), TX_TIMEOUT_MS, 'This invoice');
   };
@@ -10373,6 +10401,7 @@ export default function InventoryDashboard() {
       const nextRev = revOf(data) + 1;
       const fresh = { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status, _rev: nextRev };
       const plan = planInvoiceRealization(serverPrior, fresh);
+      const existingPartIds = await resolveExistingPartIds(tx, plan.stockDeltas); // PH9-01 — read before any write
       tx.update(invRef, {
         payments,
         paid: t.paid,
@@ -10385,7 +10414,7 @@ export default function InventoryDashboard() {
           { at: Date.now(), action: `Payment ${pay.amount} (${pay.mode})`, by: user?.email || 'Staff' }],
         updatedAt: serverTimestamp(),
       });
-      applyRealizationPlanInTx(tx, plan);
+      applyRealizationPlanInTx(tx, plan, existingPartIds);
       return { serverPrior, fresh, alreadyApplied: false, plan };
     }), TX_TIMEOUT_MS, 'This payment');
     // Duplicate delivery — nothing changed on the server, so run nothing downstream.
@@ -10412,8 +10441,9 @@ export default function InventoryDashboard() {
       if (!snap.exists()) return { alreadyDeleted: true, prior: null, plan: null }; // already gone — nothing to unwind or delete
       const prior = { ...snap.data(), id: iv.id };
       const plan = planInvoiceRealization(prior, null);
+      const existingPartIds = await resolveExistingPartIds(tx, plan.stockDeltas); // PH9-01 — read before any write
       tx.delete(invRef);
-      applyRealizationPlanInTx(tx, plan);
+      applyRealizationPlanInTx(tx, plan, existingPartIds);
       return { alreadyDeleted: false, prior, plan };
     }), TX_TIMEOUT_MS, 'This delete');
   };

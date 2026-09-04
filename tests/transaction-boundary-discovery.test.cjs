@@ -61,8 +61,18 @@ ok('PH8-01 FIXED [fact]: planInvoiceRealization is a PURE function (no Firestore
   && (dash.match(/const plan = planInvoiceRealization\(/g) || []).length + (dash.match(/planInvoiceRealization\(null, stamped\)/g) || []).length >= 3);
 
 ok('PH8-01 FIXED [fact]: applyRealizationPlanInTx only ever writes onto an ALREADY-OPEN transaction (`tx`) passed in by its caller — it never calls runTransaction itself, so nesting a transaction inside a transaction is architecturally impossible here',
-  /const applyRealizationPlanInTx = \(tx, plan\) => \{/.test(dash)
+  /const applyRealizationPlanInTx = \(tx, plan, existingPartIds\) => \{/.test(dash)
   && !/const applyRealizationPlanInTx[\s\S]{0,50}runTransaction/.test(dash));
+
+// PHASE 9 (PH9-01 FIXED) — a stock delta whose part no longer exists in the
+// catalog (hard-deleted) is skipped instead of throwing "No document to
+// update" and aborting the whole invoice transaction. resolveExistingPartIds
+// reads every stockDeltas target BEFORE any write (Firestore's own
+// read-before-write rule), in all four invoice transactions.
+ok('PH9-01 FIXED [fact]: resolveExistingPartIds reads part existence via tx.get BEFORE any write, and applyRealizationPlanInTx skips a stock delta for a part id not in that set',
+  /const resolveExistingPartIds = async \(tx, stockDeltas\) => \{/.test(dash)
+  && /await Promise\.all\(ids\.map\(\(id\) => tx\.get\(doc\(db, COLLECTIONS\.PARTS, id\)\)\)\)/.test(dash)
+  && /if \(!existingPartIds\.has\(partId\)\) return; \/\/ PH9-01: part deleted from catalog — nothing to adjust/.test(dash));
 
 const createInvTx = slice(dash, 'const createInvoiceTransactional = async (target) => {', 'const editInvoiceTransactional');
 ok('PH8-01 FIXED: a NEW invoice now commits its document, stock, sales, and rollup INSIDE ONE transaction — the invoice write and the realization plan are no longer separated in time or in commit boundary. Idempotent retry: if the invoice doc already exists (a retry after a lost ack), nothing is re-applied.',
@@ -70,21 +80,23 @@ ok('PH8-01 FIXED: a NEW invoice now commits its document, stock, sales, and roll
   && /if \(snap\.exists\(\)\) \{\s*\n\s*return \{ alreadyApplied: true,/.test(createInvTx)
   && /const plan = planInvoiceRealization\(null, stamped\);/.test(createInvTx)
   && /tx\.set\(invRef, \{ \.\.\.stamped,/.test(createInvTx)
-  && /applyRealizationPlanInTx\(tx, plan\);/.test(createInvTx));
+  && /applyRealizationPlanInTx\(tx, plan, existingPartIds\);/.test(createInvTx));
+ok('PH9-01 FIXED: createInvoiceTransactional resolves existingPartIds BEFORE tx.set(invRef, ...) — the invoice write is not the first write in this transaction to run after a read',
+  /const existingPartIds = await resolveExistingPartIds\(tx, plan\.stockDeltas\);[\s\S]{0,200}tx\.set\(invRef,/.test(createInvTx));
 
 const editInvTx = slice(dash, 'const editInvoiceTransactional = async (target, expectedRev) => {', 'const persistInvoice = async (iv) => {');
 ok('PH8-01 FIXED: editing an EXISTING invoice keeps the Phase 1a `_rev` guard (revState/conflictError, same functions guardedSet uses) AND now applies the realization delta inside the SAME transaction — a rejected stale save moves nothing (unchanged); a save that commits can no longer leave its cascade to a separate, un-awaited step (fixed)',
   /const state = revState\(snap\.exists\(\) \? snap\.data\(\) : null, expectedRev\);/.test(editInvTx)
   && /const err = conflictError\(state, 'This invoice'\);/.test(editInvTx)
   && /const plan = planInvoiceRealization\(prior, merged\);/.test(editInvTx)
-  && /applyRealizationPlanInTx\(tx, plan\);/.test(editInvTx));
+  && /applyRealizationPlanInTx\(tx, plan, existingPartIds\);/.test(editInvTx));
 
 ok('PH8-01b FIXED: collectInvoicePayment applies the realization plan INSIDE the same transaction as the payment append/_rev-bump — diffing against the transaction\'s OWN server pre-image (serverPrior), never client state (Phase 3b CWF-01 preserved)',
   /const plan = planInvoiceRealization\(serverPrior, fresh\);/.test(dash)
-  && /applyRealizationPlanInTx\(tx, plan\);\s*\n\s*return \{ serverPrior, fresh, alreadyApplied: false, plan \};/.test(dash));
+  && /applyRealizationPlanInTx\(tx, plan, existingPartIds\);\s*\n\s*return \{ serverPrior, fresh, alreadyApplied: false, plan \};/.test(dash));
 
 ok('PH8-01c FIXED: deleteInvoiceTransactional deletes the invoice AND applies the inverse realization delta (stock restored, compensating negative sales row, rollup reversed) INSIDE the same transaction — a delete can no longer succeed while its reversal silently fails',
-  /const deleteInvoiceTransactional = async \(iv\) => \{[\s\S]{0,600}const plan = planInvoiceRealization\(prior, null\);[\s\S]{0,200}tx\.delete\(invRef\);[\s\S]{0,200}applyRealizationPlanInTx\(tx, plan\);/.test(dash));
+  /const deleteInvoiceTransactional = async \(iv\) => \{[\s\S]{0,600}const plan = planInvoiceRealization\(prior, null\);[\s\S]{0,200}tx\.delete\(invRef\);[\s\S]{0,200}applyRealizationPlanInTx\(tx, plan, existingPartIds\);/.test(dash));
 
 ok('PH8-01/01b FIXED [fact]: customer totals (syncCustomerTotals) and vehicle history (touchVehicleHistory) now return their REAL persistence promise and are AWAITED by every caller via runPostCommitDerivedEffects — no more unhandled promise rejection. Both are idempotent: syncCustomerTotals is a full recompute (re-running it is always correct), and touchVehicleHistory now skips a vehicle whose lastInvoiceNo already matches (guards against double-counting totalSpend/serviceCount on a retry)',
   /return setCustomers\(\(prev\) => prev\.map\(\(c\) => \(c\.id === custId \? \{ \.\.\.c, totalSpent: paid, outstanding \} : c\)\)\);/.test(dash)

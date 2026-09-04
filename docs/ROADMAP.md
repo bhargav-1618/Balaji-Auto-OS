@@ -230,6 +230,46 @@ current release.
   rules scenarios), lint 0, build ✓. One `firestore.rules` addition
   (`pendingSales` — new collection, scoped to its own creator; every other
   collection unchanged).
+- ~~**Orphan-record / broken-relationship integrity.**~~ **DONE — PHASE 9,
+  shipped and production-verified.** A dedicated audit of every "parent
+  deleted, child still references it" relationship in the app (Customer,
+  Part, Supplier, Vehicle vs. Job Cards/Invoices/Purchase Orders). Almost
+  every relationship was already correct BY DESIGN: Job Cards, Invoices, and
+  Purchase Orders store a denormalized snapshot (name/phone/reg no./price/
+  supplier name, etc.) alongside their id reference, never a live-only
+  pointer, so deleting the parent leaves the historical child fully readable,
+  editable, and financially unchanged — confirmed for Customer→Job Card,
+  Customer→Invoice, Supplier→Purchase Order, and Vehicle→Job Card, with no
+  resurrection risk (`syncCustomerTotals`/`touchVehicleHistory` only ever
+  `.map()` the existing customers array; neither Job Cards nor Invoices ever
+  call `setCustomers`). Two genuine defects were found and fixed:
+  - **PH9-01 (Part deleted → invoice realization, HIGH).**
+    `applyRealizationPlanInTx` called `tx.update()` on a part's stock document
+    unconditionally for every entry in a realization plan's `stockDeltas`. A
+    part can be permanently hard-deleted from the catalog at any time (no
+    dependency check) while a historical invoice still references it —
+    intentional, "past sales and analytics history are kept." Firestore's
+    `tx.update()` throws "No document to update" against a missing doc,
+    which aborted the WHOLE invoice transaction: a paid invoice referencing a
+    since-deleted part could never be edited, paid, or deleted again. Fixed
+    with a new `resolveExistingPartIds(tx, stockDeltas)` — reads every
+    targeted part doc (Firestore's own read-before-write rule, so the read
+    runs before the invoice's own write in all four transactions:
+    create/edit/payment/delete) and `applyRealizationPlanInTx` now skips a
+    delta whose part id isn't in that set. Every other invoice field, the
+    sales-ledger row, and the salesRollups delta are unaffected.
+  - **PH9-02 (Part deleted → PO receiving, HIGH).** The exact same defect
+    shape in `poReceiveDoc` — receiving a line whose part had been deleted
+    threw and aborted receiving of every OTHER line on the same PO too. Same
+    fix shape: resolve which received lines' parts still exist via reads
+    before the PO's own write; a line whose part is gone still advances the
+    PO's own `receivedQty` and keeps its restock-ledger entry (historical
+    record, same policy as sales/audit history), it just has no catalog
+    stock document left to increment.
+  Gates: `npm test` 131/131 (+1 new dedicated
+  `tests/orphan-record-integrity.test.cjs`), `npm run test:rules` 133/133
+  (unchanged — no rules change), lint 0, build ✓. No `firestore.rules`
+  change.
 
 ## Scale — before large datasets
 
