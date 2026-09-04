@@ -55,7 +55,8 @@ console.log('0  Persistence model\n');
 ok('[fact] Firestore uses persistentLocalCache + multi-tab manager',
   /persistentLocalCache\(\{\s*tabManager:\s*persistentMultipleTabManager\(\)\s*\}\)/.test(firebase));
 ok('[fact] non-transactional writes replay on reload; runTransaction does NOT (guardedSet is a transaction)',
-  /export async function guardedSet\([\s\S]{0,300}runTransaction\(db, async \(tx\) => \{/.test(repo));
+  // Phase 6b (PH6-03) — withTimeout(...) wraps the transaction; behavior unchanged.
+  /export async function guardedSet\([\s\S]{0,700}withTimeout\(runTransaction\(db, async \(tx\) => \{/.test(repo));
 ok('[fact] new-entity create via syncAll is a writeBatch set{merge} (replays on reload; keyed by client id)',
   /batchOps\.push\(\{\s*\n?\s*type: 'set',\s*\n?\s*collection: collectionName,[\s\S]{0,220}merge: true,/.test(store));
 
@@ -178,8 +179,9 @@ ok('a genuinely new create (id cleared) -> a second doc', Object.keys(docs).leng
 // =====================================================================
 console.log('\n4  PH5-04 — job-card reservation\n');
 ok('applyReserveDelta takes a reserveOpId and applies the increment inside a transaction',
+  // Phase 6b (PH6-03) — withTimeout(...) wraps each per-part transaction; behavior unchanged.
   /const applyReserveDelta = \(deltaMap, reserveOpId = null\) =>/.test(dash)
-  && /Promise\.allSettled\(ids\.map\(\(id\) => runTransaction\(db, async \(tx\) => \{/.test(dash));
+  && /Promise\.allSettled\(ids\.map\(\(id\) => withTimeout\(runTransaction\(db, async \(tx\) => \{/.test(dash));
 ok('the transaction reads appliedReserveIds BEFORE the increment and skips a known reserveOpId',
   /const applied = Array\.isArray\(snap\.data\(\)\.appliedReserveIds\) \? snap\.data\(\)\.appliedReserveIds : \[\];/.test(dash)
   && /if \(reserveOpId && applied\.includes\(reserveOpId\)\) return;/.test(dash)

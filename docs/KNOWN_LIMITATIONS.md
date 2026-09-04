@@ -113,6 +113,54 @@ rules published.)*
     records themselves are single-effect. The `commitStock` inline-stepper
     "quick restock" ledger row is now a deterministic-id `setDoc` (one row per
     target level); its advisory audit line can still duplicate.
+- **Network interruption (not just refresh) is now bounded and consistently
+  surfaced** (CONCURRENCY PHASE 6b — shipped, emulator-verified).
+  Discovery (Phase 6) found the durable-opId architecture above was already
+  connectivity-cause-agnostic — a lost response from a network drop and one
+  from a refresh land in the exact same recovery path — and found no
+  CRITICAL/HIGH gap, only three UX ones, now closed:
+  - **Bounded transaction wait.** Every `runTransaction` call in the app (13
+    sites: guarded entity edits, id-array merge, payment, PO receive, quick
+    sell, stock adjust, restock, invoice delete, invoice numbering, job-card
+    reservation, edit-lease acquire/renew/release) is wrapped in
+    `lib/txTimeout.js`'s `withTimeout(promise, ms, label)`. This does **not**
+    cancel the transaction — Firestore has no such API, and a client-side
+    "cancel" could never undo a commit that already reached the server — it
+    only bounds how long the UI waits (12s for business mutations, 6s for the
+    UX-only edit lease). On a "black hole" network with no explicit socket
+    error, the modal now surfaces "connection is taking longer than
+    expected... check before retrying" instead of an unbounded spinner, and
+    the durable operation id is **kept**, not cleared, exactly like any other
+    ambiguous failure — a subsequent retry (immediate or after a reload) is
+    always safe.
+  - **Non-blocking offline heads-up.** `warnIfOffline(thing)` shows a soft,
+    dismissable warning (reusing the existing amber `notify.warning`) before
+    a transaction-backed mutation is attempted while `navigator.onLine` is
+    false. It never blocks the attempt or disables anything — `navigator.
+    onLine` is a browser hint, not proof Firestore is reachable (a captive
+    portal reports "online" while nothing real is reachable), so a hard block
+    would create false negatives. The existing Sidebar connectivity chip
+    (fed by the same `online` flag) is unchanged and reused, not replaced.
+  - **Cross-collection UI consistency during an outage.** The `parts`/
+    inventory `onSnapshot` listener now gates its state update on
+    `!hasPendingWrites`, matching the `jobCards`/`customers`/`invoices`
+    listeners (previously the odd one out) — so a second tab/device can no
+    longer show a stock decrement from a not-yet-visible invoice during an
+    active outage. Per-device optimistic updates (the immediate `setInventory`
+    call every mutation handler already makes) are untouched.
+  - Also fixed in the same pass: the customer/invoice/job-card **guarded-edit**
+    save paths used to show **no toast at all** on a non-concurrency (ambiguous
+    or timed-out) failure — the code's own comment claimed a toast already
+    fired elsewhere; it never did. All four (customer/invoice/job-card/part)
+    now show accurate, retry-safe copy.
+  Residual: `navigator.onLine` remains a best-effort signal only (by design);
+  a genuinely reachable-looking connection that is actually a dead captive
+  portal still surfaces as a timeout on the first attempted write, not as an
+  upfront warning. Queued (non-transactional) writes — every entity *create*,
+  the invoice document itself, archive/restore, the audit log — intentionally
+  received **no** timeout: they are designed to sit in the IndexedDB queue and
+  send whenever connectivity returns, so bounding their wait would misreport
+  "still queued, will send" as "failed."
 
 ## 🟡 Performance (fine at current scale)
 

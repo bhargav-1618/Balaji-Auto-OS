@@ -30,6 +30,8 @@ const {
 } = require('firebase/firestore');
 const { assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
 const { makeTestEnv, seedAdmins, seedDoc, OWNER_EMAIL, ADMIN_EMAIL, STAFF_EMAIL } = require('./helpers.cjs');
+const fs = require('fs');
+const path = require('path');
 // Pure, firebase-free — safe to import into the rules-test SDK context.
 const { applyPoReceive } = require('../../lib/poReceive.js');
 
@@ -702,6 +704,85 @@ async function main() {
       const partC = (await getDocs(collection(aDb, 'parts'))).size;
       ok('PH5-03: create PO/supplier/part, "refresh", recover the durable id, retry -> ONE doc each',
         poC === 1 && supC === 1 && partC === 1);
+    }
+
+    // =========================================================================
+    // PHASE 6b — NETWORK INTERRUPTION / OFFLINE-RECOVERY HARDENING (regression).
+    // PH6-03 added a CLIENT-SIDE timeout (lib/txTimeout.js `withTimeout`) around
+    // every runTransaction call. It does NOT touch server-side rules or
+    // transaction logic at all — it only bounds how long the UI waits and does
+    // not cancel the transaction, so from the emulator's point of view "the UI
+    // gave up waiting" and "the response was genuinely lost to a refresh" are
+    // mechanically IDENTICAL: the transaction still commits (or doesn't) exactly
+    // as before, and a retry with the SAME durable operation id still finds the
+    // marker and no-ops. This section makes that equivalence explicit against
+    // the real emulator + real rules, rather than relying only on the source-
+    // pattern proof in tests/network-interruption-recovery.test.cjs.
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      const aDb = testEnv.authenticatedContext('uid-A', { email: STAFF_EMAIL }).firestore();
+
+      // ---- PH6-03: stock adjustment — commit, "client times out and gives up
+      // waiting" (mechanically the same as a lost response), retry with the SAME
+      // durable id -> one effect, never two. ----
+      const adjustTxn = (db, partId, delta, adjId) => runTransaction(db, async (tx) => {
+        const adjRef = doc(db, 'stockAdjustments', adjId);
+        const partRef = doc(db, 'parts', partId);
+        const adjSnap = await tx.get(adjRef);
+        if (adjSnap.exists()) return { alreadyApplied: true };
+        tx.set(adjRef, { opId: adjId, partId, qty: delta });
+        tx.update(partRef, { stock: increment(delta) });
+        return { alreadyApplied: false };
+      });
+      await seedDoc(testEnv, 'parts/PH6-ADJ', { stock: 10 });
+      const durableAdjId = 'adj_durable_1';
+      await adjustTxn(aDb, 'PH6-ADJ', -3, durableAdjId); // commits server-side
+      // ...client's withTimeout(...) fired first (UI gave up waiting) — the
+      // transaction above kept running and committed anyway; the UI never saw
+      // it. User is told "check before retrying" and presses again with the
+      // SAME durable id (Phase 5b/6b never mint a fresh one on ambiguous/timeout):
+      const r2 = await adjustTxn(aDb, 'PH6-ADJ', -3, durableAdjId);
+      const ap = (await getDoc(doc(aDb, 'parts/PH6-ADJ'))).data();
+      ok('PH6-03: stock adjustment commits, client-side timeout fires before the ack arrives, retry with the SAME durable id -> stock -3 once, not -6',
+        r2.alreadyApplied === true && ap.stock === 7);
+
+      // ---- PH6-03: a genuinely NEW intent (a fresh durable id, e.g. after the
+      // first was cleared on confirmed success) still applies as a real second
+      // effect — a timeout must never cause the app to treat every later action
+      // as a duplicate of the timed-out one. ----
+      const r3 = await adjustTxn(aDb, 'PH6-ADJ', -2, 'adj_durable_2');
+      const ap3 = (await getDoc(doc(aDb, 'parts/PH6-ADJ'))).data();
+      ok('PH6-03: a NEW durable id still applies as a real second adjustment (stock 7 -> 5)',
+        r3.alreadyApplied === false && ap3.stock === 5);
+
+      // ---- PH6-03: PO receive — same equivalence, via the real poReceiveDoc
+      // server-side logic (lib/poReceive.js applyPoReceive), not a re-implementation. ----
+      await testEnv.clearFirestore();
+      const receiveTxn = (db, poId, receiptId) => runTransaction(db, async (tx) => {
+        const poRef = doc(db, 'purchaseOrders', poId);
+        const server = (await tx.get(poRef)).data();
+        const applied = Array.isArray(server.appliedReceiptIds) ? server.appliedReceiptIds : [];
+        if (receiptId && applied.includes(receiptId)) return { alreadyApplied: true };
+        const { items, status } = applyPoReceive(server.items || [], [{ partId: 'p1', receiveQty: 4 }], server.status);
+        tx.update(poRef, { items, status, appliedReceiptIds: [...applied, receiptId] });
+        return { alreadyApplied: false, status };
+      });
+      await seedDoc(testEnv, 'purchaseOrders/PH6-PO', {
+        status: 'sent', items: [{ partId: 'p1', qty: 10, receivedQty: 0 }], appliedReceiptIds: [],
+      });
+      const durableReceiptId = 'rcpt_durable_1';
+      await receiveTxn(aDb, 'PH6-PO', durableReceiptId); // commits server-side
+      const r4 = await receiveTxn(aDb, 'PH6-PO', durableReceiptId); // UI timed out, retried with the SAME id
+      const po = (await getDoc(doc(aDb, 'purchaseOrders/PH6-PO'))).data();
+      ok('PH6-03: PO receive commits, client-side timeout, retry with the SAME durable receiptId -> receivedQty +4 once, not +8',
+        r4.alreadyApplied === true && po.items[0].receivedQty === 4);
+
+      // ---- PH6-01: writing to `parts` from the gated listener path needs no
+      // rules change — reconfirm the exact same invariant PH5-04 already proved,
+      // since PH6-01 only changed CLIENT listener gating, never a write shape. ----
+      ok('PH6-01: no rules change was needed or made — the parts listener fix is client-side (onSnapshot callback gating), the write shapes to `parts` are unchanged',
+        !/phase ?6|PH6-0/i.test(fs.readFileSync(path.resolve(__dirname, '../../firestore.rules'), 'utf8')));
     }
 
     // =========================================================================

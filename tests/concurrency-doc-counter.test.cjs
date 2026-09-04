@@ -120,15 +120,20 @@ ok('D: prefix is upper-cased', formatDocNo('inv', 1) === 'INV-0001');
     /export async function allocateNumber\(sequence, seedFrom = 1\)/.test(dc)
     && /doc\(db, COUNTERS, String\(sequence\)\)/.test(dc)
     && /const COUNTERS = 'counters';/.test(dc)
-    && /return runTransaction\(db, async \(tx\) => \{/.test(dc));
+    // Phase 6b (PH6-03) — withTimeout(...) wraps the transaction; behavior unchanged.
+    && /return withTimeout\(runTransaction\(db, async \(tx\) => \{/.test(dc));
   ok('F: the transaction reads `next`, hands it out, and writes `next + 1` in the same tx',
     /const snap = await tx\.get\(ref\)/.test(dc)
     && /allocationStep\(\s*snap\.exists\(\) \? snap\.data\(\)\.next : undefined,\s*seedFrom,\s*\)/.test(dc)
     && /tx\.set\(ref, \{ next: nextNext \}, \{ merge: true \}\)/.test(dc)
     && /return allocated;/.test(dc));
-  ok('F: docCounter imports ONLY from ./firebase (no business logic, no lease/record-sync coupling)',
+  ok('F: docCounter imports ONLY ./firebase and the shared Phase 6b timeout helper (no business logic, no lease/record-sync coupling)',
     /^import \{ db, doc, runTransaction \} from '\.\/firebase';$/m.test(dc)
-    && (dc.match(/^import /gm) || []).length === 1
+    // Phase 6b (PH6-03) — the one new, generic, dependency-free import every
+    // runTransaction call site in the app now takes (see lib/txTimeout.js) —
+    // not business logic, not a lease/record-sync coupling.
+    && /^import \{ withTimeout, TX_TIMEOUT_MS \} from '\.\/txTimeout';$/m.test(dc)
+    && (dc.match(/^import /gm) || []).length === 2
     && !/\beditLease\b|\beditLocks\b|acquireLease|recordSync|useRecordSync/.test(dc));
 
   // ── G. wiring: persistenceStore exposes allocateNumber on BOTH backends ───

@@ -47,7 +47,9 @@ const end = dash.indexOf('const deleteInvoice', start);
 const block = start >= 0 ? dash.slice(start, end > start ? end : start + 2600) : '';
 
 ok('collectInvoicePayment handler exists', start >= 0);
-ok('it uses a Firestore runTransaction', /await runTransaction\(db, async \(tx\) => \{/.test(block));
+ok('it uses a Firestore runTransaction',
+  // Phase 6b (PH6-03) — withTimeout(...) wraps the transaction; behavior unchanged.
+  /await withTimeout\(runTransaction\(db, async \(tx\) => \{/.test(block));
 ok('it RE-READS the invoice inside the transaction (tx.get)', /const snap = await tx\.get\(invRef\)/.test(block));
 ok('it rejects when the invoice was deleted by another user',
   /!snap\.exists\(\)/.test(block) && /conc\/deleted/.test(block));

@@ -22,6 +22,7 @@ import { useRecordSync } from '../../hooks/useRecordSync';
 import { useLeaseReleaseToast } from '../../hooks/useLeaseReleaseToast';
 import { useDurableOpId } from '../../hooks/useDurableOpId';
 import { clearOpId } from '../../lib/durableOpId';
+import { isTxTimeout, timeoutMessage } from '../../lib/txTimeout';
 import { revOf } from '../../lib/concurrency';
 import EditLeaseBanner from '../common/EditLeaseBanner';
 import EditAvailableBar from '../common/EditAvailableBar';
@@ -2276,11 +2277,16 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
         // transaction recognises the retry and will not add a second payment.
         // conc/deleted and conc/estimate are definite non-commits -> retire the id.
         if (e?.code === 'conc/deleted' || e?.code === 'conc/estimate') clearOpId(`payment:${iv.id}`);
+        // Phase 6b (PH6-03) — a timeout is a distinct, genuinely-unknown outcome,
+        // not the same as the pre-existing "ambiguous network failure" copy — say
+        // so precisely, using the shared wording every other timeout site uses.
         toast.error(
           e?.code === 'conc/deleted'
             ? 'This invoice was changed or deleted by another user. Reload and try again.'
             : e?.code === 'conc/estimate'
             ? 'Convert this estimate to an invoice before collecting payment.'
+            : isTxTimeout(e)
+            ? timeoutMessage('This payment')
             : 'Couldn’t confirm the payment went through. It may already be recorded — check the invoice, or press Record Payment again (a repeat is safe).',
         );
         return;

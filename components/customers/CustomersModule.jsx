@@ -27,6 +27,7 @@ import { useEditLease } from '../../hooks/useEditLease';
 import { useRecordSync } from '../../hooks/useRecordSync';
 import { useLeaseReleaseToast } from '../../hooks/useLeaseReleaseToast';
 import { revOf, isConcurrencyError, CONC_DELETED } from '../../lib/concurrency';
+import { isTxTimeout, timeoutMessage } from '../../lib/txTimeout';
 import EditLeaseBanner from '../common/EditLeaseBanner';
 import RecordUpdatedNotice from '../common/RecordUpdatedNotice';
 import RecordConflictBanner from '../common/RecordConflictBanner';
@@ -1445,6 +1446,16 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
             : 'This record was updated by another user. Your changes were not saved.',
           { duration: 7000 },
         );
+      } else {
+        // Phase 6b — this branch used to do nothing at all: no toast, no signal
+        // the save might not have gone through. The wizard correctly stayed open
+        // (nothing typed is lost either way) but the user had zero indication
+        // anything was wrong. Say what's actually known: the result is unknown,
+        // and a retry from here is always safe (Phase 1a's `_rev` guard rejects a
+        // stale retry instead of ever duplicating or corrupting the record).
+        toast.error(isTxTimeout(e)
+          ? timeoutMessage('This customer')
+          : 'Couldn’t confirm the customer saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.');
       }
       return;
     }

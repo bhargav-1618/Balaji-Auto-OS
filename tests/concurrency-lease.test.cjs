@@ -72,11 +72,16 @@ ok('acquire succeeds on a free OR expired OR own lease (takeover / re-acquire)',
 ok('expiresAt is capped by writing now + LEASE_MS (rules also reject a >3min expiry)',
   /Timestamp\.fromMillis\(Date\.now\(\) \+ LEASE_MS\)/.test(lib));
 ok('release is best-effort and never throws (expiry is the real backstop)',
-  /export async function releaseLease\(collectionName, docId, owner\) \{[\s\S]{0,120}try \{[\s\S]{0,120}runTransaction/.test(lib));
+  // Phase 6b (PH6-03) — withTimeout(...) now wraps the transaction (bounds the
+  // wait; the try/catch around the whole thing is unchanged and still swallows
+  // every failure, including a timeout).
+  /export async function releaseLease\(collectionName, docId, owner\) \{[\s\S]{0,120}try \{[\s\S]{0,300}withTimeout\(runTransaction/.test(lib));
 ok('release is session-aware — a stale same-user tab cannot delete a lease another tab took over',
   /const mine = !!owner && d\.ownerUid === owner\.uid && d\.sessionId === owner\.sessionId;[\s\S]{0,120}if \(mine \|\| expired\) tx\.delete\(ref\)/.test(lib));
 ok('heartbeat renew is session-aware — a resumed stale tab cannot clobber a newer lease (lease/lost)',
-  /export async function renewLease[\s\S]{0,400}const mine = d\.ownerUid === uid && d\.sessionId === sessionId;[\s\S]{0,160}throw new LeaseError\('lease\/lost'/.test(lib));
+  // Phase 6b (PH6-03) — withTimeout(...) now wraps the transaction; widened the
+  // window to cover the added wrapper + explanatory comment, same assertion.
+  /export async function renewLease[\s\S]{0,600}const mine = d\.ownerUid === uid && d\.sessionId === sessionId;[\s\S]{0,160}throw new LeaseError\('lease\/lost'/.test(lib));
 ok('observeLease is a live onSnapshot (viewers see lock/unlock without a refresh)',
   /export function observeLease[\s\S]{0,120}return onSnapshot\(/.test(lib));
 

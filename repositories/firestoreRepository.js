@@ -24,6 +24,7 @@ import { COLLECTIONS, LIMITS } from '../constants/index';
 import {
   revState, conflictError, replayIdArray, ConcurrencyError, CONC_DELETED,
 } from '../lib/concurrency';
+import { withTimeout, TX_TIMEOUT_MS } from '../lib/txTimeout';
 
 /** Normalise a Firestore snapshot into plain objects with their id. */
 const mapSnap = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -176,7 +177,12 @@ export async function remove(collectionName, id) {
 export async function guardedSet(collectionName, id, data, expectedRev, label, opts = {}) {
   const ref = doc(db, collectionName, String(id));
   const { idArrayKeys = [], clientBefore = null } = opts;
-  return runTransaction(db, async (tx) => {
+  // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction itself
+  // (see lib/txTimeout.js). A timeout here surfaces as a plain Error with `.code
+  // = 'tx/timeout'`, which every existing caller's `isConcurrencyError(err)` check
+  // already treats as "not a conc/* rejection" — i.e. ambiguous, not definite —
+  // exactly the bucket a lost-response network failure already fell into.
+  return withTimeout(runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const state = revState(snap.exists() ? snap.data() : null, expectedRev);
     const err = conflictError(state, label);
@@ -195,7 +201,7 @@ export async function guardedSet(collectionName, id, data, expectedRev, label, o
     }
     tx.set(ref, { ...clean, _rev: state.nextRev, updatedAt: serverTimestamp() }, { merge: true });
     return { ...server, ...clean, _rev: state.nextRev };
-  });
+  }), TX_TIMEOUT_MS, label);
 }
 
 /**
@@ -221,7 +227,8 @@ export async function applySecondaryMerge(collectionName, id, plainFields = {}, 
     await updateDoc(ref, { ...plainFields, updatedAt: serverTimestamp() });
     return;
   }
-  await runTransaction(db, async (tx) => {
+  // Phase 6b (PH6-03) — same bounded-wait treatment as guardedSet above.
+  await withTimeout(runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists()) {
       throw new ConcurrencyError(CONC_DELETED, 'This record was deleted by another user.');
@@ -232,7 +239,7 @@ export async function applySecondaryMerge(collectionName, id, plainFields = {}, 
       patch[key] = replayIdArray(before, after, server[key]);
     }
     tx.set(ref, { ...patch, updatedAt: serverTimestamp() }, { merge: true });
-  });
+  }), TX_TIMEOUT_MS, 'This record');
 }
 
 /**

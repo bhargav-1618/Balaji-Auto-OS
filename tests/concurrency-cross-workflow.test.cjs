@@ -65,7 +65,9 @@ const payBlock = (() => {
 })();
 
 ok('the payment write is still a re-reading Firestore transaction',
-  /await runTransaction\(db, async \(tx\) => \{/.test(payBlock)
+  // Phase 6b (PH6-03) — the transaction is now wrapped in withTimeout(...) to
+  // bound the UI wait; the transaction itself (re-read, then write) is unchanged.
+  /await withTimeout\(runTransaction\(db, async \(tx\) => \{/.test(payBlock)
   && /const snap = await tx\.get\(invRef\)/.test(payBlock));
 ok('the transaction returns its OWN pre-payment server image',
   /const serverPrior = \{ \.\.\.data, id: invoiceId \};/.test(payBlock)
@@ -88,10 +90,13 @@ ok('overpayment protection is unchanged (BillingModule still guards `overpay`)',
 // deleteInvoice — same root cause, same fix
 const delBlock = (() => {
   const s = dash.indexOf('const deleteInvoice = async (iv) =>');
-  return dash.slice(s, s + 1600);
+  // Phase 6b widened this window — warnIfOffline + accurate ambiguous/timeout
+  // messaging added real characters before the assertions below.
+  return dash.slice(s, s + 2200);
 })();
 ok('deleteInvoice unwinds against a transactional server pre-image in production',
-  /runTransaction\(db, async \(tx\) => \{[\s\S]{0,300}tx\.delete\(invRef\)/.test(delBlock)
+  // Phase 6b (PH6-03) — withTimeout(...) wraps the transaction; behavior unchanged.
+  /withTimeout\(runTransaction\(db, async \(tx\) => \{[\s\S]{0,300}tx\.delete\(invRef\)/.test(delBlock)
   && /runInvoiceTransaction\(prior, null, 'delete'\)/.test(delBlock)
   && /const prior = demoMode \? \(invoicesRef\.current\.find/.test(delBlock));
 
@@ -146,7 +151,8 @@ ok('a zero / missing receive line is a no-op (normal single-client receive unaff
   (() => { const r = applyPoReceive(items10, [{ partId: 'p1', receiveQty: 0 }], 'approved'); return JSON.stringify(r.items) === JSON.stringify(items10) && r.status === 'approved'; })());
 
 ok('poReceiveDoc now runs a Firestore runTransaction that re-reads the PO',
-  /export function poReceiveDoc\([\s\S]{0,120}return runTransaction\(db, async \(tx\) => \{/.test(po_src)
+  // Phase 6b (PH6-03) — withTimeout(...) wraps the transaction; behavior unchanged.
+  /export function poReceiveDoc\([\s\S]{0,200}return withTimeout\(runTransaction\(db, async \(tx\) => \{/.test(po_src)
   && /const snap = await tx\.get\(poRef\)/.test(po_src));
 ok('poReceiveDoc no longer uses a writeBatch or the caller-supplied po.items',
   !/writeBatch/.test(po_src)
@@ -220,8 +226,9 @@ ok('Phase 1a guarded save still checks _rev via revState/conflictError',
 ok('Phase 1b edit lease + Phase 1c record-sync are untouched by the persistence layer',
   !/editLease|editLocks|useEditLease|recordSync|useRecordSync/.test(store_src + repo_src + conc_src + po_src));
 ok('invoice number allocation (Phase 2) transaction is untouched',
+  // Phase 6b (PH6-03) — withTimeout(...) wraps the transaction; behavior unchanged.
   /store\.allocateNumber\(__allocSeq, __allocSeed\)/.test(dash)
-  && /return runTransaction\(db, async \(tx\) => \{/.test(read('../lib/docCounter.js')));
+  && /return withTimeout\(runTransaction\(db, async \(tx\) => \{/.test(read('../lib/docCounter.js')));
 ok('firestore.rules carries NO Phase-3b changes (the writes were already allowed for signed-in users)',
   !/phase ?3|CWF-0|po\/over-receipt/i.test(read('../firestore.rules')));
 

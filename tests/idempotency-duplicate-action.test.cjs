@@ -89,7 +89,8 @@ ok('the PaymentModal render is keyed per invoice so a new "collect payment" remo
 ok('collectPayment uses meta.opId as the payment row id (not a fresh random each call)',
   /id: meta\.opId \|\| emptyPayment\(\)\.id/.test(bill));
 ok('the payment write is a re-reading Firestore transaction',
-  /await runTransaction\(db, async \(tx\) => \{/.test(payTxn) && /const snap = await tx\.get\(invRef\)/.test(payTxn));
+  // Phase 6b (PH6-03) — withTimeout(...) wraps the transaction; behavior unchanged.
+  /await withTimeout\(runTransaction\(db, async \(tx\) => \{/.test(payTxn) && /const snap = await tx\.get\(invRef\)/.test(payTxn));
 ok('the transaction reads prior payments and no-ops if pay.id is already present',
   /priorPayments\.some\(\(p\) => p && p\.id === pay\.id\)/.test(payTxn)
   && /alreadyApplied: true/.test(payTxn));
@@ -342,7 +343,9 @@ ok('the reserve delta is applied AFTER the awaited job-card write, not before it
   /await persistJobCardsDiff\(prev, next\);[\s\S]{0,600}await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);/.test(jcBlock)
   && !/applyReserveDelta[\s\S]{0,400}await persistJobCardsDiff\(prev, next\);/.test(jcBlock));
 ok('the guarded-txn edit path also defers the reserve delta until after saveGuarded',
-  /store\.saveGuarded\(COLLECTIONS\.JOB_CARDS[\s\S]{0,600}await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);/.test(jcBlock));
+  // Phase 6b widened this window — the catch block grew accurate ambiguous/
+  // timeout messaging (was a silent no-op on a non-concurrency failure).
+  /store\.saveGuarded\(COLLECTIONS\.JOB_CARDS[\s\S]{0,1200}await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);/.test(jcBlock));
 ok('the baseline is advanced only after a confirmed write (so a retry recomputes the same delta)',
   /await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);\s*\n\s*reserveBaselineRef\.current\.set\(card\.jobNo, card\);/.test(jcBlock));
 ok('Phase 5b: the reservation increment carries a DURABLE reserveOpId + per-part appliedReserveIds marker',

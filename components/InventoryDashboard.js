@@ -97,6 +97,7 @@ import { useRecordSync } from '../hooks/useRecordSync';
 import { useLeaseReleaseToast } from '../hooks/useLeaseReleaseToast';
 import { useDurableOpId } from '../hooks/useDurableOpId';
 import { clearOpId, readOrCreateOpId } from '../lib/durableOpId';
+import { withTimeout, TX_TIMEOUT_MS, isTxTimeout, timeoutMessage } from '../lib/txTimeout';
 import EditLeaseBanner from './common/EditLeaseBanner';
 import EditAvailableBar from './common/EditAvailableBar';
 import RecordUpdatedNotice from './common/RecordUpdatedNotice';
@@ -8994,6 +8995,19 @@ export default function InventoryDashboard() {
     window.addEventListener('offline', down);
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); };
   }, []);
+  // Phase 6b (PH6-02) — a soft, NON-BLOCKING heads-up before a mutation that needs
+  // a live round-trip (a runTransaction call, or an awaited setDoc/updateDoc whose
+  // promise won't resolve until the server acks). `navigator.onLine` is only a
+  // browser connectivity hint, not proof Firestore is reachable — a captive portal
+  // or a corporate proxy can report "online" while nothing real is reachable — so
+  // this WARNS and nothing more: the write is still attempted exactly as before,
+  // no durable operation id is touched, and no form data is discarded. Reuses the
+  // existing amber `notify.warning` (TriangleAlert, 5s) rather than inventing a
+  // new visual language, and the shared toast dedup (lib/toast.js) collapses
+  // repeated warnings for the same action into one refreshed toast, not a stack.
+  const warnIfOffline = useCallback((thing) => {
+    if (!online) notify.warning(`You appear to be offline — ${thing} may not go through until your connection returns.`);
+  }, [online]);
   const [search, setSearch] = useState('');
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -9459,6 +9473,7 @@ export default function InventoryDashboard() {
   // so a vehicle added from the detail panel while the wizard was open isn't
   // dropped by the wizard's save.
   const saveCustomerEdit = useCallback(async (record, expectedRev, opts = {}) => {
+    warnIfOffline('this customer'); // Phase 6b (PH6-02) — non-blocking heads-up only
     const fresh = await store.saveGuarded(COLLECTIONS.CUSTOMERS, record, expectedRev, {
       label: 'This customer',
       idArrayKeys: ['vehicles'],
@@ -9469,7 +9484,11 @@ export default function InventoryDashboard() {
     customersRef.current = next;
     setCustomersRaw(next);
     return fresh;
-  }, [store]);
+    // `warnIfOffline` must stay a dependency — it closes over `online`, and this
+    // callback's own memoization would otherwise pin it to whatever `online` was
+    // on first render (this callback's other dependency, `store`, is a `useMemo`
+    // keyed only to `demoMode`, so without this it would never refresh).
+  }, [store, warnIfOffline]);
   // Live subscription (prod). Customer docs carry their nested vehicles[] inline.
   useEffect(() => {
     if (demoMode) return;
@@ -9944,6 +9963,7 @@ export default function InventoryDashboard() {
       if (already && already.invNo && !/^DRF/i.test(already.invNo)) {
         target = { ...rest, invNo: already.invNo };
       } else {
+        warnIfOffline('this invoice number'); // Phase 6b (PH6-02) — non-blocking heads-up only
         let n;
         try {
           n = await store.allocateNumber(__allocSeq, __allocSeed);
@@ -9951,7 +9971,14 @@ export default function InventoryDashboard() {
           // The counter transaction needs connectivity (as does every other invoice
           // write — the guarded edit and the payment transaction). Tell the user;
           // BillingModule's onSave wrapper keeps the editor open with nothing lost.
-          toast.error('Could not reserve an invoice number — check your connection and try again.');
+          // Phase 6b (PH6-03) — a timeout here is genuinely ambiguous (the counter
+          // may have already advanced); say so instead of claiming a definite
+          // failure. Retrying is always safe either way — the counter never issues
+          // the same number twice, so a retry after a real commit only costs a
+          // legal, documented gap, never a duplicate.
+          toast.error(isTxTimeout(err)
+            ? timeoutMessage('The invoice number')
+            : 'Could not reserve an invoice number — check your connection and try again.');
           throw err;
         }
         target = { ...rest, invNo: formatDocNo(__allocPrefix, n) };
@@ -9968,10 +9995,22 @@ export default function InventoryDashboard() {
     // collectInvoicePayment, has its own transaction and is unchanged here.)
     if (prior && !demoMode) {
       let fresh;
+      warnIfOffline('this invoice'); // Phase 6b (PH6-02) — non-blocking heads-up only
       try {
+        // Phase 6b (PH6-03) — guardedSet itself bounds the wait (see
+        // repositories/firestoreRepository.js); this just needs to react to it.
         fresh = await store.saveGuarded(COLLECTIONS.INVOICES, target, revOf(target), { label: 'This invoice' });
       } catch (err) {
+        // Phase 6b — this used to re-throw a non-concurrency failure with NO
+        // toast at all (the comment here used to say "BillingModule's onSave
+        // wrapper" shows one — it doesn't; store.saveGuarded never toasts either).
+        // The user saw the editor just... not close, with zero explanation. Say
+        // what actually happened before handing off, same as every other guarded
+        // save in this file already does.
         if (isConcurrencyError(err)) concToast(err, 'invoice');
+        else toast.error(isTxTimeout(err)
+          ? timeoutMessage('This invoice')
+          : 'Couldn’t confirm the invoice saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.');
         throw err; // BillingModule's onSave wrapper catches and keeps the editor open
       }
       const merged = { ...target, _rev: fresh._rev };
@@ -10031,8 +10070,10 @@ export default function InventoryDashboard() {
   // exactly once, on whichever payment actually crossed unpaid -> Paid.
   // Demo mode has one client and no server — it keeps the existing in-memory path.
   const collectInvoicePayment = async (invoiceId, pay) => {
+    warnIfOffline('this payment'); // Phase 6b (PH6-02) — non-blocking heads-up only
     const invRef = doc(db, COLLECTIONS.INVOICES, invoiceId);
-    const { serverPrior, fresh, alreadyApplied } = await runTransaction(db, async (tx) => {
+    // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+    const { serverPrior, fresh, alreadyApplied } = await withTimeout(runTransaction(db, async (tx) => {
       const snap = await tx.get(invRef);
       if (!snap.exists()) {
         const err = new Error('This invoice was deleted by another user. Reload before collecting payment.');
@@ -10085,7 +10126,7 @@ export default function InventoryDashboard() {
         serverPrior,
         fresh: { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status, _rev: nextRev },
       };
-    });
+    }), TX_TIMEOUT_MS, 'This payment');
     // Duplicate delivery — nothing changed on the server, so run nothing downstream.
     if (alreadyApplied) return fresh;
     // Money is committed atomically. Now run the (idempotent, diff-based) realized
@@ -10109,18 +10150,26 @@ export default function InventoryDashboard() {
     // is still correctly reversed. Demo has one client — local state IS the truth.
     let serverPrior = null;
     if (!demoMode) {
+      warnIfOffline('this delete'); // Phase 6b (PH6-02) — non-blocking heads-up only
       const invRef = doc(db, COLLECTIONS.INVOICES, iv.id);
       try {
-        serverPrior = await runTransaction(db, async (tx) => {
+        // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+        serverPrior = await withTimeout(runTransaction(db, async (tx) => {
           const snap = await tx.get(invRef);
           if (!snap.exists()) return null; // already gone — nothing to unwind or delete
           const data = { ...snap.data(), id: iv.id };
           tx.delete(invRef);
           return data;
-        });
+        }), TX_TIMEOUT_MS, 'This invoice');
       } catch (err) {
         console.error('Invoice delete failed:', err);
-        toast.error('Could not delete the invoice. Check your connection and try again.');
+        // A delete is naturally idempotent — the retry's own `!snap.exists()` check
+        // makes a repeat safe regardless of whether the first attempt actually
+        // committed — so this is always framed as "check before retrying", never
+        // as a definite failure the way it used to claim.
+        toast.error(isTxTimeout(err)
+          ? timeoutMessage('This delete')
+          : 'Couldn’t confirm the invoice was deleted. Check the invoice list, or press Delete again (a repeat is safe).');
         throw err;
       }
     }
@@ -10193,7 +10242,9 @@ export default function InventoryDashboard() {
       }
       return Promise.resolve();
     }
-    return Promise.allSettled(ids.map((id) => runTransaction(db, async (tx) => {
+    warnIfOffline('this reservation update'); // Phase 6b (PH6-02) — non-blocking heads-up only
+    // Phase 6b (PH6-03) — bound the UI wait per part; does not cancel any transaction.
+    return Promise.allSettled(ids.map((id) => withTimeout(runTransaction(db, async (tx) => {
       const ref = doc(db, COLLECTIONS.PARTS, id);
       const snap = await tx.get(ref);
       if (!snap.exists()) return;
@@ -10204,7 +10255,7 @@ export default function InventoryDashboard() {
         ...(reserveOpId ? { appliedReserveIds: [...applied, reserveOpId].slice(-40) } : {}),
         updatedAt: serverTimestamp(),
       });
-    })))
+    }), TX_TIMEOUT_MS, 'This reservation update')))
       .then((results) => {
         const failed = results.filter((r) => r.status === 'rejected');
         if (failed.length) {
@@ -10264,10 +10315,17 @@ export default function InventoryDashboard() {
     // until the write is confirmed, so a rejected stale save changes nothing.
     if (prior && !demoMode) {
       let fresh;
+      warnIfOffline('this job card'); // Phase 6b (PH6-02) — non-blocking heads-up only
       try {
         fresh = await store.saveGuarded(COLLECTIONS.JOB_CARDS, card, revOf(card), { idField: 'jobNo', label: 'This job card' });
       } catch (err) {
+        // Phase 6b — same silent-failure gap as the invoice path above: a
+        // non-concurrency rejection used to reach JobCardModule's catch with no
+        // toast at all (the comment claimed one already fired; none did).
         if (isConcurrencyError(err)) concToast(err, 'job card');
+        else toast.error(isTxTimeout(err)
+          ? timeoutMessage('This job card')
+          : 'Couldn’t confirm the job card saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.');
         throw err; // JobCardModule's own catch leaves the editor untouched
       }
       const merged = { ...card, _rev: fresh._rev };
@@ -10815,8 +10873,25 @@ export default function InventoryDashboard() {
       q,
       { includeMetadataChanges: true },
       (snap) => {
-        setInventory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setPendingWrites(snap.metadata.hasPendingWrites); // ADD-08
+        // Phase 6b (PH6-01) — this used to apply EVERY snapshot unconditionally,
+        // while the jobCards/customers/invoices listeners below all gate on
+        // `!hasPendingWrites`. During an outage that started mid-invoice-save, that
+        // asymmetry let a SECOND tab/device visibly show the stock decrement before
+        // the invoice itself appeared anywhere — a real record that looked settled
+        // when it wasn't yet. Gating this listener the same way the others already
+        // are closes that window: it does NOT remove or delay the optimistic local
+        // update every stock-mutating handler already applies via its own direct
+        // `setInventory(...)` call (Quick Sell, adjust, restock, reserve, the
+        // invoice cascade's applyStockDelta) — those still update THIS device
+        // instantly, same as before. It only stops a STILL-UNCONFIRMED echo (this
+        // device's own pending write, or another device's in-flight one via
+        // multi-tab persistence) from being presented as settled. `setLoading` is
+        // deliberately NOT gated — a cached-but-unconfirmed first snapshot is still
+        // real data to show, not an empty state.
+        if (!snap.metadata.hasPendingWrites) {
+          setInventory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        }
+        setPendingWrites(snap.metadata.hasPendingWrites); // ADD-08 — tracked every snapshot regardless
         if (!snap.metadata.hasPendingWrites && !snap.metadata.fromCache) { setLastSync(new Date()); clearListenerError('parts'); }
         setLoading(false);
       },
@@ -11326,6 +11401,7 @@ export default function InventoryDashboard() {
     };
 
     let concRejected = false;
+    warnIfOffline('this supplier'); // Phase 6b (PH6-02) — non-blocking heads-up only
     try {
       if (formData.id) {
         // Universal Notification Architecture review — this write used to be
@@ -11389,7 +11465,9 @@ export default function InventoryDashboard() {
       if (isConcurrencyError(err)) { concRejected = true; concToast(err, 'supplier'); }
       else {
         console.error('Supplier save failed:', err);
-        toast.error('Couldn’t confirm the supplier saved. It may already exist — check Suppliers, or press Save again (a repeat is safe).');
+        toast.error(isTxTimeout(err)
+          ? timeoutMessage('The supplier')
+          : 'Couldn’t confirm the supplier saved. It may already exist — check Suppliers, or press Save again (a repeat is safe).');
       }
     } finally {
       setSupplierSaving(false);
@@ -12181,6 +12259,7 @@ export default function InventoryDashboard() {
     };
 
     let concRejected = false;
+    warnIfOffline('this part'); // Phase 6b (PH6-02) — non-blocking heads-up only
     try {
       const copiedFrom = duplicateOriginRef.current || null; // Section 2: DB link
       // Phase 1a — editing an existing part goes through the revision-guarded
@@ -12219,8 +12298,15 @@ export default function InventoryDashboard() {
       if (isConcurrencyError(err)) { concRejected = true; concToast(err, 'part'); }
       else {
         console.error('Save failed:', err);
+        // Phase 6b — the EDIT branch used to claim a definite "Could not save",
+        // even though guardedSet's own ambiguous-failure case (lost ack, timeout)
+        // may well have committed. A retry is always safe either way — Phase 1a's
+        // `_rev` guard rejects a stale one instead of duplicating or corrupting —
+        // so say that, matching the accurate wording the CREATE branch already had.
         toast.error(formData.id
-          ? 'Could not save part. Please check the details and try again.'
+          ? (isTxTimeout(err)
+            ? timeoutMessage('This part')
+            : 'Couldn’t confirm the part saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.')
           : 'Couldn’t confirm the part saved. It may already exist — check the parts list, or press Save again (a repeat is safe).');
       }
     } finally {
@@ -12466,7 +12552,8 @@ export default function InventoryDashboard() {
       // ambiguous failure, lost ack, transaction-callback replay) sees the
       // `sales/{opId}` doc already present and applies NOTHING.
       try {
-        const result = await runTransaction(db, async (tx) => {
+        // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+        const result = await withTimeout(runTransaction(db, async (tx) => {
           const saleRef = doc(db, COLLECTIONS.SALES, opId);
           const partRef = doc(db, COLLECTIONS.PARTS, part.id);
           const saleSnap = await tx.get(saleRef);
@@ -12479,7 +12566,7 @@ export default function InventoryDashboard() {
           tx.update(partRef, { stock: increment(-want), salesCount: increment(want), updatedAt: serverTimestamp() });
           tx.set(doc(db, 'salesRollups', monthKey), rollupPatch, { merge: true });
           return { sold: want, alreadyApplied: false };
-        });
+        }), TX_TIMEOUT_MS, 'This sale');
         sold = result.sold;
         alreadyApplied = result.alreadyApplied;
       } catch (err) {
@@ -12491,6 +12578,8 @@ export default function InventoryDashboard() {
           ? 'Sale not saved — permission denied by security rules.'
           : isDefiniteNoCommit
           ? err.message
+          : isTxTimeout(err)
+          ? timeoutMessage('The sale')
           : 'Couldn’t confirm the sale saved. It may already be recorded — check Stock Out, or press Confirm Sale again (a repeat is safe).';
         toast.error(friendly);
         // Phase 5b — a definite non-commit (our thrown business error) or a hard
@@ -12610,8 +12699,10 @@ export default function InventoryDashboard() {
     // before any write. A duplicate delivery finds `stockAdjustments/{adjId}` and
     // applies NOTHING.
     let alreadyApplied = false;
+    warnIfOffline('this adjustment'); // Phase 6b (PH6-02) — non-blocking heads-up only
     try {
-      const res = await runTransaction(db, async (tx) => {
+      // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+      const res = await withTimeout(runTransaction(db, async (tx) => {
         const adjRef = doc(db, COLLECTIONS.STOCK_ADJUSTMENTS, adjId);
         const partRef = doc(db, COLLECTIONS.PARTS, part.id);
         const adjSnap = await tx.get(adjRef);
@@ -12628,11 +12719,11 @@ export default function InventoryDashboard() {
         });
         tx.update(partRef, { stock: increment(signedQty), updatedAt: serverTimestamp() });
         return { alreadyApplied: false };
-      });
+      }), TX_TIMEOUT_MS, 'This adjustment');
       alreadyApplied = res.alreadyApplied;
     } catch (err) {
       console.error('[TXN] Stock adjustment failed:', err);
-      return { ok: false, definiteNoCommit: !err?.code && !!err?.message };
+      return { ok: false, definiteNoCommit: !err?.code && !!err?.message, timedOut: isTxTimeout(err) };
     }
     if (!alreadyApplied) {
       setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: after } : p)));
@@ -12650,7 +12741,9 @@ export default function InventoryDashboard() {
     if (result.permissionDenied) { clearOpId(`adjust:${part.id}`); return; } // protectedDemoToast already shown; modal stays open
     if (!result.ok) {
       if (result.definiteNoCommit) clearOpId(`adjust:${part.id}`); // Phase 5b — nothing wrote
-      toast.error('Couldn’t confirm the adjustment saved. It may already be recorded — check Movement History, or press Record adjustment again (a repeat is safe).'); return; // modal stays open so the user can retry
+      toast.error(result.timedOut
+        ? timeoutMessage('The adjustment')
+        : 'Couldn’t confirm the adjustment saved. It may already be recorded — check Movement History, or press Record adjustment again (a repeat is safe).'); return; // modal stays open so the user can retry
     }
     clearOpId(`adjust:${part.id}`); // Phase 5b — server-confirmed (or alreadyApplied)
     setAdjustTarget(null);
@@ -12775,6 +12868,7 @@ export default function InventoryDashboard() {
       clearPoCreateOp();
       toast.success(`${base.poNumber} created (demo)`); return base;
     }
+    warnIfOffline('this PO'); // Phase 6b (PH6-02) — non-blocking heads-up only
     try {
       await poCreateDoc(base, user?.email, poId);
       writeAudit('po_create', { poNumber: base.poNumber, supplier: base.supplierName }, { total, items: clean.length, poId });
@@ -12870,6 +12964,7 @@ export default function InventoryDashboard() {
         toast.success(fullyReceived ? `${po.poNumber}: received (demo)` : `${po.poNumber}: partially received (demo)`);
         return;
       }
+      warnIfOffline('this receipt'); // Phase 6b (PH6-02) — non-blocking heads-up only
       try {
         // Phase 3b (CWF-02) — poReceiveDoc runs a transaction: it re-reads the PO,
         // adds each delta to the SERVER's current receivedQty, and returns the
@@ -12877,6 +12972,8 @@ export default function InventoryDashboard() {
         // stale client-side computation above.
         // Phase 4b (PH4-02) — `receiptId` is stable for this receive intent; the
         // transaction records it on the PO and no-ops (alreadyApplied) on a retry.
+        // Phase 6b (PH6-03) — poReceiveDoc itself bounds the wait (see
+        // services/purchaseOrderService.js); this just needs to react to a timeout.
         const res = await poReceiveDoc(po, receivedLines, user?.email, receiptId);
         const serverStatus = res?.status || status;
         if (!res?.alreadyApplied) {
@@ -12889,7 +12986,9 @@ export default function InventoryDashboard() {
         // Phase 5b — po/deleted and po/over-receipt are definite non-commits; the op
         // id can be retired. An unknown/ambiguous error keeps it for a safe retry.
         if (e?.code === 'po/over-receipt' || e?.code === 'po/deleted') { clearOpId(`receive:${po.id}`); toast.error(e.message); }
-        else toast.error('Couldn’t confirm the receipt saved. It may already be recorded — check the PO, or press Confirm Receipt again (a repeat is safe).');
+        else toast.error(isTxTimeout(e)
+          ? timeoutMessage('The receipt')
+          : 'Couldn’t confirm the receipt saved. It may already be recorded — check the PO, or press Confirm Receipt again (a repeat is safe).');
         return false; // keep the receive form open (ReceivePOForm's onSubmit checks `ok !== false`)
       }
     } finally {
@@ -12974,8 +13073,10 @@ export default function InventoryDashboard() {
     // Reads (op marker, part) before any write. A duplicate delivery finds
     // `restocks/{restockOpId}` and applies NOTHING.
     let alreadyApplied = false;
+    warnIfOffline('this receipt'); // Phase 6b (PH6-02) — non-blocking heads-up only
     try {
-      const res = await runTransaction(db, async (tx) => {
+      // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+      const res = await withTimeout(runTransaction(db, async (tx) => {
         const rsRef = doc(db, COLLECTIONS.RESTOCKS, restockOpId);
         const partRef = doc(db, COLLECTIONS.PARTS, part.id);
         const rsSnap = await tx.get(rsRef);
@@ -12991,13 +13092,13 @@ export default function InventoryDashboard() {
         });
         tx.update(partRef, { stock: increment(qty), lastRestockedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...masterPatch });
         return { alreadyApplied: false };
-      });
+      }), TX_TIMEOUT_MS, 'This receipt');
       alreadyApplied = res.alreadyApplied;
     } catch (err) {
       console.error('[TXN] Receive stock failed:', err);
       // Phase 5b — a business error we threw ("part no longer exists") is a
       // definite non-commit; anything else is ambiguous and keeps the op id.
-      return { ok: false, definiteNoCommit: !err?.code && !!err?.message };
+      return { ok: false, definiteNoCommit: !err?.code && !!err?.message, timedOut: isTxTimeout(err) };
     }
     if (alreadyApplied) return { ok: true, alreadyApplied: true };
     if (updateDefaultPrice || updateDefaultSupplier) {
@@ -13019,7 +13120,9 @@ export default function InventoryDashboard() {
     if (result.permissionDenied) { clearOpId(`restock:${part.id}`); return; } // protectedDemoToast already shown; modal stays open
     if (!result.ok) {
       if (result.definiteNoCommit) clearOpId(`restock:${part.id}`); // Phase 5b — nothing wrote; a retry is a new intent
-      toast.error('Couldn’t confirm the receipt saved. It may already be recorded — check Stock In, or press Receive again (a repeat is safe).'); return; // modal stays open so the user can retry
+      toast.error(result.timedOut
+        ? timeoutMessage('The receipt')
+        : 'Couldn’t confirm the receipt saved. It may already be recorded — check Stock In, or press Receive again (a repeat is safe).'); return; // modal stays open so the user can retry
     }
     clearOpId(`restock:${part.id}`); // Phase 5b — server-confirmed (or alreadyApplied); a later receipt is a new intent
     setRestockTarget(null);

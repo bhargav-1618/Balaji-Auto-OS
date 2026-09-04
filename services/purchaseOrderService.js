@@ -7,6 +7,7 @@ import { db } from '../lib/firebase';
 // unit-testable and importable from the security-rules test SDK context.
 import { applyPoReceive } from '../lib/poReceive';
 import { APPLIED_RECEIPTS_CAP } from '../lib/opId';
+import { withTimeout, TX_TIMEOUT_MS } from '../lib/txTimeout';
 
 const n = (x) => Number(x) || 0;
 
@@ -112,7 +113,8 @@ export function poAdvanceDoc(po, next, userEmail) {
  */
 export function poReceiveDoc(po, receivedLines, userEmail, receiptId) {
   const poRef = doc(db, 'purchaseOrders', po.id);
-  return runTransaction(db, async (tx) => {
+  // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+  return withTimeout(runTransaction(db, async (tx) => {
     const snap = await tx.get(poRef);
     if (!snap.exists()) {
       const e = new Error('This purchase order no longer exists. Reload before receiving.');
@@ -153,7 +155,7 @@ export function poReceiveDoc(po, receivedLines, userEmail, receiptId) {
       });
     });
     return { status, items: nextItems };
-  });
+  }), TX_TIMEOUT_MS, 'Receiving this PO');
 }
 
 export function poCancelDoc(poId) {

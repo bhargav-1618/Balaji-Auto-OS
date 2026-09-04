@@ -166,7 +166,13 @@ ok('Customers — new-customer: no conflict banner + no review dialog for an unp
 // (which call concToast on isConcurrencyError), keeping the wizard open, no _rev bypass.
 ok('Customers — stale save shows an explicit "changes not saved" message (BUG #2)',
   /import \{ revOf, isConcurrencyError, CONC_DELETED \} from '\.\.\/\.\.\/lib\/concurrency';/.test(cust)
-  && /\} catch \(e\) \{[\s\S]{0,600}if \(isConcurrencyError\(e\)\) \{[\s\S]{0,200}This record was updated by another user\. Your changes were not saved\.[\s\S]{0,200}\}\s*\n\s*return;\s*\n\s*\}/.test(cust));
+  && /\} catch \(e\) \{[\s\S]{0,600}if \(isConcurrencyError\(e\)\) \{[\s\S]{0,200}This record was updated by another user\. Your changes were not saved\.[\s\S]{0,200}\}\s*else\s*\{/.test(cust));
+// Phase 6b — the non-concurrency (ambiguous/timeout) branch used to do NOTHING:
+// no toast, no signal the save might not have gone through. Now it always tells
+// the user, distinguishing a genuine timeout from any other ambiguous failure.
+ok('Customers — a non-concurrency save failure is no longer silent (Phase 6b)',
+  /\} else \{[\s\S]{0,500}toast\.error\(isTxTimeout\(e\)[\s\S]{0,200}timeoutMessage\('This customer'\)[\s\S]{0,300}\}/.test(cust)
+  && /import \{ isTxTimeout, timeoutMessage \} from '\.\.\/\.\.\/lib\/txTimeout';/.test(cust));
 ok('Customers — stale save still keeps the wizard open + does not bypass _rev (unchanged)',
   // the guarded path is unchanged: onSaveCustomerEdit still runs with the opened _rev,
   // and the catch still `return`s BEFORE lease.release()/setEditCust(null) so nothing

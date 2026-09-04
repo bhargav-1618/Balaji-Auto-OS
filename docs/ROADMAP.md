@@ -88,6 +88,36 @@ current release.
   Shipped in commit `fix(reliability): make business operations refresh-safe`
   (`85e4cd3`); production build `YV9LAPH1sS-he7PKrrv0h`. Gates: `npm test` 127/127,
   `npm run test:rules` 94/94, lint 0, build ✓. No `firestore.rules` change.
+- ~~**Network interruption (not just refresh).**~~ **DONE — CONCURRENCY PHASE 6
+  (discovery) + PHASE 6b (hardening), shipped.** Discovery found the Phase 4b/5b
+  durable-opId architecture was already connectivity-cause-agnostic (a network
+  drop and a refresh recover through the exact same path) and found no
+  CRITICAL/HIGH defect — only 3 UX gaps, all closed:
+  - every `runTransaction` call site (13 total) is now bounded by
+    `lib/txTimeout.js`'s `withTimeout(...)` — 12s for business mutations, 6s
+    for the edit-lease coordination step — WITHOUT cancelling the underlying
+    transaction (Firestore has no cancel API, and a client-side "give up"
+    can't undo a commit that already reached the server); a timeout is
+    classified ambiguous by the pre-existing `isDefiniteNoCommit` check, so
+    the durable operation id is kept, never cleared, and every affected catch
+    block now shows the accurate "connection is taking longer than
+    expected... check before retrying" copy instead of a false failure claim;
+  - a non-blocking `warnIfOffline(thing)` heads-up (reusing the existing
+    amber `notify.warning`) fires before a transaction-backed mutation is
+    attempted while `navigator.onLine` is false — deliberately a warning, not
+    a block, since `navigator.onLine` is a browser hint, not proof Firestore
+    is reachable;
+  - the `parts`/inventory `onSnapshot` listener now gates its state update on
+    `!hasPendingWrites`, matching `jobCards`/`customers`/`invoices` (it was
+    the only one that didn't) — closing the window where a second tab/device
+    could see a stock decrement before the invoice that caused it was
+    visible anywhere;
+  - found in the same audit and fixed alongside: the customer/invoice/job-card
+    guarded-edit save paths showed **no toast at all** on a non-concurrency
+    failure (a stale code comment claimed one fired elsewhere; it never did).
+  Gates: `npm test` 128/128, `npm run test:rules` 98/98 (+4 new PH6b emulator
+  assertions proving the timeout-then-retry equivalence against the real
+  server), lint 0, build ✓. No `firestore.rules` change.
 
 ## Scale — before large datasets
 
