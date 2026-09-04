@@ -61,15 +61,23 @@ ok('it no-ops when this pay.id is already on the server invoice (Phase 4b idempo
 ok('it recomputes paid / balance / status from server truth inside the tx',
   /invTotals\(merged\)/.test(block) && /invStatus\(merged\)/.test(block) &&
   /tx\.update\(invRef, \{[\s\S]{0,400}paid: t\.paid[\s\S]{0,400}balance: t\.balance[\s\S]{0,400}status,/.test(block));
-ok('the realized stock / ledger cascade runs AFTER the atomic money write, not a re-persist',
-  /runInvoiceTransaction\(serverPrior, fresh, 'persist'\)/.test(block) &&
-  !/persistDocsDiff\(COLLECTIONS\.INVOICES/.test(block));
+// PHASE 8B (PH8-01b) — the realized stock/ledger/rollup cascade is no longer a
+// separate call at all (runInvoiceTransaction was removed): planInvoiceRealization
+// computes the delta and applyRealizationPlanInTx writes it INSIDE this SAME
+// transaction, atomically with the money write itself — strictly stronger than
+// "runs after, not a re-persist" (nothing can commit the payment while silently
+// failing to commit its stock/ledger effect, or vice versa).
+ok('PH8-01b: the realized stock/ledger/rollup cascade is applied INSIDE the SAME atomic transaction as the money write, not a separate re-persist or a separate un-awaited call',
+  /const plan = planInvoiceRealization\(serverPrior, fresh\);/.test(block) &&
+  /applyRealizationPlanInTx\(tx, plan\);/.test(block) &&
+  !/persistDocsDiff\(COLLECTIONS\.INVOICES/.test(block) &&
+  !/runInvoiceTransaction/.test(block));
 // Phase 3b (CWF-01) — the cascade must diff against the TRANSACTION'S OWN pre-image,
 // never `invoicesRef.current` (stale React state), or two concurrent payments each
 // see prior=unpaid / fresh=Paid and both run the full realization.
 ok('CWF-01: the realization `prior` is the transaction\'s server pre-image, not client state',
   /const serverPrior = \{ \.\.\.data, id: invoiceId \}/.test(block) &&
-  /return \{\s*serverPrior,\s*fresh:/.test(block) &&
+  /return \{ serverPrior, fresh, alreadyApplied: false, plan \};/.test(block) &&
   !/const prior = invoicesRef\.current\.find\(\(x\) => x\.id === invoiceId\)/.test(block));
 
 // ── 2. wiring ───────────────────────────────────────────────────────────────

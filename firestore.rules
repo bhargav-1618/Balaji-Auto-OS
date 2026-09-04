@@ -146,6 +146,27 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ---- Pending sales (PHASE 8B / PH8-05) — a durable, single-document Quick
+    // Sell intent recorded ONLY while the client is genuinely offline (a
+    // Firestore transaction requires a live round trip and cannot run at all
+    // offline). Reconciled into the real atomic sale transaction once
+    // connectivity returns (lib is in components/InventoryDashboard.js's
+    // runQuickSaleTx / the pendingSales reconciliation effect), then deleted.
+    // Scoped strictly to its own creator so one user can never forge, read, or
+    // delete (and thereby fake a "replay") another user's pending sale.
+    // Never updated — a pending sale is created once and deleted once, either
+    // by its owner reconciling it or by the owner discarding a definite
+    // rejection (e.g. the part no longer exists).
+    match /pendingSales/{opId} {
+      allow read, delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.partId is string
+        && request.resource.data.want is int
+        && request.resource.data.want > 0;
+      allow update: if false;
+    }
+
     // ---- Reorder requests / purchase tracking: status changes over time.
     match /reorderRequests/{reqId} {
       allow read, create, update: if signedIn();

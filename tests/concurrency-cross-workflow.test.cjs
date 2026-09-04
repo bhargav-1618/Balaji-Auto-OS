@@ -71,9 +71,14 @@ ok('the payment write is still a re-reading Firestore transaction',
   && /const snap = await tx\.get\(invRef\)/.test(payBlock));
 ok('the transaction returns its OWN pre-payment server image',
   /const serverPrior = \{ \.\.\.data, id: invoiceId \};/.test(payBlock)
-  && /return \{\s*serverPrior,\s*fresh:/.test(payBlock));
-ok('the realization cascade diffs serverPrior (NOT invoicesRef.current)',
-  /runInvoiceTransaction\(serverPrior, fresh, 'persist'\)/.test(payBlock)
+  && /return \{ serverPrior, fresh, alreadyApplied: false, plan \};/.test(payBlock));
+// PHASE 8B (PH8-01b) — runInvoiceTransaction was removed; the realization delta is
+// now computed (planInvoiceRealization) and applied (applyRealizationPlanInTx)
+// INSIDE this same transaction, still diffing against serverPrior, never
+// invoicesRef.current.
+ok('the realization cascade diffs serverPrior (NOT invoicesRef.current), now applied INSIDE the same transaction',
+  /const plan = planInvoiceRealization\(serverPrior, fresh\);/.test(payBlock)
+  && /applyRealizationPlanInTx\(tx, plan\);/.test(payBlock)
   && !/const prior = invoicesRef\.current\.find\(\(x\) => x\.id === invoiceId\)/.test(payBlock));
 ok('both payment records still survive the merge (BUG-CONC-01 kept)',
   /const priorPayments = Array\.isArray\(data\.payments\) \? data\.payments : \[\];/.test(payBlock)
@@ -88,16 +93,22 @@ ok('overpayment protection is unchanged (BillingModule still guards `overpay`)',
   /const overpay = num\(amount\) > t\.balance \+ 0\.5;/.test(read('../components/billing/BillingModule.jsx')));
 
 // deleteInvoice — same root cause, same fix
+// PHASE 8B (PH8-01c) — the transaction now lives in the dedicated
+// deleteInvoiceTransactional (called by deleteInvoice right after), and applies
+// the reversal delta (planInvoiceRealization + applyRealizationPlanInTx) INSIDE
+// that same transaction — a delete can no longer succeed while its stock/ledger
+// reversal silently fails. Slice starts at deleteInvoiceTransactional so the
+// window covers both it and deleteInvoice itself.
 const delBlock = (() => {
-  const s = dash.indexOf('const deleteInvoice = async (iv) =>');
-  // Phase 6b widened this window — warnIfOffline + accurate ambiguous/timeout
-  // messaging added real characters before the assertions below.
-  return dash.slice(s, s + 2200);
+  const s = dash.indexOf('const deleteInvoiceTransactional = async (iv) =>');
+  const e = dash.indexOf('const writeJobCardDraft', s);
+  return dash.slice(s, e > s ? e : s + 2800);
 })();
 ok('deleteInvoice unwinds against a transactional server pre-image in production',
   // Phase 6b (PH6-03) — withTimeout(...) wraps the transaction; behavior unchanged.
   /withTimeout\(runTransaction\(db, async \(tx\) => \{[\s\S]{0,300}tx\.delete\(invRef\)/.test(delBlock)
-  && /runInvoiceTransaction\(prior, null, 'delete'\)/.test(delBlock)
+  && /const plan = planInvoiceRealization\(prior, null\);/.test(delBlock)
+  && /applyRealizationPlanInTx\(tx, plan\);/.test(delBlock)
   && /const prior = demoMode \? \(invoicesRef\.current\.find/.test(delBlock));
 
 // --- pure logic: Paid -> Paid is a zero delta (2nd concurrent payment is a no-op)

@@ -146,9 +146,13 @@ seed('customers', [{ id: 'legacy1', name: 'Legacy', phone: '9000000001' }]); // 
   ok('J: Suppliers editor save is guarded', /store\.saveGuarded\(COLLECTIONS\.SUPPLIERS, \{ \.\.\.payload, id: formData\.id \}, revOf\(formData\)/.test(dash));
   ok('J: Job Cards editor save is guarded (keyed by jobNo)', /store\.saveGuarded\(COLLECTIONS\.JOB_CARDS, card, revOf\(card\), \{ idField: 'jobNo'/.test(dash));
   ok('J: Invoices editor save is guarded (payment path untouched)',
-    // Phase 2 renamed the local `iv` -> `target` after the number-allocation step;
-    // the guarded write is otherwise identical.
-    /store\.saveGuarded\(COLLECTIONS\.INVOICES, target, revOf\(target\)/.test(dash)
+    // Phase 2 renamed the local `iv` -> `target` after the number-allocation step.
+    // PHASE 8B (PH8-01) replaced the generic store.saveGuarded with a dedicated
+    // editInvoiceTransactional so the SAME _rev-guarded transaction also applies
+    // the realization delta atomically — the _rev guard itself (revState/
+    // conflictError, the same functions store.saveGuarded uses) is unchanged.
+    /result = await editInvoiceTransactional\(target, revOf\(target\)\);/.test(dash)
+    && /const state = revState\(snap\.exists\(\) \? snap\.data\(\) : null, expectedRev\);/.test(dash)
     && /collectInvoicePayment/.test(dash));
   ok('J: Customers editor save is guarded via onSaveCustomerEdit → saveCustomerEdit → store.saveGuarded',
     // Phase 3b (CWF-03) — signature gained an `opts` arg (clientBefore) and the

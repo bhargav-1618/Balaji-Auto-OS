@@ -245,12 +245,46 @@ export async function applySecondaryMerge(collectionName, id, plainFields = {}, 
 /**
  * Commit many writes atomically. Firestore caps a batch at 500 operations, so we chunk
  * — a silent 501st write would otherwise throw and abort the whole transaction.
+ *
+ * PHASE 8B (PH8-03) — each 500-op CHUNK is atomic on its own, but there is no
+ * atomicity ACROSS chunks (Firestore has no such primitive for >500 writes in
+ * one call) — a caller passing more than 500 operations (the capacity-cleanup
+ * wizard's default batch is 1,000, always ≥2 chunks) could have an earlier
+ * chunk commit while a later one fails, with no visibility into how much of
+ * the operation actually landed. This is deliberately NOT "fixed" by forcing
+ * a single giant transaction — Firestore cannot do that, and the Phase 8B
+ * brief is explicit that unrelated documents should not be forced into one
+ * oversized transaction. Instead: every caller of commitBatch in this app
+ * (removeMany/updateMany's bulk delete/archive) is already NATURALLY
+ * IDEMPOTENT per operation — deleting an already-deleted doc, or re-applying
+ * the same archive-flag patch to an already-patched doc, is a safe no-op — so
+ * a caller can always retry the SAME full operation list and it will finish
+ * exactly the remaining work, never double-apply the part that already
+ * committed. What was missing was VISIBILITY: on a mid-run failure, this now
+ * throws a BatchPartialFailureError carrying `completedCount` /
+ * `totalCount` / `remainingOperations` (the operations from the failed chunk
+ * onward), so a caller can report "X of Y processed — press again to finish
+ * (safe to retry)" instead of a generic, uninformative failure — and, if it
+ * chooses, retry with just `remainingOperations` instead of the full list.
  */
+export class BatchPartialFailureError extends Error {
+  constructor(cause, completedCount, totalCount, remainingOperations) {
+    super(`Bulk operation stopped after ${completedCount} of ${totalCount}: ${cause?.message || cause}`);
+    this.name = 'BatchPartialFailureError';
+    this.cause = cause;
+    this.completedCount = completedCount;
+    this.totalCount = totalCount;
+    this.remainingOperations = remainingOperations;
+  }
+}
+
 export async function commitBatch(operations) {
   const CHUNK = 500;
+  let completedCount = 0;
   for (let i = 0; i < operations.length; i += CHUNK) {
+    const chunkOps = operations.slice(i, i + CHUNK);
     const batch = writeBatch(db);
-    operations.slice(i, i + CHUNK).forEach((op) => {
+    chunkOps.forEach((op) => {
       const ref = op.id
         ? doc(db, op.collection, op.id)
         : doc(collection(db, op.collection));
@@ -258,7 +292,13 @@ export async function commitBatch(operations) {
       else if (op.type === 'update') batch.update(ref, op.data);
       else if (op.type === 'delete') batch.delete(ref);
     });
-    await batch.commit();
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await batch.commit();
+      completedCount += chunkOps.length;
+    } catch (err) {
+      throw new BatchPartialFailureError(err, completedCount, operations.length, operations.slice(i));
+    }
   }
 }
 

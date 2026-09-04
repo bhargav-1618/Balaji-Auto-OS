@@ -153,9 +153,21 @@ const boundedTxnSites = [
   ['guardedSet (entity edit: customer/part/supplier/jobcard/invoice)', /return withTimeout\(runTransaction\(db, async \(tx\) => \{/, repo],
   ['applySecondaryMerge (id-array field replay, e.g. customer note/vehicle)', /await withTimeout\(runTransaction\(db, async \(tx\) => \{/, repo],
   ['collectInvoicePayment', /await withTimeout\(runTransaction\(db, async \(tx\) => \{/, dash],
-  ['deleteInvoice', /serverPrior = await withTimeout\(runTransaction\(db, async \(tx\) => \{/, dash],
-  ['applyReserveDelta (job-card reservation, per-part txn)', /withTimeout\(runTransaction\(db, async \(tx\) => \{/, dash],
-  ['handleSellInner (Quick Sell, online branch)', /result = await withTimeout\(runTransaction\(db, async \(tx\) => \{/, dash],
+  // PHASE 8B (PH8-01) — createInvoiceTransactional/editInvoiceTransactional are
+  // new, dedicated one-transaction functions (invoice write + realization delta).
+  ['createInvoiceTransactional (new invoice, PH8-01)', /return withTimeout\(runTransaction\(db, async \(tx\) => \{/, dash],
+  ['editInvoiceTransactional (existing invoice edit, PH8-01)', /return withTimeout\(runTransaction\(db, async \(tx\) => \{/, dash],
+  // PHASE 8B (PH8-01c) — the transaction moved into deleteInvoiceTransactional.
+  ['deleteInvoiceTransactional (PH8-01c)', /const result = await deleteInvoiceTransactional\(iv\);/, dash],
+  // PHASE 8B (PH8-02) — applyReserveDelta is now ONE transaction across every
+  // affected part (was N independent per-part transactions).
+  ['applyReserveDelta (job-card reservation, now ONE transaction across all parts — PH8-02)', /withTimeout\(runTransaction\(db, async \(tx\) => \{/, dash],
+  // PHASE 8B (PH8-05) — the atomic transaction moved into runQuickSaleTx, shared
+  // by the live click and the pendingSales reconciliation effect.
+  ['runQuickSaleTx (Quick Sell, online branch — PH8-05)', /return withTimeout\(runTransaction\(db, async \(tx\) => \{/, dash],
+  // PHASE 8B (global fire-and-forget audit) — the quick-restock ledger row now
+  // commits atomically with the stock set inside commitStock.
+  ['commitStock (quick-restock ledger, now atomic with the stock set)', /await withTimeout\(runTransaction\(db, async \(tx\) => \{\s*\n\s*const restockRef = doc\(db, COLLECTIONS\.RESTOCKS, qrId\);/, dash],
   ['adjustStockLineInner (Stock Adjustment)', /res = await withTimeout\(runTransaction\(db, async \(tx\) => \{/, dash],
   ['receiveStockLineInner (Ad-hoc Restock) — same res = await withTimeout( shape as adjust, second occurrence', (dash.match(/res = await withTimeout\(runTransaction\(db, async \(tx\) => \{/g) || []).length >= 2, null],
   ['allocateNumber (invoice/estimate numbering)', /return withTimeout\(runTransaction\(db, async \(tx\) => \{/, docCounter],
@@ -168,12 +180,18 @@ boundedTxnSites.forEach(([label, re, src]) => {
   const cond = src === null ? re : re.test(src);
   ok(`PH6-03 FIXED: ${label} is wrapped in withTimeout(...)`, cond);
 });
-ok('PH6-03 — total withTimeout(runTransaction(db, occurrences across the app matches the full 13-site inventory (2 in firestoreRepository, 3 in editLease, 1 each in docCounter/purchaseOrderService, 6 in InventoryDashboard incl. the per-part reserve-delta map)',
+// PHASE 8B added 3 NEW transaction sites in InventoryDashboard.js:
+// createInvoiceTransactional + editInvoiceTransactional (PH8-01, invoice
+// create/edit now atomic with their realization delta) and commitStock's
+// quick-restock transaction (global fire-and-forget audit) — 6 -> 9. Every
+// other file's count is unchanged (applyReserveDelta and runQuickSaleTx are
+// still exactly one transaction textually, just relocated/consolidated).
+ok('PH6-03 — total withTimeout(runTransaction(db, occurrences across the app matches the full 16-site inventory (2 in firestoreRepository, 3 in editLease, 1 each in docCounter/purchaseOrderService, 9 in InventoryDashboard — PH8-01 added createInvoiceTransactional + editInvoiceTransactional, and the global fire-and-forget audit added commitStock)',
   (repo.match(/withTimeout\(runTransaction\(db,/g) || []).length === 2
   && (lease.match(/withTimeout\(runTransaction\(db,/g) || []).length === 3
   && (docCounter.match(/withTimeout\(runTransaction\(db,/g) || []).length === 1
   && (poSvc.match(/withTimeout\(runTransaction\(db,/g) || []).length === 1
-  && (dash.match(/withTimeout\(runTransaction\(db,/g) || []).length === 6);
+  && (dash.match(/withTimeout\(runTransaction\(db,/g) || []).length === 9);
 ok('PH6-03 — no runTransaction(db, call site remains UN-wrapped: every occurrence of "runTransaction(db," in the whole app is immediately preceded by "withTimeout("',
   [dash, repo, lease, docCounter, poSvc].every((src) => {
     const bare = (src.match(/runTransaction\(db,/g) || []).length;
@@ -311,7 +329,10 @@ ok('[fact] every idempotent transaction reads its marker BEFORE any write (payme
   && /if \(adjSnap\.exists\(\)\)/.test(dash)
   && /if \(rsSnap\.exists\(\)\)/.test(dash)
   && /applied\.includes\(receiptId\)/.test(poSvc)
-  && /if \(reserveOpId && applied\.includes\(reserveOpId\)\) return;/.test(dash));
+  // PHASE 8B (PH8-02) — applyReserveDelta reads ALL affected parts first, then
+  // decides per part (skip if already applied) before any write in the SAME
+  // transaction — same marker-before-write contract, different shape.
+  && /if \(reserveOpId && applied\.includes\(reserveOpId\)\) return \{ skip: true \};/.test(dash));
 ok('[fact] no runTransaction callback in this codebase makes a network call other than tx.get/tx.set/tx.update/tx.delete (no fetch/XHR) — still safe for the SDK to re-run the callback on contention or a transient reconnect, and safe for withTimeout to leave running in the background after a UI timeout',
   Array.from(dash.matchAll(/runTransaction\(db, async \(tx\) => \{([\s\S]{0,900}?)\n {4}\}\)/g)).every((m) => !/fetch\(|XMLHttpRequest/.test(m[1])));
 

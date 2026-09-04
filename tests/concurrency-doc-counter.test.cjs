@@ -174,13 +174,19 @@ ok('D: prefix is upper-cased', formatDocNo('inv', 1) === 'INV-0001');
     && /n = await store\.allocateNumber\(__allocSeq, __allocSeed\);/.test(dash)
     && /Could not reserve an invoice number/.test(dash)
     && /target = \{ \.\.\.rest, invNo: formatDocNo\(__allocPrefix, n\) \};/.test(dash));
+  // PHASE 8B (PH8-01) — store.saveGuarded + runInvoiceTransaction were replaced by
+  // dedicated one-transaction functions (editInvoiceTransactional /
+  // createInvoiceTransactional) so the invoice write and its realization delta
+  // commit atomically; the DEMO path (no Firestore, no atomicity concern) still
+  // uses `target` the same way as before.
   ok('I: the guarded + unguarded write paths and audit all use the renumbered `target`',
-    /store\.saveGuarded\(COLLECTIONS\.INVOICES, target, revOf\(target\)/.test(dash)
-    && /runInvoiceTransaction\(prior, target, 'persist'\)/.test(dash)
+    /result = await editInvoiceTransactional\(target, revOf\(target\)\);/.test(dash)
+    && /result = await createInvoiceTransactional\(target\);/.test(dash)
+    && /runInvoiceRealizationDemo\(prior, target\);/.test(dash)
     && /const next = \[\.\.\.prev\.filter\(\(x\) => x\.id !== target\.id\), target\];/.test(dash));
   ok('I: persistInvoice returns the persisted invoice so the caller shows the real number',
-    /setInvoicesRaw\(nextList\);\s*\n\s*syncCustomerTotals\(target\.customerId, nextList\);\s*\n\s*return merged;/.test(dash)
-    && /syncCustomerTotals\(target\.customerId, next\);\s*\n\s*return target;/.test(dash));
+    /setInvoicesRaw\(nextList\);\s*\n\s*await runPostCommitDerivedEffects\(serverPrior, merged, 'persist', nextList\);\s*\n\s*return merged;/.test(dash)
+    && /await runPostCommitDerivedEffects\(prior, target, 'persist', next\);\s*\n\s*return target;/.test(dash));
   {
     // persistInvoice writes exactly ONE invoice doc (via persistDocsDiff on
     // prev -> [...prev without this id, target], which syncAll narrows to the

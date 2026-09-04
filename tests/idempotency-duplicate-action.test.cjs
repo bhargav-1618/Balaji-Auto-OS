@@ -185,6 +185,11 @@ ok('B (legitimate second receipt): a new receiptId adds its delta → receivedQt
 // =====================================================================
 console.log('\nPH4-03  Quick Sell / Stock Out\n');
 
+// PHASE 8B (PH8-05) — the atomic transaction was extracted into its own
+// runQuickSaleTx (called by both the live "Confirm Sale" click and the
+// pendingSales reconciliation effect), so the slice now starts there instead
+// of at handleSellInner itself.
+const sellTxBlock = slice(dash, 'async function runQuickSaleTx', 'Synchronous double-submission guard for checkout sales');
 const sellBlock = slice(dash, 'async function handleSellInner', 'async function adjustStockLine');
 ok('[OK] handleSell has a synchronous in-flight guard (sellLockRef)',
   /const sellLockRef = useRef\(false\)/.test(dash) && /if \(sellLockRef\.current\) return;/.test(dash));
@@ -193,18 +198,29 @@ ok('CheckoutModal owns ONE stable sale-op id, passed as the 4th confirm arg (Pha
   && /onConfirm\(q, p, floor > 0 && p < floor, saleOpId\)/.test(dash));
 ok('the CheckoutModal render is keyed per part so a new sale remounts (fresh opId)',
   /<CheckoutModal key=\{`co:\$\{checkoutPart\.id\}`\}/.test(dash));
+// PHASE 8B (PH8-05) — runQuickSaleTx (extracted, shared by the live click and
+// the pendingSales reconciliation effect) IS the one-transaction contract now.
 ok('the WHOLE sale is one transaction: sale row + stock + salesCount + rollup, keyed by sales/{opId}',
-  /const saleRef = doc\(db, COLLECTIONS\.SALES, opId\);/.test(sellBlock)
-  && /if \(saleSnap\.exists\(\)\) return \{ sold:[^}]*alreadyApplied: true \}/.test(sellBlock)
-  && /tx\.set\(saleRef, saleRecord\);/.test(sellBlock)
-  && /tx\.update\(partRef, \{ stock: increment\(-want\), salesCount: increment\(want\)/.test(sellBlock)
-  && /tx\.set\(doc\(db, 'salesRollups', monthKey\), rollupPatch, \{ merge: true \}\);/.test(sellBlock));
+  /const saleRef = doc\(db, COLLECTIONS\.SALES, opId\);/.test(sellTxBlock)
+  && /if \(saleSnap\.exists\(\)\) return \{ sold:[^}]*alreadyApplied: true \}/.test(sellTxBlock)
+  && /tx\.set\(saleRef, saleRecord\);/.test(sellTxBlock)
+  && /tx\.update\(partRef, \{ stock: increment\(-want\), salesCount: increment\(want\)/.test(sellTxBlock)
+  && /tx\.set\(doc\(db, 'salesRollups', monthKey\), rollupPatch, \{ merge: true \}\);/.test(sellTxBlock));
 ok('all transaction reads happen before any write (sale marker + part, then set/update)',
-  /const saleSnap = await tx\.get\(saleRef\);\s*\n\s*const partSnap = await tx\.get\(partRef\);/.test(sellBlock));
+  /const saleSnap = await tx\.get\(saleRef\);\s*\n\s*const partSnap = await tx\.get\(partRef\);/.test(sellTxBlock));
 ok('the ledger addDoc + rollup are NOT fire-and-forget after the txn anymore',
-  !/addDoc\(collection\(db, COLLECTIONS\.SALES\)[\s\S]{0,400}\)\.catch/.test(sellBlock));
-ok('the offline path writes to the SAME stable sales/{opId} doc (replay-safe)',
-  /setDoc\(doc\(db, COLLECTIONS\.SALES, opId\), \{ \.\.\.saleRecord/.test(sellBlock));
+  !/addDoc\(collection\(db, COLLECTIONS\.SALES\)[\s\S]{0,400}\)\.catch/.test(sellTxBlock));
+// PHASE 8B (PH8-05) — offline no longer writes sales/{opId} (or anything else)
+// directly at all: it persists ONE durable pendingSales/{opId} intent (plain
+// scalars only — see runQuickSaleTx's own comment on why) and the SAME
+// runQuickSaleTx applies the real sales/{opId} write once connectivity returns
+// (the reconciliation effect), rather than a second, weaker write path.
+ok('the offline path persists ONE durable pendingSales/{opId} intent (plain scalars, no sentinels) instead of writing sales/{opId} directly',
+  /setDoc\(doc\(db, 'pendingSales', opId\), \{\s*\n\s*\.\.\.saleInputs,/.test(sellBlock)
+  && !/setDoc\(doc\(db, COLLECTIONS\.SALES, opId\)/.test(sellBlock));
+ok('the pendingSales reconciliation effect applies each pending sale through the EXACT SAME runQuickSaleTx, never a second path',
+  /pendingSales\/\{opId\} intent/.test(dash)
+  && /await runQuickSaleTx\(\{\s*\n\s*opId: p\.opId, partId: p\.partId, partName: p\.partName, want: p\.want,/.test(dash));
 ok('the error message admits uncertainty ("press Confirm Sale again — a repeat is safe")',
   /press Confirm Sale again \(a repeat is safe\)/.test(sellBlock));
 
@@ -348,10 +364,15 @@ ok('the guarded-txn edit path also defers the reserve delta until after saveGuar
   /store\.saveGuarded\(COLLECTIONS\.JOB_CARDS[\s\S]{0,1200}await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);/.test(jcBlock));
 ok('the baseline is advanced only after a confirmed write (so a retry recomputes the same delta)',
   /await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);\s*\n\s*reserveBaselineRef\.current\.set\(card\.jobNo, card\);/.test(jcBlock));
+// PHASE 8B (PH8-02) — applyReserveDelta now reads ALL affected parts first, then
+// decides per part (`d.skip`) before writing any of them in the SAME transaction,
+// so the marker check text shifted slightly (skip decisions in an array, not an
+// early per-transaction return) — same DURABLE reserveOpId + per-part
+// appliedReserveIds contract, just atomic across every part on the card now.
 ok('Phase 5b: the reservation increment carries a DURABLE reserveOpId + per-part appliedReserveIds marker',
   /const reserveOpId = demoMode \? null : readOrCreateOpId\(reserveScope, 'jcr'\);/.test(jcBlock)
-  && /if \(reserveOpId && applied\.includes\(reserveOpId\)\) return;/.test(dash)
-  && /appliedReserveIds: \[\.\.\.applied, reserveOpId\]\.slice\(-40\)/.test(dash));
+  && /if \(reserveOpId && applied\.includes\(reserveOpId\)\) return \{ skip: true \};/.test(dash)
+  && /appliedReserveIds: \[\.\.\.d\.applied, reserveOpId\]\.slice\(-40\)/.test(dash));
 ok('deleteJobCard also defers the reservation RELEASE until the delete is confirmed (with a durable id)',
   /await persistJobCardsDiff\(prev, next\);\s*\n[\s\S]{0,240}await applyReserveDelta\(reserveDelta\(baseline, null\), relOpId\);/.test(dash));
 ok('the job-card doc write is keyed by jobNo (setDoc merge) — a retry rewrites the same doc',
@@ -403,9 +424,13 @@ ok('the opId-refresh + number-skip residual limitation is recorded in docs/KNOWN
 // CLEARED — backends that were already idempotent stay idempotent
 // =====================================================================
 console.log('\nCLEARED workflows (still idempotent)\n');
-const delBlock = slice(dash, 'const deleteInvoice = async (iv) =>', 'const writeJobCardDraft');
+// PHASE 8B (PH8-01c) — the transaction (incl. the !exists early-return) now
+// lives in deleteInvoiceTransactional, called by deleteInvoice; slice starts
+// there so both are covered.
+const delBlock = slice(dash, 'const deleteInvoiceTransactional = async (iv) =>', 'const writeJobCardDraft');
 ok('[OK] deleteInvoice: 2nd call sees !exists and skips the unwind cascade (Phase 3b)',
-  /if \(!snap\.exists\(\)\) return null;/.test(delBlock) && /if \(prior\) runInvoiceTransaction\(prior, null, 'delete'\)/.test(delBlock));
+  /if \(!snap\.exists\(\)\) return \{ alreadyDeleted: true, prior: null, plan: null \};/.test(delBlock)
+  && /const plan = planInvoiceRealization\(prior, null\);/.test(delBlock));
 ok('[OK] add-note / add-vehicle: replayIdArray dedups by element id',
   /if \(id != null && !beforeById\.has\(id\) && !seen\.has\(id\)\)/.test(read('../lib/concurrency.js')));
 ok('[OK] guarded entity save: a 2nd click with a stale _rev is rejected conc/stale',
@@ -420,11 +445,15 @@ ok('[OK] archive/restore: updateDoc({archived: <bool>}) is naturally idempotent'
 console.log('\n§11  Firestore transaction-callback retry safety\n');
 ok('every idempotent txn reads its marker BEFORE writing (PH4-01/03/04/05)',
   /priorPayments\.some\(\(p\) => p && p\.id === pay\.id\)/.test(payTxn)
-  && /if \(saleSnap\.exists\(\)\)/.test(sellBlock)
+  && /if \(saleSnap\.exists\(\)\)/.test(sellTxBlock)
   && /if \(adjSnap\.exists\(\)\)/.test(adjBlock)
   && /if \(rsSnap\.exists\(\)\)/.test(rsBlock));
-ok('the realized cascade (runInvoiceTransaction) still runs AFTER the payment txn resolves, not inside it',
-  /if \(alreadyApplied\) return fresh;[\s\S]{0,600}runInvoiceTransaction\(serverPrior, fresh, 'persist'\)/.test(payTxn));
+// PHASE 8B (PH8-01b) — runInvoiceTransaction was removed; the realized cascade
+// (planInvoiceRealization + applyRealizationPlanInTx) now runs INSIDE the
+// payment transaction itself — strictly stronger than "runs after."
+ok('the realized cascade is applied INSIDE the payment transaction, not after it resolves',
+  /if \(alreadyApplied\) return fresh;[\s\S]{0,600}applyPlanToLocalInventory\(plan\);/.test(payTxn)
+  && /const plan = planInvoiceRealization\(serverPrior, fresh\);[\s\S]{0,600}applyRealizationPlanInTx\(tx, plan\);/.test(payTxn));
 ok('the payment txn callback is now safe to run more than once (append guarded by pay.id)',
   /priorPayments\.some\(\(p\) => p && p\.id === pay\.id\)/.test(payTxn));
 ok('poReceiveDoc restock rows are still tx.set(doc(collection(...))) inside the txn (aborted retry never commits)',

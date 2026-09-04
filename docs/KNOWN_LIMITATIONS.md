@@ -218,6 +218,93 @@ rules published.)*
     A hard refresh/close while an editor is dirty is unchanged and already
     covered separately by each editor's own `beforeunload` handler.
 
+- **Business-critical writes are now transactionally atomic with their required
+  effects, not fire-and-forget** (CONCURRENCY PHASE 8b — shipped, automated +
+  emulator + production verified). Phase 8's discovery pass found that invoice
+  realization (the single highest-value workflow in the app) committed its
+  stock, sales-ledger, and monthly-rollup effects as separate, un-awaited
+  writes — an invoice could show **Paid** (or be deleted) while those effects
+  silently never landed, and a brand-new invoice could even realize stock/sales
+  *before* the invoice document itself existed. All confirmed defects are
+  closed:
+  - **Invoice create/edit/payment/delete are now single atomic transactions**
+    (`createInvoiceTransactional` / `editInvoiceTransactional` /
+    `collectInvoicePayment` / `deleteInvoiceTransactional` in
+    `components/InventoryDashboard.js`). A shared pure planner
+    (`planInvoiceRealization`) computes the stock/sales/rollup delta between
+    the invoice's old and new state exactly as before (still diff-based, still
+    idempotent — saving the same paid invoice twice is still a zero-effect
+    no-op), but the write now happens *inside* the same transaction as the
+    invoice document itself via `applyRealizationPlanInTx`. The Phase 1a `_rev`
+    guard and Phase 3b/4b idempotency markers are unchanged. A new invoice's
+    number allocation (Phase 2, its own necessary separate transaction on
+    `counters/<sequence>`) still runs first; a failure between allocation and
+    the (now atomic) invoice transaction still costs the pre-existing,
+    documented skipped-number gap under GST Rule 46(b) — that gap is
+    unchanged and is not a financial-consistency defect, since the invoice
+    transaction itself can no longer partially apply.
+  - **Customer totals and vehicle history remain intentionally outside the
+    invoice transaction** (they are derived, non-authoritative data, and
+    folding a full customer-totals recompute into every invoice's transaction
+    would add cross-document lock contention for no correctness benefit) —
+    but they are now genuinely **awaited** by every caller instead of an
+    unhandled promise rejection, and vehicle history is now idempotent (a
+    retry of the same invoice's "became Paid" transition is a no-op instead of
+    double-counting `totalSpend`/`serviceCount`). A failure here is reported
+    with an honest, distinct toast ("Invoice saved. Customer totals or vehicle
+    history may take a moment to refresh.") — it never claims the whole save
+    failed, and it always self-heals on the customer's next invoice.
+  - **A multi-part Job Card reservation is now atomic across every part on the
+    card**, not one independent transaction per part. `applyReserveDelta`
+    reads every affected part first, then writes every part inside a single
+    transaction — a card reserving 3 parts can no longer end with 2 committed
+    and 1 not.
+  - **Bulk operations spanning more than 500 writes** (the capacity-cleanup
+    wizard) now report exactly how many records completed before a mid-run
+    failure (`BatchPartialFailureError.completedCount`/`totalCount`) instead of
+    an always-inaccurate "no records were deleted/archived." Firestore has no
+    primitive for atomicity across more than 500 writes in one call — this was
+    not "fixed" by forcing a giant transaction (impossible), but by making a
+    partial result honestly visible and safely resumable: every underlying
+    write (delete, archive-flag update) is idempotent, so re-running the same
+    cleanup after a partial failure always converges without double-applying
+    or losing anything.
+  - **Offline Quick Sell no longer uses a weaker write model than online Quick
+    Sell.** A Firestore transaction cannot run at all while genuinely offline
+    (it requires a live round trip), so the previous offline path fell back to
+    3 independent fire-and-forget writes. It now persists exactly ONE durable
+    `pendingSales/{opId}` document (a single-document write is atomic by
+    definition, online or offline, and is scoped by rules to its own creator)
+    and a reconciliation effect applies it through the *exact same* atomic
+    transaction as a live online sale once connectivity returns, then deletes
+    the pending record.
+  - **The quick-restock ledger row** (the inline stock-table stepper) now
+    commits atomically with its stock change, closing the one authoritative
+    business-ledger write the Phase 8 audit found was still a bare
+    `.catch(console.error)` outside the invoice cascade.
+  Residual, by design (not defects):
+  - `store.syncAll`'s multi-document diff (used for bulk customer/job-card/etc.
+    edits) remains an **independent batch**, not one transaction spanning every
+    document — documented explicitly as such. Unrelated documents (e.g. a bulk
+    archive touching many different customers) are not forced into one
+    transaction purely for the sake of atomicity; every write in it is
+    naturally idempotent, so a partial failure is always safely resumable by
+    re-invoking the same diff.
+  - The supplier-edit cascade to linked parts (`persistSupplierEdit`) remains
+    an independent, best-effort sync — it is **derived, denormalized display
+    data** (a copy of the supplier's own name/phone, never read as financial or
+    stock truth), not folded into one transaction with every linked part. The
+    primary supplier write is now awaited and gates the success toast; a
+    partial cascade failure is now counted and reported instead of silently
+    absorbed.
+  - Reorder-request writes remain fire-and-forget by design — internal
+    workflow tracking with no financial or stock effect read anywhere else in
+    the app.
+  - The audit log remains uniformly advisory/fire-and-forget across the whole
+    app, unchanged — every audit write happens after its business effect has
+    already been confirmed, so an audit failure can never retroactively cause
+    a false business-failure claim.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

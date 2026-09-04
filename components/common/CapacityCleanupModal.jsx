@@ -52,6 +52,26 @@ const METHODS = [
 
 const btnBase = `h-11 px-4 ${RADIUS.control} text-sm font-bold flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed`;
 
+// PHASE 8B (PH8-03) — a bulk delete/archive spanning more than 500 records
+// commits in multiple Firestore batches (repositories/firestoreRepository.js
+// commitBatch), each atomic on its own but not atomic ACROSS chunks. Before
+// this, any failure here was reported as "No records were deleted/archived" —
+// FALSE whenever an earlier chunk had already committed. commitBatch now
+// throws a BatchPartialFailureError carrying completedCount/totalCount; this
+// builds an accurate message from it (or falls back to the old wording for a
+// plain failure, e.g. one that failed before any chunk committed at all).
+// Every caller here (delete/archive/export-then-delete) is safely resumable —
+// removeMany/updateMany are idempotent per record — so the message always
+// invites a retry rather than implying data loss.
+function partialFailureMessage(e, verb) {
+  const done = e?.completedCount;
+  const total = e?.totalCount;
+  if (typeof done === 'number' && typeof total === 'number' && done > 0) {
+    return `${done.toLocaleString('en-IN')} of ${total.toLocaleString('en-IN')} records were ${verb} before the connection dropped. Nothing was lost or duplicated — run cleanup again to finish the rest.`;
+  }
+  return `Unable to complete cleanup. No records were ${verb}.`;
+}
+
 export default function CapacityCleanupModal({
   open, onClose, moduleKey, demoMode, actorEmail, ctx, capacityStatus, onComplete,
 }) {
@@ -103,8 +123,9 @@ export default function CapacityCleanupModal({
       onComplete?.();
     } catch (e) {
       console.error('[capacity] delete failed:', e);
-      setResult({ ok: false, message: 'Unable to complete cleanup. No records were deleted.' });
-      notify.error('Unable to complete cleanup. No records were deleted.');
+      const message = partialFailureMessage(e, 'deleted');
+      setResult({ ok: false, message });
+      notify.error(message);
     }
     setStep('result');
   };
@@ -119,8 +140,9 @@ export default function CapacityCleanupModal({
       onComplete?.();
     } catch (e) {
       console.error('[capacity] archive failed:', e);
-      setResult({ ok: false, message: 'Unable to complete cleanup. No records were archived.' });
-      notify.error('Unable to complete cleanup. No records were archived.');
+      const message = partialFailureMessage(e, 'archived');
+      setResult({ ok: false, message });
+      notify.error(message);
     }
     setStep('result');
   };
@@ -159,8 +181,13 @@ export default function CapacityCleanupModal({
       onComplete?.();
     } catch (e) {
       console.error('[capacity] post-export delete failed:', e);
-      setResult({ ok: false, message: 'The Excel backup was saved, but the delete step failed. Your records are safe and still active — nothing was lost.' });
-      notify.error('Delete step failed after export. No records were removed.');
+      const done = e?.completedCount;
+      const total = e?.totalCount;
+      const message = (typeof done === 'number' && typeof total === 'number' && done > 0)
+        ? `The Excel backup was saved, and ${done.toLocaleString('en-IN')} of ${total.toLocaleString('en-IN')} exported records were deleted before the connection dropped. Nothing was lost or duplicated — run cleanup again to finish the rest.`
+        : 'The Excel backup was saved, but the delete step failed. Your records are safe and still active — nothing was lost.';
+      setResult({ ok: false, message });
+      notify.error(message);
     }
     setStep('result');
   };

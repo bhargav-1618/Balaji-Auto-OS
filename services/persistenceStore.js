@@ -314,6 +314,32 @@ export function createStore(demoMode) {
      *   - deletes docs present in `prev` but absent from `next`.
      * Any deviation here silently loses or duplicates customer records, so it is a
      * faithful port, not an improvement.
+     *
+     * PHASE 8B (PH8-06) — CLASSIFICATION: this is an INDEPENDENT BATCH across the
+     * documents it diffs, not a single atomic transaction spanning all of them.
+     * Two phases: (1) every create/delete/scalar-update goes into ONE commitBatch
+     * call (atomic within a 500-op chunk — see commitBatch's own PH8-03 note for
+     * the >500 case); (2) id-keyed-array field changes (e.g. a customer's
+     * `vehicles`/`noteEntries`) then run as a SEQUENTIAL loop of independent
+     * per-document transactions (applySecondaryMerge), because each needs its own
+     * server-truth read to replay onto (see lib/concurrency.js replayIdArray).
+     * This is intentional, not a shortcut: `next`/`prev` here are almost always
+     * ONE caller's own set of edits to UNRELATED documents (e.g. a bulk archive of
+     * many different customers) — forcing them into one giant transaction would
+     * only add lock contention between documents that have nothing to do with each
+     * other, for no correctness benefit (a single business record's own edit is
+     * still exactly one document in this diff in the overwhelmingly common case).
+     * SAFETY: if phase 2 fails partway (doc A's merge succeeds, doc B's throws),
+     * the loop stops and the rejection propagates to the caller (persistDocsDiff /
+     * persistJobCardsDiff / setCustomers all re-throw after toasting — never
+     * silently reported as success). RECOVERY: every write here is naturally
+     * idempotent on retry — a create/update batch op re-applies the same target
+     * values (a no-op if already there), and replayIdArray is explicitly
+     * idempotent by design (re-running the same replay onto the now-current
+     * server array yields the same result) — so a caller re-invoking syncAll with
+     * the SAME prev/next after a partial failure always converges to the fully
+     * -applied state, never double-applies the part that already committed, and
+     * never loses a change that was still pending.
      */
     async syncAll(collectionName, prev, next, idField = 'id') {
       const prevMap = new Map((prev || []).map((d) => [d[idField], d]));

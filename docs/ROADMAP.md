@@ -170,6 +170,66 @@ current release.
   collection unchanged). See KNOWN_LIMITATIONS.md for the residual
   browser-coverage caveat (Chromium-family verified live; Firefox/Safari
   expected identical per spec but not independently confirmed this session).
+- ~~**Transaction boundary / partial-failure integrity.**~~ **DONE —
+  CONCURRENCY PHASE 8 (discovery) + PHASE 8b (hardening), shipped and
+  production-verified.** Discovery found the invoice realization cascade —
+  the highest-value workflow in the app — committed its stock/sales-ledger/
+  rollup effects as separate, un-awaited writes relative to the invoice/
+  payment document itself; a new invoice could even realize those effects
+  *before* the invoice document existed. All confirmed defects are closed:
+  - **PH8-01/PH8-01b/PH8-01c (invoice create/edit/payment/delete, was
+    CRITICAL/CRITICAL/HIGH).** A shared pure planner (`planInvoiceRealization`,
+    still diff-based and idempotent exactly as before) now has its writes
+    applied (`applyRealizationPlanInTx`) INSIDE the same Firestore transaction
+    as the invoice document write itself, for all four entry points
+    (`createInvoiceTransactional`, `editInvoiceTransactional`,
+    `collectInvoicePayment`, `deleteInvoiceTransactional`). The Phase 1a
+    `_rev` guard and Phase 3b/4b idempotency markers are unchanged; Phase 2's
+    number-allocation transaction stays a separate, necessary prior step (a
+    documented skipped-number gap on failure between allocation and the
+    invoice transaction is unchanged and is not a new financial-consistency
+    defect, since the invoice/stock/ledger transaction itself is now
+    all-or-nothing). Customer totals and vehicle history stay outside the
+    transaction (derived data — folding them in would add cross-document lock
+    contention for no correctness benefit) but are now genuinely awaited with
+    an honest, distinct failure message, and vehicle history is now idempotent
+    (guards against double-counting on a retry).
+  - **PH8-02 (Job Card multi-part reservation, was MEDIUM).**
+    `applyReserveDelta` reads every affected part first, then writes every
+    part inside ONE transaction — was N independent per-part transactions
+    (`Promise.allSettled`), which could leave a card with 2-of-3 parts
+    reserved if the 3rd failed.
+  - **PH8-03 (bulk operations over 500 writes, was MEDIUM).** Firestore has no
+    atomicity primitive across more than 500 writes in one call, so this
+    wasn't "fixed" by forcing a giant transaction — `commitBatch` now throws a
+    `BatchPartialFailureError` carrying `completedCount`/`totalCount`/
+    `remainingOperations` on a mid-run failure, so the capacity-cleanup wizard
+    reports an accurate "X of Y processed, run again to finish" instead of the
+    previous always-wrong "no records were deleted/archived." Every
+    underlying write is idempotent, so a resumed cleanup always converges.
+  - **PH8-05 (offline Quick Sell, was MEDIUM).** A Firestore transaction
+    cannot run at all while genuinely offline; the previous fallback was 3
+    independent fire-and-forget writes. Now persists exactly ONE durable
+    `pendingSales/{opId}` document (atomic by definition, rules-scoped to its
+    own creator) and reconciles it through the *exact same* atomic
+    `runQuickSaleTx` once connectivity returns.
+  - **Global fire-and-forget audit.** The quick-restock ledger row (an
+    authoritative business write) is now atomic with its stock change. The
+    supplier-edit cascade to linked parts and reorder-request writes were
+    reviewed and classified as derived/advisory respectively — correctly left
+    as independent, best-effort writes, not elevated; the supplier-edit
+    primary write is now awaited and its cascade failures are counted and
+    reported instead of silently absorbed.
+  - **PH8-06 (`store.syncAll` multi-document diff, was MEDIUM).** Classified
+    and documented as an intentional INDEPENDENT BATCH, not one transaction
+    spanning every diffed document (unrelated documents — e.g. a bulk archive
+    across many different customers — should not be forced into one
+    transaction for no correctness benefit); every write in it is naturally
+    idempotent, so a partial failure is always safely resumable.
+  Gates: `npm test` 130/130, `npm run test:rules` 133/133 (+8 new `pendingSales`
+  rules scenarios), lint 0, build ✓. One `firestore.rules` addition
+  (`pendingSales` — new collection, scoped to its own creator; every other
+  collection unchanged).
 
 ## Scale — before large datasets
 

@@ -1056,6 +1056,38 @@ async function main() {
     }
 
     // =========================================================================
+    // PHASE 8B (PH8-05) — pendingSales: durable single-document offline
+    // Quick Sell intent. Scoped strictly to its own creator: no one can
+    // forge, read, or delete (replay) another user's pending sale. Never
+    // updated — created once, deleted once (by its owner reconciling it, or
+    // discarding a definite rejection).
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      const aDb = testEnv.authenticatedContext('uid-A', { email: STAFF_EMAIL }).firestore();
+      const bDb = testEnv.authenticatedContext('uid-B', { email: STAFF_EMAIL }).firestore();
+      const pendingRef = (db) => doc(db, 'pendingSales/ps1');
+      const validPending = (createdBy) => ({
+        opId: 'ps1', partId: 'p1', partName: 'Brake Pad', want: 2,
+        pricePerUnit: 500, unitCost: 300, monthKey: '2026-01',
+        createdBy, createdByEmail: 'a@example.test', createdAt: Timestamp.now(),
+      });
+
+      ok('PH8-05: A can create their own pendingSales doc', await allow(setDoc(pendingRef(aDb), validPending('uid-A'))));
+      ok('PH8-05: create is denied if createdBy does not match the caller\'s own uid (cannot forge another user\'s pending sale)',
+        await deny(setDoc(doc(aDb, 'pendingSales/ps2'), validPending('uid-B'))));
+      ok('PH8-05: create is denied without a valid partId (string) / want (positive int) shape',
+        await deny(setDoc(doc(aDb, 'pendingSales/ps3'), { ...validPending('uid-A'), want: 0 })));
+
+      ok('PH8-05: A (the owner) can read their own pendingSales doc', await allow(getDoc(pendingRef(aDb))));
+      ok('PH8-05: B (a different signed-in user) cannot read A\'s pendingSales doc', await deny(getDoc(pendingRef(bDb))));
+      ok('PH8-05: B cannot delete A\'s pendingSales doc (cannot replay/discard someone else\'s pending sale)', await deny(deleteDoc(pendingRef(bDb))));
+      ok('PH8-05: pendingSales is NEVER updated — even the owner\'s own update is denied (create once, delete once)',
+        await deny(updateDoc(pendingRef(aDb), { want: 3 })));
+      ok('PH8-05: A (the owner) can delete their own pendingSales doc once reconciled or discarded', await allow(deleteDoc(pendingRef(aDb))));
+    }
+
+    // =========================================================================
     // Deny-by-default fallback for any collection not explicitly listed.
     // =========================================================================
     await testEnv.clearFirestore();

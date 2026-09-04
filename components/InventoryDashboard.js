@@ -77,6 +77,7 @@ import {
   query,
   orderBy,
   limit,
+  where,
   increment,
   writeBatch,
   runTransaction,
@@ -90,7 +91,9 @@ import { getDemoData } from '../lib/demoData';
 import { LIMITS, TAB_KEYS, COLLECTIONS, STORAGE } from '../constants';
 import { SEMANTIC, SHELL_WIDTH_CLS, statusColor } from '../constants/ui';
 import { createStore } from '../services/persistenceStore';
-import { isConcurrencyError, revOf, CONC_DELETED } from '../lib/concurrency';
+import {
+  isConcurrencyError, revOf, CONC_DELETED, revState, conflictError,
+} from '../lib/concurrency';
 import { formatDocNo } from '../lib/docCounter';
 import { useEditLease } from '../hooks/useEditLease';
 import { useRecordSync } from '../hooks/useRecordSync';
@@ -6956,7 +6959,7 @@ function invTotals(iv) {
   // PRE-discount figure while the invoice's real (totalsOf-derived) grand total, and
   // the amount actually collected, were both the post-discount figure. That made
   // invTotals().balance appear permanently > 0 even on a fully-paid invoice.
-  // runInvoiceTransaction() (the sole gate for stock/sales/services/audit updates)
+  // planInvoiceRealization/isRealized (the sole gate for stock/sales/rollup updates)
   // reads invTotals(), not totalsOf() — so isRealized() came back false, the engine's
   // own guard-rail logged "invoice says Paid but engine says NOT realized", and stock
   // was never deducted, no Sales/Services rows were written, and Reports/Analytics/
@@ -9576,15 +9579,20 @@ export default function InventoryDashboard() {
     );
     return unsub;
   }, [demoMode, syncNonce]);
+  // PHASE 8B: returns setCustomers' own persistence promise (previously
+  // discarded) so runPostCommitDerivedEffects can actually await/catch it
+  // instead of firing an unhandled rejection on failure. Already idempotent —
+  // a full recompute over `allInvoices`, not an increment — so re-running it
+  // (a retry, or the next invoice for this customer) always self-corrects.
   const syncCustomerTotals = (custId, allInvoices) => {
-    if (!custId) return;
+    if (!custId) return Promise.resolve();
     const mine = allInvoices.filter((iv) => iv.customerId === custId);
     // Use the shared invTotals (derives from lines, ignores stale grandTotal) so this
     // customer's outstanding always matches what Billing and Reports show. A local copy
     // here previously trusted the stored total first and could diverge.
     const paid = mine.reduce((s, iv) => s + invTotals(iv).paid, 0);
     const outstanding = mine.reduce((s, iv) => s + invTotals(iv).balance, 0);
-    setCustomers((prev) => prev.map((c) => (c.id === custId ? { ...c, totalSpent: paid, outstanding } : c)));
+    return setCustomers((prev) => prev.map((c) => (c.id === custId ? { ...c, totalSpent: paid, outstanding } : c)));
   };
   // Phase 3: automatic inventory sync from Billing. Each invoice remembers the
   // net part quantities it consumed (by partId). On save we apply the DELTA vs.
@@ -9846,16 +9854,35 @@ export default function InventoryDashboard() {
   // "vehicle history" means stamping the serviced vehicle with its last service date,
   // the invoice that did it, and a running lifetime spend. Billing never touched this
   // before, so a vehicle's service record stayed empty no matter how much work it had.
+  // PHASE 8B: returns setCustomers' own persistence promise (previously
+  // discarded) so runPostCommitDerivedEffects can actually await/catch it.
+  // Also now IDEMPOTENT: buildVehicleHistoryUpdate unconditionally prepends a
+  // history entry and increments totalSpend/serviceCount, so re-applying the
+  // SAME invoice's "became Paid" transition twice (e.g. a retry after a lost
+  // ack, or runPostCommitDerivedEffects being awaited a second time) used to
+  // double-count. Skip a vehicle whose most recent entry already carries this
+  // exact invoice number — a genuinely later invoice always has a different
+  // invNo, so this never suppresses a real, separate service visit.
   const touchVehicleHistory = (iv) => {
     const reg = String(iv.regNo || '').trim().toUpperCase();
     const label = String(iv.vehicle || '').trim();
-    if (!reg && !label) return;
+    if (!reg && !label) return Promise.resolve();
+    // Pre-check against the CURRENT ref (read-only) so an already-applied
+    // invoice skips setCustomers entirely — no pointless re-render/diff.
+    const already = customersRef.current.some((c) => {
+      if (iv.customerId && c.id !== iv.customerId) return false;
+      const vs = c.vehicles || [];
+      const idx = findVehicleIndex(vs, { reg, label });
+      return idx !== -1 && vs[idx].lastInvoiceNo && iv.invNo && vs[idx].lastInvoiceNo === iv.invNo;
+    });
+    if (already) return Promise.resolve();
     const spend = invTotals(iv).grand;
-    setCustomers((prev) => prev.map((c) => {
+    return setCustomers((prev) => prev.map((c) => {
       if (iv.customerId && c.id !== iv.customerId) return c;
       const vs = c.vehicles || [];
       const idx = findVehicleIndex(vs, { reg, label });
       if (idx === -1) return c;
+      if (vs[idx].lastInvoiceNo && iv.invNo && vs[idx].lastInvoiceNo === iv.invNo) return c; // already applied
       const updated = buildVehicleHistoryUpdate(vs[idx], {
         invoiceNo: iv.invNo || '', date: iv.date, amount: spend, odometer: iv.odometer || null,
         maxHistory: LIMITS.MAX_VEHICLE_HISTORY, // keep the vehicle doc bounded
@@ -9866,58 +9893,190 @@ export default function InventoryDashboard() {
   };
 
   // =====================================================================
-  //  THE TRANSACTION ENGINE
-  //  One function. Every module downstream of Billing is updated from here,
-  //  from the SAME source invoice, in one pass. Nothing else in the app is
-  //  allowed to mutate stock or the ledgers off the back of an invoice.
+  //  THE TRANSACTION ENGINE — PHASE 8B (PH8-01/PH8-01b/PH8-01c)
   //
-  //  Two rules make it safe:
+  //  Phase 8 discovery found this engine's stock/sales/rollup effects were
+  //  fire-and-forget relative to the invoice/payment write that triggered them
+  //  — an invoice could show Paid (or be deleted) while stock, the sales
+  //  ledger, or salesRollups silently never landed. Phase 8B closes that by
+  //  splitting the engine into two phases:
   //
-  //  1. NO SIDE EFFECTS INSIDE A setState UPDATER.
-  //     The previous version ran applyStockDelta() and the ledger writes inside
-  //     setInvoicesRaw((prev) => ...). React may invoke an updater more than once
-  //     (StrictMode double-invoke, re-render replays) — which would DOUBLE-DEDUCT
-  //     stock and write the sale twice. Updaters must be pure. So we read prior
-  //     state from a ref, run the effects once, then commit state.
+  //  PHASE A — planInvoiceRealization() + applyRealizationPlanInTx(): a PURE
+  //  planner (no I/O) and a WRITER that only ever runs INSIDE the same
+  //  top-level Firestore transaction as the invoice/payment write itself
+  //  (createInvoiceTransactional / editInvoiceTransactional /
+  //  collectInvoicePayment / deleteInvoiceTransactional, below). Invoice
+  //  financial state, stock, the sales ledger, and salesRollups therefore
+  //  commit together or not at all — never partially. NEVER call
+  //  runTransaction from inside applyRealizationPlanInTx — it only receives
+  //  an already-open `tx` and issues tx.set/tx.update on it.
   //
-  //  2. DIFF-BASED, therefore IDEMPOTENT.
-  //     We always diff prior->next on REALIZED (paid) values. Saving the same paid
-  //     invoice twice produces a zero delta, so nothing moves. Un-paying, refunding,
-  //     cancelling or deleting produces the exact inverse delta, so stock and the
-  //     ledgers unwind cleanly. There is no "already applied?" flag to get wrong.
+  //  PHASE B — runPostCommitDerivedEffects(): customer totals and vehicle
+  //  history are DERIVED, non-authoritative data (Phase 8 report §17/§31) —
+  //  folding a full customer-totals recompute or a vehicle-history append
+  //  into the SAME transaction as every invoice write would make that
+  //  transaction touch documents unrelated to the invoice/stock/ledger
+  //  invariant and would not improve correctness, so per the Phase 8B brief's
+  //  explicit allowance they stay outside it. What changes: this is no longer
+  //  a bare fire-and-forget `.catch(console.error)` (or, for vehicle history,
+  //  not even that) — it is AWAITED by every caller, its failure is reported
+  //  (not swallowed as an unhandled rejection), and BOTH effects are
+  //  idempotent so a later invoice for the same customer/vehicle self-heals
+  //  any drift: syncCustomerTotals is already a full recompute over that
+  //  customer's current invoices (recomputing twice yields the same answer),
+  //  and touchVehicleHistory below is now guarded so re-applying the SAME
+  //  invoice's "became paid" transition is a no-op instead of double-counting
+  //  totalSpend/serviceCount or duplicating a history entry.
   // =====================================================================
-  const runInvoiceTransaction = (prior, next, action) => {
-    const target = next || prior;
-    if (!target) return;
-    const gate = { computed: invTotals(next || {}), realizedBefore: isRealized(prior), realizedNow: isRealized(next) };
-    txn(4, 'runInvoiceTransaction', {
-      invNo: target.invNo, action,
-      statusOnObject: next?.status,
-      engineComputedGrand: gate.computed.grand,
-      engineComputedPaid: gate.computed.paid,
-      engineBalance: gate.computed.balance,
-      REALIZED: gate.realizedNow,
-      willRunEngine: gate.realizedNow !== gate.realizedBefore || gate.realizedNow,
+
+  /**
+   * PURE. Computes the realization delta between two invoice states: which
+   * parts' stock must move, which sales/services ledger rows must be written,
+   * and which monthly salesRollups deltas must apply. No Firestore access —
+   * safe to call any number of times, including inside a transaction retry.
+   *
+   * DIFF-BASED, therefore IDEMPOTENT: always diffs prior->next on REALIZED
+   * (paid) values, never applies an absolute amount. Saving the same paid
+   * invoice twice produces a zero delta, so nothing moves. Un-paying,
+   * refunding, cancelling, or deleting produces the exact inverse delta, so
+   * stock and the ledgers unwind cleanly. There is no "already applied?" flag
+   * to get wrong.
+   */
+  const planInvoiceRealization = (prior, next) => {
+    // --- stock: realized qty diff (parts leave the shelf only when paid)
+    const oldQ = realizedPartQtys(prior);
+    const newQ = realizedPartQtys(next);
+    const stockDeltas = {};
+    new Set([...Object.keys(oldQ), ...Object.keys(newQ)]).forEach((id) => {
+      const d = (oldQ[id] || 0) - (newQ[id] || 0);
+      if (d !== 0) stockDeltas[id] = d;
     });
-    if (!gate.realizedNow && next?.status === 'Paid') {
-      console.error('%c[TXN] STOP — invoice says Paid but engine says NOT realized. Nothing downstream will update.', 'color:#f87171;font-weight:bold', gate.computed);
-    }
 
-    // GUARD-RAIL. The worst failure mode this app had was the engine deciding an
-    // invoice wasn't "realized" and doing nothing — silently. The invoice showed as
-    // Paid while inventory, sales, services and every report stayed frozen, with no
-    // error anywhere. If an invoice claims to be Paid but the engine disagrees, that
-    // is a bug, and it must be visible instead of quietly losing the transaction.
-    if (next && next.status === 'Paid' && !isRealized(next)) {
-      const t = invTotals(next);
-      console.error(
-        '[TRANSACTION ENGINE] Invoice says Paid but is not realized — downstream modules ' +
-        'would NOT update. This is a bug, not a no-op.',
-        { invNo: next.invNo, computedGrand: t.grand, paid: t.paid, balance: t.balance, lines: (next.lines || []).length },
-      );
-    }
+    // --- sales/services ledger + monthly rollup: realized revenue diff.
+    // Mirrors the pre-Phase-8B recordInvoiceSalesDelta line-for-line — same
+    // math, now returning data instead of performing writes.
+    const before = invoiceRevenueLines(realizedRevenue(prior));
+    const after = invoiceRevenueLines(realizedRevenue(next));
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    const monthAgg = {};
+    const salesLines = [];
+    const ctx = next || prior || {};
+    const paidTotal = (ctx.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0) || Number(ctx.paid) || 0;
+    const payModes = (ctx.payments || []).map((p) => p.mode).filter(Boolean).join(', ') || ctx.payMode || '';
+    const src = next?.invNo || prior?.invNo || '';
+    keys.forEach((key) => {
+      const b = before[key] || { qty: 0, revenue: 0 };
+      const a = after[key] || { qty: 0, revenue: 0, name: '', category: 'Miscellaneous', partId: null, kind: 'Part', gst: 0, disc: 0, technician: '' };
+      const dQty = a.qty - b.qty;
+      const dRev = a.revenue - b.revenue;
+      if (dQty === 0 && Math.abs(dRev) < 0.005) return;
+      const meta = after[key] || before[key];
+      const isPart = !!meta.partId;
+      const part = isPart ? inventory.find((p) => p.id === meta.partId) : null;
+      const unitCost = isPart ? (part?.purchasePrice || 0) : 0;
+      const dCost = dQty * unitCost;
+      const listPrice = toNum(meta.listPrice) || (isPart ? toNum(part?.defaultSellingPrice || part?.sellingPrice) : 0);
+      const soldUnit = dQty !== 0 ? dRev / dQty : 0;
+      const extraRevenue = (isPart && listPrice > 0) ? (soldUnit - listPrice) * dQty : 0;
+      salesLines.push({
+        partId: meta.partId || null,
+        name: (part?.name) || meta.name || '',
+        sku: part?.sku || '',
+        category: meta.category || 'Miscellaneous',
+        revenueType: meta.category || 'Miscellaneous',
+        isService: !isPart,
+        qty: dQty,
+        unitPrice: soldUnit,
+        listPrice,
+        extraRevenue,
+        unitCost,
+        revenue: dRev,
+        cost: dCost,
+        profit: dRev - dCost,
+        margin: dRev > 0 ? Math.round(((dRev - dCost) / dRev) * 1000) / 10 : 0,
+        partCategory: part?.category || '',
+        brands: part ? brandsOf(part) : [],
+        gst: meta.gst || 0,
+        discount: meta.disc || 0,
+        technician: meta.technician || '',
+        soldBy: user?.uid || null,
+        soldByEmail: user?.email || null,
+        source: 'invoice',
+        invoiceNo: src,
+        customer: ctx.customer || '',
+        customerId: ctx.customerId || '',
+        vehicle: ctx.vehicle || '',
+        regNo: ctx.regNo || '',
+        payModes,
+        paidAmount: paidTotal,
+        outstanding: Math.max(0, (Number(ctx.grandTotal) || 0) - paidTotal),
+      });
+      const now = new Date();
+      const mk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const m = monthAgg[mk] || { revenue: 0, cost: 0, profit: 0, units: 0, partsRev: 0, labourRev: 0, serviceRev: 0, outsideRev: 0 };
+      m.revenue += dRev; m.cost += dCost; m.profit += dRev - dCost; m.units += dQty;
+      const cat = meta.category;
+      if (cat === 'Parts') m.partsRev += dRev;
+      else if (cat === 'Labour') m.labourRev += dRev;
+      else if (cat === 'Service') m.serviceRev += dRev;
+      else if (cat === 'Outside Purchase') m.outsideRev += dRev;
+      monthAgg[mk] = m;
+    });
+    return { stockDeltas, salesLines, rollupDeltas: monthAgg };
+  };
 
-    // --- 1. INVENTORY: realized qty diff (parts leave the shelf only when paid)
+  /**
+   * Applies a planInvoiceRealization() plan's writes onto an ALREADY-OPEN
+   * Firestore transaction (`tx`). Never opens its own transaction — the
+   * caller's runTransaction is the one and only atomic boundary. Every doc
+   * ref used here is generated client-side (no reads), so this is safe to
+   * call after the caller's own reads inside the same transaction.
+   */
+  const applyRealizationPlanInTx = (tx, plan) => {
+    Object.entries(plan.stockDeltas).forEach(([partId, delta]) => {
+      tx.update(doc(db, COLLECTIONS.PARTS, partId), { stock: increment(delta), updatedAt: serverTimestamp() });
+    });
+    plan.salesLines.forEach((record) => {
+      tx.set(doc(collection(db, COLLECTIONS.SALES)), { ...record, createdAt: serverTimestamp() });
+    });
+    Object.entries(plan.rollupDeltas).forEach(([mk, m]) => {
+      tx.set(doc(db, 'salesRollups', mk), {
+        month: mk,
+        revenue: increment(m.revenue),
+        cost: increment(m.cost),
+        profit: increment(m.profit),
+        units: increment(m.units),
+        partsRevenue: increment(m.partsRev),
+        labourRevenue: increment(m.labourRev),
+        serviceRevenue: increment(m.serviceRev),
+        outsideRevenue: increment(m.outsideRev),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    });
+  };
+
+  // Local optimistic stock mirror for whatever a realization plan just
+  // committed atomically — separate from applyStockDelta (still used
+  // unchanged by BillingModule's onRestoreStock credit-note path), this ONLY
+  // updates React state; the actual write already happened inside the
+  // transaction above.
+  const applyPlanToLocalInventory = (plan) => {
+    const ids = Object.keys(plan.stockDeltas);
+    if (!ids.length) return;
+    const next = inventoryRef.current.map((p) => (ids.includes(p.id) ? { ...p, stock: (p.stock || 0) + plan.stockDeltas[p.id] } : p));
+    inventoryRef.current = next;
+    setInventory(next);
+  };
+
+  // DEMO MODE ONLY — demo has no Firestore, so there is nothing to make
+  // atomic (a single-threaded in-memory update cannot partially fail the way
+  // a network write can); this preserves the pre-Phase-8B transaction
+  // engine's stock+ledger behavior verbatim, via the same two functions
+  // (applyStockDelta / recordInvoiceSalesDelta) that already branch on
+  // demoMode internally. Never called for production — see
+  // createInvoiceTransactional / editInvoiceTransactional /
+  // collectInvoicePayment / deleteInvoiceTransactional below for that path.
+  const runInvoiceRealizationDemo = (prior, next) => {
     const oldQ = realizedPartQtys(prior);
     const newQ = realizedPartQtys(next);
     const delta = {};
@@ -9925,49 +10084,49 @@ export default function InventoryDashboard() {
       const d = (oldQ[id] || 0) - (newQ[id] || 0);
       if (d !== 0) delta[id] = d;
     });
-    // applyStockDelta also writes the Stock Out / movement history rows.
-    txn(5, 'Inventory delta', delta);
-    if (Object.keys(delta).length) { applyStockDelta(delta); txn(8, 'Stock Out rows written (derived from sales+adjustments)', Object.keys(delta).length); }
-    else txn(5, 'Inventory delta EMPTY — no parts to move (check line.partId && line.kind==="Part")');
-
-    // --- 2. SALES + SERVICES ledger: realized revenue diff. One writer, which
-    //        splits Parts -> Sales and Labour/Service -> Services by lineCategory.
-    txn(6, 'Ledger diff -> Sales + Services', {
-      priorLines: Object.keys(invoiceRevenueLines(realizedRevenue(prior))).length,
-      nextLines: Object.keys(invoiceRevenueLines(realizedRevenue(next))).length,
-    });
+    if (Object.keys(delta).length) applyStockDelta(delta);
     recordInvoiceSalesDelta(realizedRevenue(prior), realizedRevenue(next));
+  };
 
-    // --- 3. AUDIT LOG: an invoice moving money is an auditable event. This was
-    //        missing entirely — payments left no trace in the audit trail.
-    // One entry per persist/delete, picking the single most meaningful label for
-    // what happened — never both "Invoice Updated" and "Invoice Paid" for the same
-    // save, which would double-log the identical mutation.
+  /**
+   * PHASE B (post-commit, AWAITED, idempotent derived-data sync) — audit,
+   * customer totals, vehicle history. Called AFTER the authoritative
+   * transaction has already committed. Never throws to its caller: a
+   * derived-data hiccup must not make the UI claim the (already-successful)
+   * financial operation failed — it is reported distinctly instead.
+   */
+  const runPostCommitDerivedEffects = async (prior, next, action, allInvoicesForTotals) => {
+    const target = next || prior;
+    if (!target) return;
     const becamePaid = !isRealized(prior) && isRealized(next);
     const unPaid = isRealized(prior) && !isRealized(next);
-    {
-      const t = { ...target };
-      const auditAction = action === 'delete' ? 'Invoice Deleted'
-        : becamePaid ? 'Invoice Paid'
-        : unPaid ? `Invoice ${next?.status || 'Reversed'}`
-        : !prior ? 'Invoice Created'
-        : 'Invoice Updated';
-      pushAudit({
-        action: auditAction,
-        entity: 'Invoice',
-        entityId: t.invNo || t.id,
-        detail: `${t.invNo || ''} · ${t.customer || ''}${t.vehicle ? ` · ${t.vehicle}` : ''} · ${formatINR(Number(t.grandTotal) || 0)}`,
-      });
+    const auditAction = action === 'delete' ? 'Invoice Deleted'
+      : becamePaid ? 'Invoice Paid'
+      : unPaid ? `Invoice ${next?.status || 'Reversed'}`
+      : !prior ? 'Invoice Created'
+      : 'Invoice Updated';
+    pushAudit({
+      action: auditAction,
+      entity: 'Invoice',
+      entityId: target.invNo || target.id,
+      detail: `${target.invNo || ''} · ${target.customer || ''}${target.vehicle ? ` · ${target.vehicle}` : ''} · ${formatINR(Number(target.grandTotal) || 0)}`,
+    });
+    // touchVehicleHistory carries its own idempotency guard (skips a vehicle
+    // whose lastInvoiceNo already matches this invoice — see its own comment);
+    // syncCustomerTotals is a full recompute, inherently idempotent. Both now
+    // return their real persistence promise (store.syncAll under setCustomers
+    // handles demo vs production transparently), so both are safe to await
+    // uniformly here regardless of mode.
+    const jobs = [];
+    if (becamePaid && (target.regNo || target.vehicle)) jobs.push(touchVehicleHistory(target));
+    if (target.customerId && allInvoicesForTotals) jobs.push(syncCustomerTotals(target.customerId, allInvoicesForTotals));
+    if (!jobs.length) return;
+    const results = await Promise.allSettled(jobs);
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length) {
+      console.error('[TXN] Derived-data sync (customer totals / vehicle history) failed — will self-correct on the next invoice for this customer/vehicle.', failed.map((f) => f.reason));
+      toast.error('Invoice saved. Customer totals or vehicle history may take a moment to refresh.');
     }
-
-    // --- 4. VEHICLE HISTORY: record the service against the vehicle so the
-    //        vehicle's "last serviced / total spend" is real. Was never updated.
-    if (becamePaid && (target.regNo || target.vehicle)) {
-      touchVehicleHistory(target);
-    }
-    // Customer history + Dashboard/Reports/Analytics all derive from `invoices`
-    // and `sales`, which are updated above — so they refresh with no extra work
-    // and with no separate dataset to drift out of sync.
   };
 
   // C-1 fix: async + awaits the write before syncing customer totals, and propagates
@@ -9975,6 +10134,51 @@ export default function InventoryDashboard() {
   // regardless of outcome. The optimistic local commit (setInvoicesRaw) is unchanged —
   // only the "did this actually finish" signal and the downstream completion step
   // (syncCustomerTotals) are now gated on the real write.
+  // PHASE 8B (PH8-01) — the invoice document itself, its realized stock, its
+  // sales-ledger rows, and its salesRollups delta now commit inside ONE
+  // Firestore transaction. Idempotent the same way createInvoiceTransactional's
+  // sibling functions already are elsewhere in this file: read the invoice
+  // doc FIRST — if it already exists, this create was already applied (a
+  // retry after a lost ack), so write nothing and hand back the server state.
+  const createInvoiceTransactional = async (target) => {
+    const invRef = doc(db, COLLECTIONS.INVOICES, target.id);
+    return withTimeout(runTransaction(db, async (tx) => {
+      const snap = await tx.get(invRef);
+      if (snap.exists()) {
+        return { alreadyApplied: true, invoice: { ...snap.data(), id: target.id }, plan: null };
+      }
+      const stamped = { ...target, _rev: 0 };
+      const plan = planInvoiceRealization(null, stamped);
+      tx.set(invRef, { ...stamped, createdAt: target.createdAt || serverTimestamp(), updatedAt: serverTimestamp() });
+      applyRealizationPlanInTx(tx, plan);
+      return { alreadyApplied: false, invoice: stamped, plan };
+    }), TX_TIMEOUT_MS, 'This invoice');
+  };
+
+  // PHASE 8B (PH8-01) — an EDIT of an existing invoice: the Phase 1a `_rev`
+  // guard, the invoice field write, AND the realization delta (stock/sales/
+  // rollup) now all happen inside the SAME transaction — a rejected stale
+  // save moves no stock and posts no ledger row (unchanged), and a save that
+  // DOES commit can no longer leave its cascade to a separate, un-awaited
+  // step (fixed).
+  const editInvoiceTransactional = async (target, expectedRev) => {
+    const invRef = doc(db, COLLECTIONS.INVOICES, target.id);
+    return withTimeout(runTransaction(db, async (tx) => {
+      const snap = await tx.get(invRef);
+      const state = revState(snap.exists() ? snap.data() : null, expectedRev);
+      const err = conflictError(state, 'This invoice');
+      if (err) throw err;
+      const server = snap.data();
+      const prior = { ...server, id: target.id };
+      const { id: _dropId, _rev: _dropRev, ...clean } = target;
+      const merged = { ...clean, _rev: state.nextRev };
+      const plan = planInvoiceRealization(prior, merged);
+      tx.set(invRef, { ...clean, _rev: state.nextRev, updatedAt: serverTimestamp() }, { merge: true });
+      applyRealizationPlanInTx(tx, plan);
+      return { merged: { ...server, ...clean, _rev: state.nextRev }, prior, plan };
+    }), TX_TIMEOUT_MS, 'This invoice');
+  };
+
   const persistInvoice = async (iv) => {
     txn(3, 'persistInvoice called', { invNo: iv.invNo, status: iv.status, lines: (iv.lines || []).length, payments: (iv.payments || []).length, demoMode });
 
@@ -9984,7 +10188,12 @@ export default function InventoryDashboard() {
     // Firestore transaction on counters/<sequence> (retry-safe, never-decreasing)
     // and hands out exactly one value, so two terminals billing at once can never
     // get the same number. If the write below then fails the number is SKIPPED
-    // (a legal gap under GST Rule 46(b)), never reused for another document.
+    // (a legal gap under GST Rule 46(b)), never reused for another document. This
+    // is a SEPARATE transaction from the invoice write below by necessity — Phase
+    // 8B does not nest it inside the invoice transaction (see PH8-01's own note in
+    // the Phase 8B report: a consumed number is a documented gap, not a partial
+    // financial transaction, as long as it can never leave stock/sales/rollup
+    // half-applied — the invoice transaction below guarantees exactly that).
     let target = iv;
     if (iv.__allocSeq) {
       const { __allocSeq, __allocPrefix, __allocSeed, ...rest } = iv;
@@ -10020,61 +10229,76 @@ export default function InventoryDashboard() {
     // Read prior from a ref, NOT from inside the updater, so the effects below run
     // exactly once regardless of how many times React re-invokes the updater.
     const prior = invoicesRef.current.find((x) => x.id === target.id) || null;
-    // Phase 1a — editing an EXISTING invoice goes through the revision-guarded
-    // transaction FIRST. The realized stock/ledger cascade and the optimistic
-    // state update only run once that write is confirmed, so a rejected stale
-    // save moves no stock and posts no ledger row. (The payment path,
-    // collectInvoicePayment, has its own transaction and is unchanged here.)
+
+    // PHASE 8B — production, EXISTING invoice: one atomic transaction (Phase 1a
+    // `_rev` guard + invoice write + realization delta).
     if (prior && !demoMode) {
-      let fresh;
+      let result;
       warnIfOffline('this invoice'); // Phase 6b (PH6-02) — non-blocking heads-up only
       try {
-        // Phase 6b (PH6-03) — guardedSet itself bounds the wait (see
-        // repositories/firestoreRepository.js); this just needs to react to it.
-        fresh = await store.saveGuarded(COLLECTIONS.INVOICES, target, revOf(target), { label: 'This invoice' });
+        result = await editInvoiceTransactional(target, revOf(target));
       } catch (err) {
         // Phase 6b — this used to re-throw a non-concurrency failure with NO
-        // toast at all (the comment here used to say "BillingModule's onSave
-        // wrapper" shows one — it doesn't; store.saveGuarded never toasts either).
-        // The user saw the editor just... not close, with zero explanation. Say
-        // what actually happened before handing off, same as every other guarded
-        // save in this file already does.
+        // toast at all. Say what actually happened before handing off, same as
+        // every other guarded save in this file already does.
         if (isConcurrencyError(err)) concToast(err, 'invoice');
         else toast.error(isTxTimeout(err)
           ? timeoutMessage('This invoice')
           : 'Couldn’t confirm the invoice saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.');
         throw err; // BillingModule's onSave wrapper catches and keeps the editor open
       }
-      const merged = { ...target, _rev: fresh._rev };
-      runInvoiceTransaction(prior, merged, 'persist');
+      const { merged, prior: serverPrior, plan } = result;
+      applyPlanToLocalInventory(plan);
       const prevList = invoicesRef.current;
       const nextList = [...prevList.filter((x) => x.id !== target.id), merged];
       invoicesRef.current = nextList;
       setInvoicesRaw(nextList);
-      syncCustomerTotals(target.customerId, nextList);
+      await runPostCommitDerivedEffects(serverPrior, merged, 'persist', nextList);
       return merged;
     }
-    runInvoiceTransaction(prior, target, 'persist');
+
+    // PHASE 8B — production, NEW invoice: one atomic transaction (invoice create +
+    // realization delta), instead of the pre-Phase-8B ordering where the fire-and-
+    // forget cascade could begin — and even land — BEFORE the invoice document
+    // itself was written.
+    if (!demoMode) {
+      warnIfOffline('this invoice'); // Phase 6b (PH6-02) — non-blocking heads-up only
+      let result;
+      try {
+        result = await createInvoiceTransactional(target);
+      } catch (err) {
+        toast.error(isTxTimeout(err)
+          ? timeoutMessage('This invoice')
+          : 'Couldn’t confirm the invoice saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.');
+        throw err;
+      }
+      const { invoice, plan } = result;
+      if (plan) applyPlanToLocalInventory(plan);
+      const prev = invoicesRef.current;
+      const next = [...prev.filter((x) => x.id !== target.id), invoice];
+      invoicesRef.current = next;
+      setInvoicesRaw(next);
+      await runPostCommitDerivedEffects(prior, invoice, 'persist', next);
+      return invoice;
+    }
+
+    // DEMO MODE — unchanged: single in-memory client, no Firestore, no
+    // partial-failure surface to close. See runInvoiceRealizationDemo's own
+    // comment.
+    runInvoiceRealizationDemo(prior, target);
     // E2E workflow QA fix: `prev` MUST be captured before invoicesRef.current is
     // overwritten. writeInvoices() used to re-read invoicesRef.current internally as
     // its "prev" arg — but by then the ref already held `next` (set two lines below,
     // synchronously, before the write "started"), so persistDocsDiff was diffing
     // `next` against itself. Every comparison came back equal, `ops` stayed empty, and
     // persistenceStore's syncAll() correctly-but-silently took its "nothing changed ->
-    // write nothing" path. The result: the UI showed a full success toast and updated
-    // KPIs (both driven by the local optimistic state), but NO Firestore write ever
-    // happened — confirmed via the IndexedDB persistence cache (0 invoice docs, empty
-    // mutation queue) and reproduced by reloading the page, which re-hydrated from the
-    // live onSnapshot listener and showed the "saved" invoice had never existed.
-    // Fix mirrors the already-correct setCustomers() pattern just above: capture `prev`
-    // BEFORE mutating the ref, and pass it explicitly to the diff instead of letting
-    // the write path re-read a ref that's already moved on.
+    // write nothing" path.
     const prev = invoicesRef.current;
     const next = [...prev.filter((x) => x.id !== target.id), target];
     invoicesRef.current = next;          // keep the ref authoritative immediately
     setInvoicesRaw(next);                // pure commit
     await persistDocsDiff(COLLECTIONS.INVOICES, prev, next);
-    syncCustomerTotals(target.customerId, next);
+    await runPostCommitDerivedEffects(prior, target, 'persist', next);
     return target;
   };
 
@@ -10089,23 +10313,28 @@ export default function InventoryDashboard() {
   // appends to the server's current `payments`, so two legitimate concurrent payments
   // are both preserved and paid/balance/status are recomputed from server truth.
   //
-  // Phase 3b (CWF-01) — the realized stock/ledger/audit cascade
-  // (runInvoiceTransaction) is diff-based, so it is only idempotent if `prior` is
-  // the invoice's TRUE pre-payment state. It used to read `prior` from
-  // `invoicesRef.current` — stale React state — so two cashiers both closing the
-  // balance at once each saw `prior = unpaid`, `fresh = Paid`, and BOTH ran the
-  // full realization (double stock deduction, double revenue). The transaction now
+  // Phase 3b (CWF-01) — the realized stock/ledger/audit cascade is diff-based, so it
+  // is only idempotent if `prior` is the invoice's TRUE pre-payment state. It used to
+  // read `prior` from `invoicesRef.current` — stale React state — so two cashiers both
+  // closing the balance at once each saw `prior = unpaid`, `fresh = Paid`, and BOTH ran
+  // the full realization (double stock deduction, double revenue). The transaction
   // returns its OWN server pre-image (`serverPrior`, read before the write); the
   // cascade diffs against that. Firestore serialises the two attempts, so the
   // second payment's committed attempt re-reads an already-Paid invoice → its
   // `serverPrior` is Paid → `Paid -> Paid` is a zero delta → realization runs
   // exactly once, on whichever payment actually crossed unpaid -> Paid.
-  // Demo mode has one client and no server — it keeps the existing in-memory path.
+  //
+  // PHASE 8B (PH8-01b) — that realization delta (stock/sales/rollup) is now applied
+  // INSIDE this same transaction (planInvoiceRealization + applyRealizationPlanInTx),
+  // not as a separate un-awaited call afterward — an invoice can no longer show Paid
+  // while those effects are silently missing. Demo mode has one client and no
+  // server — it keeps the existing in-memory path (never routed through this
+  // function; BillingModule receives `onCollectPayment={demoMode ? undefined : ...}`).
   const collectInvoicePayment = async (invoiceId, pay) => {
     warnIfOffline('this payment'); // Phase 6b (PH6-02) — non-blocking heads-up only
     const invRef = doc(db, COLLECTIONS.INVOICES, invoiceId);
     // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
-    const { serverPrior, fresh, alreadyApplied } = await withTimeout(runTransaction(db, async (tx) => {
+    const { serverPrior, fresh, alreadyApplied, plan } = await withTimeout(runTransaction(db, async (tx) => {
       const snap = await tx.get(invRef);
       if (!snap.exists()) {
         const err = new Error('This invoice was deleted by another user. Reload before collecting payment.');
@@ -10129,7 +10358,7 @@ export default function InventoryDashboard() {
       if (pay && pay.id && priorPayments.some((p) => p && p.id === pay.id)) {
         const t0 = invTotals({ ...data, id: invoiceId });
         const image = { ...data, id: invoiceId, paid: t0.paid, grandTotal: t0.grand, balance: t0.balance, gstAmount: t0.gst, status: invStatus({ ...data, id: invoiceId }) };
-        return { serverPrior: image, fresh: image, alreadyApplied: true };
+        return { serverPrior: image, fresh: image, alreadyApplied: true, plan: null };
       }
       // Authoritative pre-payment image — captured from the transaction's own read,
       // BEFORE any mutation. This, not client state, is what the cascade diffs against.
@@ -10142,6 +10371,8 @@ export default function InventoryDashboard() {
       // when the payment landed is correctly rejected as stale on save (otherwise
       // its stale `payments` copy could clobber this one).
       const nextRev = revOf(data) + 1;
+      const fresh = { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status, _rev: nextRev };
+      const plan = planInvoiceRealization(serverPrior, fresh);
       tx.update(invRef, {
         payments,
         paid: t.paid,
@@ -10154,45 +10385,55 @@ export default function InventoryDashboard() {
           { at: Date.now(), action: `Payment ${pay.amount} (${pay.mode})`, by: user?.email || 'Staff' }],
         updatedAt: serverTimestamp(),
       });
-      return {
-        serverPrior,
-        fresh: { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status, _rev: nextRev },
-      };
+      applyRealizationPlanInTx(tx, plan);
+      return { serverPrior, fresh, alreadyApplied: false, plan };
     }), TX_TIMEOUT_MS, 'This payment');
     // Duplicate delivery — nothing changed on the server, so run nothing downstream.
     if (alreadyApplied) return fresh;
-    // Money is committed atomically. Now run the (idempotent, diff-based) realized
-    // stock + sales/services ledger + audit cascade — diffing the transaction's OWN
-    // server pre-image against `fresh`, never client state. Not re-persisting the
-    // invoice doc here (that would re-open the payment race).
-    runInvoiceTransaction(serverPrior, fresh, 'persist');
+    // Money, stock, the sales ledger, and salesRollups all committed atomically above.
+    applyPlanToLocalInventory(plan);
     const next = [...invoicesRef.current.filter((x) => x.id !== invoiceId), fresh];
     invoicesRef.current = next;
     setInvoicesRaw(next);
-    syncCustomerTotals(fresh.customerId, next);
+    await runPostCommitDerivedEffects(serverPrior, fresh, 'persist', next);
     return fresh;
+  };
+
+  // PHASE 8B (PH8-01c) — invoice deletion AND its reversal (stock restored,
+  // a compensating negative sales row + salesRollups delta) now commit inside
+  // ONE transaction — a delete can no longer succeed while its reversal
+  // silently fails, or vice versa. The compensating-negative-row pattern for
+  // the sales ledger is unchanged (append-only, per the established design);
+  // only the atomicity boundary moved.
+  const deleteInvoiceTransactional = async (iv) => {
+    const invRef = doc(db, COLLECTIONS.INVOICES, iv.id);
+    return withTimeout(runTransaction(db, async (tx) => {
+      const snap = await tx.get(invRef);
+      if (!snap.exists()) return { alreadyDeleted: true, prior: null, plan: null }; // already gone — nothing to unwind or delete
+      const prior = { ...snap.data(), id: iv.id };
+      const plan = planInvoiceRealization(prior, null);
+      tx.delete(invRef);
+      applyRealizationPlanInTx(tx, plan);
+      return { alreadyDeleted: false, prior, plan };
+    }), TX_TIMEOUT_MS, 'This delete');
   };
 
   const deleteInvoice = async (iv) => {
     // Phase 3b (CWF-01) — same root cause as the payment path: the unwind cascade
-    // (stock back, ledgers reversed) is diff-based and must see the invoice's TRUE
-    // server state, not stale local state. In production, read + delete atomically
-    // in a transaction and unwind against the transaction's own pre-image, so a
-    // payment that landed on this invoice from another client just before the delete
-    // is still correctly reversed. Demo has one client — local state IS the truth.
+    // must see the invoice's TRUE server state, not stale local state. In
+    // production, read + delete + unwind atomically in one transaction so a
+    // payment that landed on this invoice from another client just before the
+    // delete is still correctly reversed. Demo has one client — local state IS
+    // the truth, and has no Firestore transaction to run at all.
     let serverPrior = null;
+    let plan = null;
     if (!demoMode) {
       warnIfOffline('this delete'); // Phase 6b (PH6-02) — non-blocking heads-up only
-      const invRef = doc(db, COLLECTIONS.INVOICES, iv.id);
       try {
         // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
-        serverPrior = await withTimeout(runTransaction(db, async (tx) => {
-          const snap = await tx.get(invRef);
-          if (!snap.exists()) return null; // already gone — nothing to unwind or delete
-          const data = { ...snap.data(), id: iv.id };
-          tx.delete(invRef);
-          return data;
-        }), TX_TIMEOUT_MS, 'This invoice');
+        const result = await deleteInvoiceTransactional(iv);
+        serverPrior = result.prior;
+        plan = result.plan;
       } catch (err) {
         console.error('Invoice delete failed:', err);
         // A delete is naturally idempotent — the retry's own `!snap.exists()` check
@@ -10204,16 +10445,17 @@ export default function InventoryDashboard() {
           : 'Couldn’t confirm the invoice was deleted. Check the invoice list, or press Delete again (a repeat is safe).');
         throw err;
       }
+      if (plan) applyPlanToLocalInventory(plan);
     }
     const prior = demoMode ? (invoicesRef.current.find((x) => x.id === iv.id) || iv) : serverPrior;
-    if (prior) runInvoiceTransaction(prior, null, 'delete');
+    if (demoMode && prior) runInvoiceRealizationDemo(prior, null);
     // Same prev-before-mutation fix as persistInvoice above.
     const prev = invoicesRef.current;
     const next = prev.filter((x) => x.id !== iv.id);
     invoicesRef.current = next;
     setInvoicesRaw(next);
     if (demoMode) await persistDocsDiff(COLLECTIONS.INVOICES, prev, next);
-    syncCustomerTotals(iv.customerId, next);
+    await runPostCommitDerivedEffects(prior, null, 'delete', next);
   };
   const writeJobCardDraft = (c, token) => {
     const v = primaryVehicle(c);
@@ -10255,14 +10497,23 @@ export default function InventoryDashboard() {
   // part records the applied reservation-op ids in a bounded `appliedReserveIds`
   // list, read inside a transaction BEFORE the increment. So a queued replay of
   // the write plus a user retry apply `reserved += delta` exactly once.
+  //
+  // PHASE 8B (PH8-02) — production used to run ONE INDEPENDENT transaction PER
+  // PART (Promise.allSettled over N separate runTransaction calls): a job card
+  // reserving 3 parts could end with 2 committed and 1 not if that one part's
+  // transaction failed. All N parts now read+validate+write inside a SINGLE
+  // transaction — reads happen for every part FIRST (a Promise.all of tx.get,
+  // satisfying Firestore's read-before-write rule), then every write is issued,
+  // so the whole reservation/release is now all-or-nothing across every part on
+  // the card. The `appliedReserveIds` idempotency marker per part is unchanged.
   const applyReserveDelta = (deltaMap, reserveOpId = null) => {
     const ids = Object.keys(deltaMap).filter((id) => deltaMap[id] !== 0);
     if (!ids.length) return Promise.resolve();
-    const prev = inventoryRef.current;
-    const next = prev.map((p) => (ids.includes(p.id) ? { ...p, reserved: Math.max(0, (p.reserved || 0) + deltaMap[p.id]) } : p));
-    inventoryRef.current = next;
-    setInventory(next);
     if (demoMode) {
+      const prev = inventoryRef.current;
+      const next = prev.map((p) => (ids.includes(p.id) ? { ...p, reserved: Math.max(0, (p.reserved || 0) + deltaMap[p.id]) } : p));
+      inventoryRef.current = next;
+      setInventory(next);
       // NOT a silent catch. If persistence fails (quota exceeded, storage blocked in
       // private mode), the stock change survives in memory but dies on reload — the
       // user must know, not silently lose the transaction.
@@ -10275,26 +10526,42 @@ export default function InventoryDashboard() {
       return Promise.resolve();
     }
     warnIfOffline('this reservation update'); // Phase 6b (PH6-02) — non-blocking heads-up only
-    // Phase 6b (PH6-03) — bound the UI wait per part; does not cancel any transaction.
-    return Promise.allSettled(ids.map((id) => withTimeout(runTransaction(db, async (tx) => {
-      const ref = doc(db, COLLECTIONS.PARTS, id);
-      const snap = await tx.get(ref);
-      if (!snap.exists()) return;
-      const applied = Array.isArray(snap.data().appliedReserveIds) ? snap.data().appliedReserveIds : [];
-      if (reserveOpId && applied.includes(reserveOpId)) return; // this reservation delta is already on the server
-      tx.update(ref, {
-        reserved: increment(deltaMap[id]),
-        ...(reserveOpId ? { appliedReserveIds: [...applied, reserveOpId].slice(-40) } : {}),
-        updatedAt: serverTimestamp(),
+    const refs = ids.map((id) => doc(db, COLLECTIONS.PARTS, id));
+    // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+    return withTimeout(runTransaction(db, async (tx) => {
+      // ALL READS FIRST — every affected part, before any write.
+      const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+      const decisions = snaps.map((snap) => {
+        if (!snap.exists()) return { skip: true };
+        const applied = Array.isArray(snap.data().appliedReserveIds) ? snap.data().appliedReserveIds : [];
+        if (reserveOpId && applied.includes(reserveOpId)) return { skip: true }; // already on the server
+        return { skip: false, applied };
       });
-    }), TX_TIMEOUT_MS, 'This reservation update')))
-      .then((results) => {
-        const failed = results.filter((r) => r.status === 'rejected');
-        if (failed.length) {
-          console.error(`[TXN] Reserved-stock sync failed for ${failed.length} of ${ids.length} part(s) — local reserved qty may not match Firestore.`, failed.map((f) => f.reason));
-          toast.error(`Reserved-stock update for ${failed.length} part${failed.length === 1 ? '' : 's'} may not have saved. Check your connection.`);
-          throw new Error(`applyReserveDelta: ${failed.length} of ${ids.length} writes failed`);
-        }
+      // ALL WRITES — atomic across every part on this card.
+      decisions.forEach((d, i) => {
+        if (d.skip) return;
+        tx.update(refs[i], {
+          reserved: increment(deltaMap[ids[i]]),
+          ...(reserveOpId ? { appliedReserveIds: [...d.applied, reserveOpId].slice(-40) } : {}),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      return { applied: decisions.map((d) => !d.skip) };
+    }), TX_TIMEOUT_MS, 'This reservation update')
+      .then(({ applied }) => {
+        // Mirror locally ONLY the parts the transaction actually wrote — after
+        // it committed, not before, so the UI never shows a reservation the
+        // server hasn't confirmed.
+        const wroteIds = ids.filter((id, i) => applied[i]);
+        if (!wroteIds.length) return;
+        const next = inventoryRef.current.map((p) => (wroteIds.includes(p.id) ? { ...p, reserved: Math.max(0, (p.reserved || 0) + deltaMap[p.id]) } : p));
+        inventoryRef.current = next;
+        setInventory(next);
+      })
+      .catch((err) => {
+        console.error('[TXN] Reserved-stock sync failed — no part\'s reserved count changed (the transaction is all-or-nothing).', err);
+        toast.error('Reserved-stock update did not save. Check your connection and try again — a repeat is safe.');
+        throw err;
       });
   };
   // C-1 fix: reads/writes jobCardsRef synchronously (same pattern persistInvoice already
@@ -11213,23 +11480,39 @@ export default function InventoryDashboard() {
       return; // demo: local state only, no Firestore
     }
     try {
-      await updateDoc(doc(db, COLLECTIONS.PARTS, partId), {
-        stock: safeStock,
-        updatedAt: serverTimestamp(),
-      });
       if (delta > 0 && partSnapshot) {
         // Phase 5b (PH5-05) — deterministic ledger doc id (part + the stock level
         // this nudge targets). A browser refresh + retyping the same target value
         // re-writes the SAME `restocks` row instead of adding a second one; the
         // stock field itself is already an absolute set, so it stays correct.
+        //
+        // PHASE 8B (global fire-and-forget audit) — the stock set and the restock
+        // ledger row used to be two independent writes, the second a bare
+        // `.catch(console.error)`: stock could change while the ledger row
+        // silently never landed. Both now commit inside one transaction — the
+        // idempotency read (has this qrId already been logged?) happens first,
+        // then both writes, so a retry after a lost ack neither double-logs the
+        // restock nor can leave the ledger missing for a stock change that stuck.
         const qrId = `qr_${partId}_${safeStock}`;
-        await setDoc(doc(db, COLLECTIONS.RESTOCKS, qrId), {
-          opId: qrId, partId, name: partSnapshot.name || '', sku: partSnapshot.sku || '',
-          qty: delta, quantity: delta, unitCost: partSnapshot.purchasePrice || 0, total: delta * (partSnapshot.purchasePrice || 0),
-          supplier: '', supplierName: '', reference: '', notes: 'Quick restock',
-          by: user?.uid || null, byEmail: user?.email || null, createdAt: serverTimestamp(),
-        }, { merge: true }).catch((e) => console.error('Quick restock ledger write failed:', e));
+        await withTimeout(runTransaction(db, async (tx) => {
+          const restockRef = doc(db, COLLECTIONS.RESTOCKS, qrId);
+          const snap = await tx.get(restockRef);
+          tx.update(doc(db, COLLECTIONS.PARTS, partId), { stock: safeStock, updatedAt: serverTimestamp() });
+          if (!snap.exists()) {
+            tx.set(restockRef, {
+              opId: qrId, partId, name: partSnapshot.name || '', sku: partSnapshot.sku || '',
+              qty: delta, quantity: delta, unitCost: partSnapshot.purchasePrice || 0, total: delta * (partSnapshot.purchasePrice || 0),
+              supplier: '', supplierName: '', reference: '', notes: 'Quick restock',
+              by: user?.uid || null, byEmail: user?.email || null, createdAt: serverTimestamp(),
+            });
+          }
+        }), TX_TIMEOUT_MS, 'This stock update');
         writeAudit('quick_restock', { partId, name: partSnapshot.name || '' }, { qty: delta, stockBefore: prevStock, stockAfter: safeStock });
+      } else {
+        await updateDoc(doc(db, COLLECTIONS.PARTS, partId), {
+          stock: safeStock,
+          updatedAt: serverTimestamp(),
+        });
       }
     } catch (err) {
       console.error('Stock sync failed:', err);
@@ -11303,7 +11586,21 @@ export default function InventoryDashboard() {
   // (Preserves altNames/notes — only touches name + phone numbers — then cascades
   // the new name/number to every linked part, keeping each part's preferred number
   // if it still exists.)
-  function persistSupplierEdit(id, { name, phoneNumbers }) {
+  //
+  // PHASE 8B (global fire-and-forget audit) — classified DERIVED/DENORMALIZED, not
+  // authoritative: each part's `suppliers[]` entry is a display-convenience COPY of
+  // the supplier's own name/phone; the supplier document is the source of truth. A
+  // full transaction across every linked part (which can be many) would be
+  // disproportionate to what is a cosmetic-sync risk, not a financial/stock one —
+  // per the Phase 8B brief's own guidance not to force independent documents into
+  // one oversized transaction. What DID need fixing: the primary supplier write and
+  // the cascade were never awaited at all, so "Supplier updated" fired unconditionally
+  // even if the supplier's OWN document failed to save. Now the primary write is
+  // awaited and gates the toast; the cascade is awaited via allSettled and any
+  // failures are reported by count instead of being silently absorbed — a stale
+  // part-level display is recoverable (it self-corrects the next time that part or
+  // supplier is edited), unlike a failed primary write, which is not.
+  async function persistSupplierEdit(id, { name, phoneNumbers }) {
     const cleanName = (name || '').trim();
     const seen = new Set();
     const phones = (phoneNumbers || [])
@@ -11311,16 +11608,23 @@ export default function InventoryDashboard() {
       .filter((c) => c.number && !seen.has(c.number) && seen.add(c.number));
     const primaryPhone = normalizePhone(phones[0]?.number || '');
 
-    updateDoc(doc(db, COLLECTIONS.SUPPLIERS, id), {
-      name: cleanName,
-      phoneNumbers: phones,
-      primaryPhone,
-      phones: phones.map((c) => c.number),
-      phone: primaryPhone,
-      updatedAt: serverTimestamp(),
-    }).catch((e) => console.error('Supplier edit sync will retry:', e));
+    try {
+      await updateDoc(doc(db, COLLECTIONS.SUPPLIERS, id), {
+        name: cleanName,
+        phoneNumbers: phones,
+        primaryPhone,
+        phones: phones.map((c) => c.number),
+        phone: primaryPhone,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      console.error('Supplier edit failed:', e);
+      toast.error('Could not save supplier changes. Check your connection and try again.');
+      return;
+    }
 
     const valid = phones.map((c) => c.number);
+    const cascadeJobs = [];
     inventory.forEach((p) => {
       const list = getPartSuppliers(p);
       let changed = false;
@@ -11335,14 +11639,23 @@ export default function InventoryDashboard() {
       });
       if (changed) {
         const f = updated[0] || { name: '', phone: '' };
-        updateDoc(doc(db, COLLECTIONS.PARTS, p.id), {
+        cascadeJobs.push(updateDoc(doc(db, COLLECTIONS.PARTS, p.id), {
           suppliers: updated,
           supplier: f.name,
           supplierPhone: f.phone,
           updatedAt: serverTimestamp(),
-        }).catch((e) => console.error('Cascade after supplier edit:', e));
+        }));
       }
     });
+    if (cascadeJobs.length) {
+      const results = await Promise.allSettled(cascadeJobs);
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length) {
+        console.error(`Cascade after supplier edit: ${failed.length} of ${cascadeJobs.length} linked part(s) failed to refresh.`, failed.map((f) => f.reason));
+        toast.success(`Supplier updated (${failed.length} of ${cascadeJobs.length} linked parts may still show the old details — they'll refresh next edit)`);
+        return;
+      }
+    }
     toast.success('Supplier updated');
   }
 
@@ -12485,6 +12798,102 @@ export default function InventoryDashboard() {
     }
   }
 
+  // PHASE 8B (PH8-05) — the ONE atomic Quick Sell transaction (stock decrement +
+  // salesCount + the sales ledger row + the monthly rollup, keyed by the
+  // sale-op id), extracted so both the live "Confirm Sale" click below AND the
+  // pendingSales reconciliation effect (offline sales, applied once
+  // connectivity returns) run through the EXACT SAME atomic path — never a
+  // second, weaker one. All reads (op marker, part) happen before any write;
+  // a duplicate delivery sees `sales/{opId}` already present and applies
+  // nothing.
+  //
+  // Takes PLAIN SCALAR inputs (never a pre-built saleRecord/rollupPatch) and
+  // builds the record — including its increment()/serverTimestamp() sentinels —
+  // fresh, INSIDE this call. Firestore FieldValue sentinels only resolve
+  // correctly as the direct value of a field in the write that uses them; they
+  // cannot be persisted as plain nested data and "replayed" later, which is
+  // exactly why the pendingSales document below stores plain numbers only and
+  // this function rebuilds the real record from them at apply time.
+  async function runQuickSaleTx({
+    opId, partId, partName, want, pricePerUnit, unitCost, monthKey,
+    belowFloorOverride, minSellingPrice, brands, soldByUid, soldByEmail,
+  }) {
+    const revenue = want * pricePerUnit;
+    const cost = want * unitCost;
+    const saleRecord = {
+      opId, partId, name: partName || '', qty: want, unitPrice: pricePerUnit, unitCost, revenue, cost,
+      profit: revenue - cost, category: 'Parts', revenueType: 'Parts', brands: brands || [],
+      soldBy: soldByUid || null, soldByEmail: soldByEmail || null, belowFloor: !!belowFloorOverride,
+      floorPrice: minSellingPrice || 0, source: 'quick-sell', createdAt: serverTimestamp(),
+    };
+    const rollupPatch = {
+      month: monthKey, revenue: increment(revenue), cost: increment(cost), profit: increment(revenue - cost),
+      units: increment(want), orders: increment(1), updatedAt: serverTimestamp(),
+    };
+    return withTimeout(runTransaction(db, async (tx) => {
+      const saleRef = doc(db, COLLECTIONS.SALES, opId);
+      const partRef = doc(db, COLLECTIONS.PARTS, partId);
+      const saleSnap = await tx.get(saleRef);
+      const partSnap = await tx.get(partRef);
+      if (saleSnap.exists()) return { sold: Number(saleSnap.data().qty) || want, alreadyApplied: true };
+      if (!partSnap.exists()) throw new Error('This part no longer exists.');
+      const cur = partSnap.data().stock || 0;
+      if (want > cur) throw new Error(`Cannot sell ${want} — only ${cur} left in stock.`);
+      tx.set(saleRef, saleRecord);
+      tx.update(partRef, { stock: increment(-want), salesCount: increment(want), updatedAt: serverTimestamp() });
+      tx.set(doc(db, 'salesRollups', monthKey), rollupPatch, { merge: true });
+      return { sold: want, alreadyApplied: false };
+    }), TX_TIMEOUT_MS, 'This sale');
+  }
+
+  // PHASE 8B (PH8-05) — reconcile any Quick Sales that were queued as a durable
+  // pendingSales/{opId} intent (plain scalar fields only — see runQuickSaleTx's
+  // own comment on why) while genuinely offline (see the `else` branch in
+  // handleSellInner below), once the browser is back online. Applies each
+  // through the EXACT SAME runQuickSaleTx as a live sale, then removes the
+  // pending record — a definite business rejection (part gone / insufficient
+  // stock) discards it with an explanation; an ambiguous failure (still
+  // offline, a timeout) leaves it for the next reconnect to retry.
+  useEffect(() => {
+    if (demoMode || !online || !user?.uid) return undefined;
+    let cancelled = false;
+    (async () => {
+      let snap;
+      try {
+        snap = await getDocs(query(collection(db, 'pendingSales'), where('createdBy', '==', user.uid), limit(20)));
+      } catch (e) { return; }
+      if (cancelled || snap.empty) return;
+      // eslint-disable-next-line no-restricted-syntax
+      for (const d of snap.docs) {
+        if (cancelled) return;
+        const p = d.data();
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await runQuickSaleTx({
+            opId: p.opId, partId: p.partId, partName: p.partName, want: p.want,
+            pricePerUnit: p.pricePerUnit, unitCost: p.unitCost, monthKey: p.monthKey,
+            belowFloorOverride: p.belowFloorOverride, minSellingPrice: p.minSellingPrice,
+            brands: p.brands, soldByUid: p.soldByUid, soldByEmail: p.soldByEmail,
+          });
+          // eslint-disable-next-line no-await-in-loop
+          await deleteDoc(d.ref);
+          toast.success(`Offline sale of ${p.partName || 'a part'} synced.`);
+        } catch (err) {
+          const isDefiniteNoCommit = !err?.code && !!err?.message;
+          if (isDefiniteNoCommit) {
+            console.error('Pending offline sale could not be applied and was discarded:', err);
+            toast.error(`An offline sale of ${p.partName || 'a part'} could not be completed: ${err.message}`);
+            // eslint-disable-next-line no-await-in-loop
+            await deleteDoc(d.ref).catch(() => {});
+          } else {
+            console.error('Pending offline sale reconciliation failed, will retry on the next reconnect:', err);
+          }
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [online, demoMode, user?.uid]);
+
   // Synchronous double-submission guard for checkout sales. A rapid double-click on
   // "Confirm Sale" dispatches both click events before the first call's `await` gives
   // React a chance to disable the button, so an async-only "saving" state arrives too
@@ -12535,8 +12944,6 @@ export default function InventoryDashboard() {
     }
     const want = Math.max(1, Math.floor(qty || 0));
     const unitCost = part.purchasePrice || 0;
-    const revenue = want * pricePerUnit;
-    const cost = want * unitCost;
     const now = new Date();
     const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     // Phase 4b (PH4-03) — the sale's ledger identity. Stable per "Confirm Sale"
@@ -12544,61 +12951,20 @@ export default function InventoryDashboard() {
     // supply one. The sales ledger row IS this doc, so a duplicate delivery can't
     // create a second one.
     const opId = saleOpId || `sale_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-    const saleRecord = {
-      opId,
-      partId: part.id,
-      name: part.name || '',
-      qty: want,
-      unitPrice: pricePerUnit,
-      unitCost,
-      revenue,
-      cost,
-      profit: revenue - cost,
-      category: 'Parts',
-      revenueType: 'Parts',
-      brands: brandsOf(part),
-      soldBy: user?.uid || null,
-      soldByEmail: user?.email || null,
-      belowFloor: !!belowFloorOverride,
-      floorPrice: part.minSellingPrice || 0,
-      source: 'quick-sell',
-      createdAt: serverTimestamp(),
-    };
-    const rollupPatch = {
-      month: monthKey,
-      revenue: increment(revenue),
-      cost: increment(cost),
-      profit: increment(revenue - cost),
-      units: increment(want),
-      orders: increment(1),
-      updatedAt: serverTimestamp(),
+    const saleInputs = {
+      opId, partId: part.id, partName: part.name || '', pricePerUnit, unitCost, monthKey,
+      belowFloorOverride: !!belowFloorOverride, minSellingPrice: part.minSellingPrice || 0,
+      brands: brandsOf(part), soldByUid: user?.uid || null, soldByEmail: user?.email || null,
     };
 
     let sold = want;
     let alreadyApplied = false;
     if (online) {
-      // Phase 4b (PH4-03) — ONE atomic transaction for the WHOLE sale: stock
-      // decrement + salesCount + the sales ledger row + the monthly rollup, keyed
-      // by the sale-op id. All reads (op marker, part) happen before any write.
-      // A duplicate delivery (double-click past the ref guard, retry after an
-      // ambiguous failure, lost ack, transaction-callback replay) sees the
-      // `sales/{opId}` doc already present and applies NOTHING.
+      // Phase 4b (PH4-03) — ONE atomic transaction for the WHOLE sale (see
+      // runQuickSaleTx above for the full contract).
       try {
         // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
-        const result = await withTimeout(runTransaction(db, async (tx) => {
-          const saleRef = doc(db, COLLECTIONS.SALES, opId);
-          const partRef = doc(db, COLLECTIONS.PARTS, part.id);
-          const saleSnap = await tx.get(saleRef);
-          const partSnap = await tx.get(partRef);
-          if (saleSnap.exists()) return { sold: Number(saleSnap.data().qty) || want, alreadyApplied: true };
-          if (!partSnap.exists()) throw new Error('This part no longer exists.');
-          const cur = partSnap.data().stock || 0;
-          if (want > cur) throw new Error(`Cannot sell ${want} — only ${cur} left in stock.`);
-          tx.set(saleRef, saleRecord);
-          tx.update(partRef, { stock: increment(-want), salesCount: increment(want), updatedAt: serverTimestamp() });
-          tx.set(doc(db, 'salesRollups', monthKey), rollupPatch, { merge: true });
-          return { sold: want, alreadyApplied: false };
-        }), TX_TIMEOUT_MS, 'This sale');
+        const result = await runQuickSaleTx({ ...saleInputs, want });
         sold = result.sold;
         alreadyApplied = result.alreadyApplied;
       } catch (err) {
@@ -12623,16 +12989,28 @@ export default function InventoryDashboard() {
         return;
       }
     } else {
-      // Genuinely offline: no transaction possible. Queue keyed writes (IndexedDB
-      // replays them on reconnect, each to its stable doc id — so a replay is a
-      // no-op create) and update optimistically so the shop keeps selling.
+      // PHASE 8B (PH8-05) — genuinely offline: a Firestore transaction requires a
+      // live round trip and cannot run at all. This used to fan out into 3
+      // INDEPENDENT fire-and-forget writes (sale row, stock, rollup) with no
+      // atomicity across them. A single document write IS atomic by definition,
+      // online or offline — so persist ONE durable pending-sale intent instead,
+      // and let it be applied through the EXACT SAME runQuickSaleTx (never a
+      // second, weaker path) by the reconciliation effect above once
+      // connectivity returns. IndexedDB's own persistent local cache queues this
+      // one write and replays it if the tab is closed before it flushes, same
+      // durability envelope already accepted for every other durable-opId write
+      // in this app (Phase 5b/6b).
       sold = Math.max(1, Math.min(want, part.stock || 0));
-      setDoc(doc(db, COLLECTIONS.SALES, opId), { ...saleRecord, qty: sold, revenue: sold * pricePerUnit, cost: sold * unitCost, profit: sold * (pricePerUnit - unitCost) })
-        .catch((e) => console.error('Sale ledger write will retry when online:', e));
-      updateDoc(doc(db, COLLECTIONS.PARTS, part.id), { stock: increment(-sold), salesCount: increment(sold), updatedAt: serverTimestamp() })
-        .catch((e) => console.error('Sale sync will retry when online:', e));
-      setDoc(doc(db, 'salesRollups', monthKey), { ...rollupPatch, revenue: increment(sold * pricePerUnit), cost: increment(sold * unitCost), profit: increment(sold * (pricePerUnit - unitCost)), units: increment(sold) }, { merge: true })
-        .catch((e) => console.error('Rollup write will retry when online:', e));
+      // Plain scalars ONLY — no increment()/serverTimestamp() sentinels nested in
+      // here (see runQuickSaleTx's comment on why); it rebuilds the real record
+      // fresh from these when this pending sale is actually applied.
+      setDoc(doc(db, 'pendingSales', opId), {
+        ...saleInputs,
+        want: sold,
+        createdBy: user?.uid || null,
+        createdByEmail: user?.email || null,
+        createdAt: serverTimestamp(),
+      }).catch((e) => console.error('Pending sale write will retry when the browser reconnects and replays the queued write:', e));
     }
 
     if (alreadyApplied) {

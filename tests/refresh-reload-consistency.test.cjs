@@ -183,14 +183,16 @@ ok('a genuinely new create (id cleared) -> a second doc', Object.keys(docs).leng
 // 4 — PH5-04: job-card reservation has a persistent marker
 // =====================================================================
 console.log('\n4  PH5-04 — job-card reservation\n');
+// PHASE 8B (PH8-02) — applyReserveDelta is now ONE transaction across every
+// affected part (reads all parts first via Promise.all(refs.map(tx.get)), then
+// writes all), not N independent per-part transactions via Promise.allSettled.
 ok('applyReserveDelta takes a reserveOpId and applies the increment inside a transaction',
-  // Phase 6b (PH6-03) — withTimeout(...) wraps each per-part transaction; behavior unchanged.
   /const applyReserveDelta = \(deltaMap, reserveOpId = null\) =>/.test(dash)
-  && /Promise\.allSettled\(ids\.map\(\(id\) => withTimeout\(runTransaction\(db, async \(tx\) => \{/.test(dash));
+  && /const snaps = await Promise\.all\(refs\.map\(\(ref\) => tx\.get\(ref\)\)\);/.test(dash));
 ok('the transaction reads appliedReserveIds BEFORE the increment and skips a known reserveOpId',
   /const applied = Array\.isArray\(snap\.data\(\)\.appliedReserveIds\) \? snap\.data\(\)\.appliedReserveIds : \[\];/.test(dash)
-  && /if \(reserveOpId && applied\.includes\(reserveOpId\)\) return;/.test(dash)
-  && /appliedReserveIds: \[\.\.\.applied, reserveOpId\]\.slice\(-40\)/.test(dash));
+  && /if \(reserveOpId && applied\.includes\(reserveOpId\)\) return \{ skip: true \};/.test(dash)
+  && /appliedReserveIds: \[\.\.\.d\.applied, reserveOpId\]\.slice\(-40\)/.test(dash));
 ok('persistJobCard derives a DURABLE reserveOpId (recovered on refresh) and clears it on a confirmed save',
   /const reserveOpId = demoMode \? null : readOrCreateOpId\(reserveScope, 'jcr'\);/.test(dash)
   && /await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);/.test(dash)
@@ -215,9 +217,14 @@ ok('reservation increment across reload + retry: reserved = 2 (once), not 4', pa
 console.log('\n5  PH5-05 — commitStock inline stepper\n');
 ok('commitStock writes an ABSOLUTE stock value (idempotent on replay/retry)',
   /await updateDoc\(doc\(db, COLLECTIONS\.PARTS, partId\), \{\s*stock: safeStock,/.test(dash));
+// PHASE 8B (global fire-and-forget audit) — the restock ledger row is now
+// tx.set inside the SAME transaction as the stock write (was a separate
+// `.catch(console.error)` setDoc); still keyed by the same deterministic id
+// (part + target level), read first (idempotency) before either write.
 ok('the quick_restock ledger row is a setDoc to a deterministic id (part + target level) — a retry re-writes the same row',
   /const qrId = `qr_\$\{partId\}_\$\{safeStock\}`;/.test(dash)
-  && /await setDoc\(doc\(db, COLLECTIONS\.RESTOCKS, qrId\)/.test(dash));
+  && /const snap = await tx\.get\(restockRef\);/.test(dash)
+  && /tx\.set\(restockRef, \{/.test(dash));
 
 // =====================================================================
 // 6 — PH5-01 / PH5-07: invoice draft identity + walk-in clash
@@ -257,10 +264,14 @@ ok('customer create still carries its client id in the draft (restore -> same cu
   /id: `c_\$\{Date\.now\(\)\}_\$\{Math\.floor\(Math\.random\(\) \* 1e4\)\}`/.test(cust));
 ok('invoice numbers are still allocated at persist time (refresh before save consumes none)',
   /const needsNewNumber = asDraft/.test(bill) && /store\.allocateNumber\(__allocSeq, __allocSeed\)/.test(dash));
-ok('runInvoiceTransaction is still diff-based / idempotent',
+// PHASE 8B (PH8-01) — runInvoiceTransaction was replaced by
+// planInvoiceRealization (still diff-based/idempotent — same DIFF-BASED,
+// therefore IDEMPOTENT contract, now on the pure planner instead).
+ok('planInvoiceRealization (formerly runInvoiceTransaction) is still diff-based / idempotent',
   /DIFF-BASED, therefore IDEMPOTENT/.test(dash));
+// PHASE 8B (PH8-01c) — the !exists guard moved into deleteInvoiceTransactional.
 ok('deleteInvoice is still !exists-guarded',
-  /if \(!snap\.exists\(\)\) return null;/.test(dash));
+  /if \(!snap\.exists\(\)\) return \{ alreadyDeleted: true, prior: null, plan: null \};/.test(dash));
 ok('entity EDIT is still _rev-guarded',
   /const state = revState\(snap\.exists\(\) \? snap\.data\(\) : null, expectedRev\);/.test(repo));
 ok('KNOWN_LIMITATIONS.md no longer claims the operation id "does not survive a full browser refresh"',
