@@ -76,8 +76,10 @@ ok('release is best-effort and never throws (expiry is the real backstop)',
   // wait; the try/catch around the whole thing is unchanged and still swallows
   // every failure, including a timeout).
   /export async function releaseLease\(collectionName, docId, owner\) \{[\s\S]{0,120}try \{[\s\S]{0,300}withTimeout\(runTransaction/.test(lib));
-ok('release is session-aware — a stale same-user tab cannot delete a lease another tab took over',
-  /const mine = !!owner && d\.ownerUid === owner\.uid && d\.sessionId === owner\.sessionId;[\s\S]{0,120}if \(mine \|\| expired\) tx\.delete\(ref\)/.test(lib));
+ok('release is session-aware — a stale same-user tab cannot touch a lease another tab took over',
+  /const mine = !!owner && d\.ownerUid === owner\.uid && d\.sessionId === owner\.sessionId;[\s\S]{0,60}if \(!mine\) return;/.test(lib));
+ok('PH7-27 FIXED [fact]: release now UPDATES (backdates expiresAt into the past) instead of deleting — a raw Firestore delete carries no payload for the rules to check a releasing session\'s identity against, so restricting release to a session-scoped update is what lets the RULES (not just this client check) enforce that only the current session may give up its own lease',
+  /tx\.update\(ref, \{[\s\S]{0,200}expiresAt: Timestamp\.fromMillis\(Date\.now\(\) - 1000\),/.test(lib));
 ok('heartbeat renew is session-aware — a resumed stale tab cannot clobber a newer lease (lease/lost)',
   // Phase 6b (PH6-03) — withTimeout(...) now wraps the transaction; widened the
   // window to cover the added wrapper + explanatory comment, same assertion.
@@ -164,8 +166,12 @@ const rules = read('../firestore.rules');
 ok('firestore.rules has an additive editLocks block',
   /match \/editLocks\/\{lockId\} \{/.test(rules)
   && /allow create: if signedIn\(\) && incomingShapeOk\(\)/.test(rules)
-  && /allow update: if signedIn\(\) && incomingShapeOk\(\) && \(ownedByMe\(\) \|\| expired\(\)\)/.test(rules)
-  && /allow delete: if signedIn\(\) && \(ownedByMe\(\) \|\| expired\(\)\)/.test(rules));
+  && /allow update: if signedIn\(\) && \(/.test(rules)
+  && /allow delete: if signedIn\(\) && expired\(\);/.test(rules));
+ok('PH7-27 FIXED [fact]: the update rule now requires sameSession() (not just ownedByMe()) for any write against a still-ACTIVE lease, and DELETE is restricted to an already-EXPIRED lease only — session identity for the lease-holder is now enforced by the rules themselves, not just by the client transaction',
+  /function sameSession\(\) \{\s*\n\s*return resource\.data\.sessionId == request\.resource\.data\.sessionId;/.test(rules)
+  && /function releaseShapeOk\(\)/.test(rules)
+  && /\(ownedByMe\(\) && sameSession\(\) && \(incomingShapeOk\(\) \|\| releaseShapeOk\(\)\)\)/.test(rules));
 ok('editLocks is NOT an unrestricted authenticated-write collection',
   !/match \/editLocks\/\{lockId\} \{\s*allow read, write: if signedIn\(\);/.test(rules)
   && /request\.resource\.data\.expiresAt < request\.time \+ duration\.value\(3, 'm'\)/.test(rules));

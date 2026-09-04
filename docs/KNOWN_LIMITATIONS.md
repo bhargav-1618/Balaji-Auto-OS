@@ -162,6 +162,62 @@ rules published.)*
   send whenever connectivity returns, so bounding their wait would misreport
   "still queued, will send" as "failed."
 
+- **Browser / tab lifecycle integrity is now hardened** (CONCURRENCY PHASE 7b —
+  shipped, emulator + automated + production verified). Phase 7's discovery pass
+  found three gaps in how tab duplication, edit leases, and in-app navigation
+  interact with the durable-operation-id and single-editor architecture above; all
+  three are closed:
+  - **Tab duplication can no longer cause a genuinely new action to be silently
+    swallowed as a duplicate.** Chrome/Edge/Firefox's "Duplicate tab" (and "reopen
+    closed tab") clones `sessionStorage` into the new browsing context per the HTML
+    Living Standard — including the Phase 5b durable operation id — but never
+    clones `window.name`, which resets to empty in any new top-level browsing
+    context. `lib/durableOpId.js` now tags every stored operation id with a
+    page-instance id derived from `window.name`; an id copied in by tab
+    duplication carries the *original* tab's page-instance tag, so a duplicated
+    tab reusing that id for a genuinely different action is detected and a fresh
+    id is minted instead. A same-tab refresh (where `window.name` persists) still
+    correctly reuses the same id, so the Phase 5b/6b refresh-safety guarantee is
+    fully preserved — this is strictly additive, not a replacement.
+  - **The edit-lease Firestore rules now enforce session identity, not just uid.**
+    Previously `editLocks`' rules let any write from the *same signed-in user*
+    overwrite or delete an ACTIVE lease purely on uid match, even one held by that
+    same user's other, still-open tab — a raw client bypassing
+    `lib/editLease.js`'s own (already session-aware) transaction could exploit
+    this. The rules now require the lease's `sessionId` to match too for any write
+    against a still-active lease; only an already-**expired** lease may be taken
+    over without matching the previous session. Firestore's `delete` operation
+    carries no payload for rules to check an identity against, so releasing an
+    active lease is now done via a session-scoped **update** (backdating
+    `expiresAt` into the past) rather than a delete; `delete` itself is now
+    restricted to already-expired documents only, for anyone.
+  - **Switching app tabs while editing no longer silently discards unsaved
+    changes**, for every entity editor (previously only Settings had this
+    protection). Customer, Part, Supplier, Job Card, and Invoice editors now all
+    report their own dirty state to the dashboard via an `onDirtyChange` prop; an
+    in-app tab switch away from a dirty editor prompts to confirm before
+    discarding, exactly like Settings already did. The prompt only fires on an
+    actual real, unsaved change (never merely "an editor is open") and never
+    outlives the editor that raised it — every wired editor resets the flag on its
+    own unmount, whether that unmount was triggered by a successful save or a
+    cancel/discard.
+  Residual, low severity / by design:
+  - A literal "duplicate this exact tab" browser action could not be triggered
+    through this session's own automation tooling; the fix is verified by (a) a
+    pure-model simulation of the exact `window.name` + `sessionStorage` algorithm
+    against the documented HTML Living Standard clone semantics, and (b) live
+    production verification of both halves independently (a value written to
+    `window.name` survives a same-tab reload; a genuinely new browser tab starts
+    with an empty `window.name`). It has not been re-verified against every
+    browser engine — Chromium-family behavior is what was checked live; Firefox
+    and Safari are expected (per spec) to behave identically but were not
+    independently confirmed this session.
+  - The edit-lease rules fix only affects `editLocks`, a UX-only coordination
+    collection — no change to any business-data collection's rules.
+  - The dirty-state guard covers in-app tab switches (the gap this phase closes).
+    A hard refresh/close while an editor is dirty is unchanged and already
+    covered separately by each editor's own `beforeunload` handler.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

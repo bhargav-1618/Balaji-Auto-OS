@@ -65,9 +65,14 @@ ok('[fact] new-entity create via syncAll is a writeBatch set{merge} (replays on 
 // =====================================================================
 console.log('\n1  Durable operation identity\n');
 ok('lib/durableOpId stores the id in sessionStorage (survives a tab refresh, gone on tab close)',
-  /sessionStorage\.getItem\(key\)/.test(durable) && /sessionStorage\.setItem\(key, fresh\)/.test(durable));
-ok('readOrCreateOpId returns the stored id if present (a recovery), else mints + stores one',
-  /const existing = sessionStorage\.getItem\(key\);\s*\n\s*if \(existing\) return existing;/.test(durable));
+  /sessionStorage\.getItem\(key\)/.test(durable) && /sessionStorage\.setItem\(key, JSON\.stringify\(\{ opId, pi: getPageInstanceId\(\) \}\)\)/.test(durable));
+// Phase 7b (PH7-01) — readOrCreateOpId now also verifies the stored entry was
+// tagged by THIS page instance (window.name-derived, survives-reload/reset-on-
+// new-context) before trusting it as "my own earlier attempt" — see the
+// PHASE 7B section below for the full tab-duplication-safety proof. The
+// same-tab recovery guarantee this assertion checks is unchanged.
+ok('readOrCreateOpId returns the stored id if present AND tagged by this page instance (a recovery), else mints + stores one',
+  /if \(entry && \(pi === null \|\| entry\.pi === pi\)\) return entry\.opId;/.test(durable));
 ok('peekOpId reports whether an unconfirmed prior attempt exists; clearOpId retires it',
   /export function peekOpId\(scope\)/.test(durable) && /export function clearOpId\(scope\)/.test(durable));
 ok('the hook pins the scope on first render and exposes { opId, hadPending, clear }',

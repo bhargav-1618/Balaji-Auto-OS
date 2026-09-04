@@ -266,7 +266,7 @@ ok('[fact] New invoice: the realized stock/sales/rollup cascade still fires befo
 // =====================================================================
 console.log('\n3  Operation-ID recovery under network loss (not just refresh)\n');
 ok('[fact] the durable opId lives in sessionStorage, independent of WHY the response was lost (refresh OR network drop OR both) — the mechanism does not distinguish',
-  /sessionStorage\.getItem\(key\)/.test(durable) && /sessionStorage\.setItem\(key, fresh\)/.test(durable));
+  /sessionStorage\.getItem\(key\)/.test(durable) && /sessionStorage\.setItem\(key, JSON\.stringify\(\{ opId, pi: getPageInstanceId\(\) \}\)\)/.test(durable));
 ok('[fact] the id is cleared only on a CONFIRMED result; while the network is down (or a timeout fired) and the transaction promise has not settled, the id stays put by construction',
   /clear: \(\) => clearOpId\(state\.current\.scope\)/.test(read('../hooks/useDurableOpId.js')));
 

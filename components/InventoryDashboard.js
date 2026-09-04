@@ -2718,7 +2718,7 @@ const SUPPLIER_CONFLICT_FIELDS = [
 // ---------------------------------------------------------------------------
 // Add / Edit Part Modal — Requirement 3 (learning comboboxes) + Base64 image
 // ---------------------------------------------------------------------------
-function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, onSaveSupplier, onCreateSupplier, isAdmin = true, categoryTree = CATEGORY_TREE, vehicleTree = VEHICLE_TREE, salesHistory = [], onAddCategory, onAddVehicle, asPage = false, demoMode = false, readOnly = false, banner = null }) {
+function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, onSaveSupplier, onCreateSupplier, isAdmin = true, categoryTree = CATEGORY_TREE, vehicleTree = VEHICLE_TREE, salesHistory = [], onAddCategory, onAddVehicle, asPage = false, demoMode = false, readOnly = false, banner = null, onDirtyChange }) {
   // Phase 4b (PH4-06 class) + Phase 5b (PH5-03) — one stable id per "Add Part"
   // intent, kept in sessionStorage so it SURVIVES A BROWSER REFRESH: a reload +
   // retry re-writes the SAME `parts/<id>` doc (setDoc merge) instead of creating a
@@ -2975,6 +2975,13 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
     window.addEventListener('beforeunload', h);
     return () => window.removeEventListener('beforeunload', h);
   }, [dirty]);
+  // PHASE 7b (PH7-02) — surface this editor's dirty state to the dashboard so an
+  // in-app tab switch (invisible to beforeunload above) also confirms before
+  // discarding unsaved changes. Reset to false unconditionally on unmount — reached
+  // via BOTH a successful save and a cancel/close — so the flag can never outlive
+  // the editor that set it.
+  useEffect(() => { if (onDirtyChange) onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, [onDirtyChange]);
 
   // Live completeness meter — reads the SAME fields the form actually writes
   // (categories[] and compatibleCars[]), with real validation rather than "exists".
@@ -3769,7 +3776,7 @@ const PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Credit', 'Cheque'];
 // GST state codes → state name (for auto-detection; GST is optional).
 const GST_STATE_CODES = { '01': 'Jammu & Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab', '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana', '07': 'Delhi', '08': 'Rajasthan', '09': 'Uttar Pradesh', 10: 'Bihar', 11: 'Sikkim', 12: 'Arunachal Pradesh', 13: 'Nagaland', 14: 'Manipur', 15: 'Mizoram', 16: 'Tripura', 17: 'Meghalaya', 18: 'Assam', 19: 'West Bengal', 20: 'Jharkhand', 21: 'Odisha', 22: 'Chhattisgarh', 23: 'Madhya Pradesh', 24: 'Gujarat', 27: 'Maharashtra', 29: 'Karnataka', 30: 'Goa', 32: 'Kerala', 33: 'Tamil Nadu', 34: 'Puducherry', 36: 'Telangana', 37: 'Andhra Pradesh' };
 
-function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demoMode = false, readOnly = false, banner = null }) {  const isEdit = !!supplier?.id;
+function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demoMode = false, readOnly = false, banner = null, onDirtyChange }) {  const isEdit = !!supplier?.id;
   const [form, setForm] = useState(() => {
     const contacts = getSupplierContacts(supplier);
     const altNames = Array.isArray(supplier?.altNames) ? supplier.altNames : [];
@@ -3874,6 +3881,13 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
     window.addEventListener('beforeunload', h);
     return () => window.removeEventListener('beforeunload', h);
   }, [supDirty]);
+  // PHASE 7b (PH7-02) — surface this editor's dirty state to the dashboard so an
+  // in-app tab switch (invisible to beforeunload above) also confirms before
+  // discarding unsaved changes. Reset to false unconditionally on unmount — reached
+  // via BOTH a successful save and a cancel/close — so the flag can never outlive
+  // the editor that set it.
+  useEffect(() => { if (onDirtyChange) onDirtyChange(supDirty); }, [supDirty, onDirtyChange]);
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, [onDirtyChange]);
 
   function handleSubmit(e) {
     e.preventDefault();
@@ -9199,6 +9213,16 @@ export default function InventoryDashboard() {
   const [settingsDirty, setSettingsDirty] = useState(false);
   const settingsDirtyRef = useRef(false);
   useEffect(() => { settingsDirtyRef.current = settingsDirty; }, [settingsDirty]);
+  // PHASE 7b (PH7-02) — the SAME guard, generalized: every other entity editor
+  // (Customer, Part, Supplier, Job Card, Invoice) reports its own dirty state
+  // through this single shared flag via the `onDirtyChange` prop each module/modal
+  // now accepts. Only one editor is ever open at a time (each module unmounts on
+  // tab switch, per the existing conditional-render architecture — see
+  // tests/browser-lifecycle-discovery.test.cjs §6), so one flag is sufficient; no
+  // per-module bookkeeping is needed. A plain ref (not state) is enough — it is
+  // only ever READ synchronously inside setActiveTab below, never rendered.
+  const moduleDirtyRef = useRef(false);
+  const handleModuleDirtyChange = useCallback((v) => { moduleDirtyRef.current = !!v; }, []);
 
   // Restore the tab from the URL on first paint (and honour Back/Forward). Also handle
   // deep-links opened in a NEW BROWSER TAB via ?open=<tab>:<query> — e.g. a job card or
@@ -9350,6 +9374,14 @@ export default function InventoryDashboard() {
     if (tab !== 'settings' && settingsDirtyRef.current) {
       if (typeof window !== 'undefined' && !window.confirm('You have unsaved settings. Leave without saving?')) return;
       setSettingsDirty(false);
+    }
+    // PHASE 7b (PH7-02) — same protection, generalized to every other entity
+    // editor (Customer/Part/Supplier/Job Card/Invoice) via moduleDirtyRef. Gated
+    // on `tab !== activeTabRef.current` so re-clicking the ALREADY-active tab (a
+    // no-op navigation) never prompts — only an actual departure does.
+    if (tab !== activeTabRef.current && moduleDirtyRef.current) {
+      if (typeof window !== 'undefined' && !window.confirm('You have unsaved changes. Leave without saving?')) return;
+      moduleDirtyRef.current = false;
     }
     setActiveTabRaw(tab);
     if (typeof window === 'undefined') return;
@@ -13830,6 +13862,7 @@ export default function InventoryDashboard() {
           onSaveSupplier={persistSupplierEdit}
           onCreateSupplier={createSupplierNow}
           onClose={() => { closePartModal(); duplicateOriginRef.current = null; }}
+          onDirtyChange={handleModuleDirtyChange}
         />
         {partReviewDialog}
         </>
@@ -13848,6 +13881,7 @@ export default function InventoryDashboard() {
           saving={supplierSaving}
           onSave={handleSupplierSave}
           onClose={closeSupplierModal}
+          onDirtyChange={handleModuleDirtyChange}
         />
         {supplierReviewDialog}
         </>
@@ -14914,7 +14948,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'jobcards' && (
-          <JobCardModule demoMode={demoMode} demoCanDelete={demoCan('deleteJobCards')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} inventory={inventory} customers={customers} invoices={invoices} onPersist={persistJobCard} onDelete={deleteJobCard} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('jobCards')} onRegisterVehicle={(custId, veh) => { const nv = { id: `v_${Date.now()}`, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === custId ? { ...c, vehicles: [...(c.vehicles || []), nv] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: nv.regNo || nv.id, detail: `${nv.regNo || ''} ${nv.model || ''}`.trim() })); }} savedCards={jobCards}
+          <JobCardModule demoMode={demoMode} demoCanDelete={demoCan('deleteJobCards')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} inventory={inventory} customers={customers} invoices={invoices} onPersist={persistJobCard} onDelete={deleteJobCard} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('jobCards')} onDirtyChange={handleModuleDirtyChange} onRegisterVehicle={(custId, veh) => { const nv = { id: `v_${Date.now()}`, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === custId ? { ...c, vehicles: [...(c.vehicles || []), nv] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: nv.regNo || nv.id, detail: `${nv.regNo || ''} ${nv.model || ''}`.trim() })); }} savedCards={jobCards}
             onOpenCustomer={(c) => { try { window.open(`/?open=customer:${encodeURIComponent(c.code || c.id || '')}#customers`, '_blank'); } catch { setActiveTab('customers'); } }}
             onOpenVehicle={(reg) => { try { window.open(`/?open=vehicles:${encodeURIComponent(reg || '')}#vehicles`, '_blank'); } catch { setActiveTab('vehicles'); setSearch(reg || ''); } }}
             onOpenInvoice={(iv) => { try { window.open(`/?open=invoice:${encodeURIComponent(iv.invNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(iv.invNo || ''); } }}
@@ -14924,7 +14958,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'customers' && (
-          <CustomersModule demoMode={demoMode} demoCanDelete={demoCan('deleteCustomers')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} jobCards={jobCards} invoices={invoices} customers={customers} setCustomers={setCustomers} onSaveCustomerEdit={saveCustomerEdit} onAudit={pushAudit}
+          <CustomersModule demoMode={demoMode} demoCanDelete={demoCan('deleteCustomers')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} jobCards={jobCards} invoices={invoices} customers={customers} setCustomers={setCustomers} onSaveCustomerEdit={saveCustomerEdit} onAudit={pushAudit} onDirtyChange={handleModuleDirtyChange}
             onOpenJobCard={(j) => { try { window.open(`/?open=jobcard:${encodeURIComponent(j.jobNo || '')}#jobcards`, '_blank'); } catch { setActiveTab('jobcards'); setSearch(j.jobNo || ''); } }}
             onOpenInvoice={(iv) => { try { window.open(`/?open=invoice:${encodeURIComponent(iv.invNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(iv.invNo || ''); } }}
             onCreateJobCard={(c) => { const tok = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`; writeJobCardDraft(c, tok); try { const w = window.open(`/?open=newjobcard:${tok}#jobcards`, '_blank'); if (!w) { writeJobCardDraft(c); setActiveTab('jobcards'); } toast.success(`Job card for ${c.name} opened in a new tab`); } catch { writeJobCardDraft(c); setActiveTab('jobcards'); } }}
@@ -14947,7 +14981,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'billing' && (
-          <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoice} onDelete={deleteInvoice} onCollectPayment={demoMode ? undefined : collectInvoicePayment} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onRestoreStock={(iv) => { const restore = invoicePartQtys(iv); if (Object.keys(restore).length) applyStockDelta(restore); }}
+          <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoice} onDelete={deleteInvoice} onCollectPayment={demoMode ? undefined : collectInvoicePayment} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onDirtyChange={handleModuleDirtyChange} onRestoreStock={(iv) => { const restore = invoicePartQtys(iv); if (Object.keys(restore).length) applyStockDelta(restore); }}
             onQuickCustomer={(data) => { if (data?.phone && !isIndianMobile(data.phone)) { toast.error(MOBILE_ERROR); return null; } if (data?.email && !isValidEmail(data.email)) { toast.error(EMAIL_ERROR); return null; } const id = `c_${Date.now()}`; const c = { id, createdAt: Date.now(), ...withCustomerDefaults({ ...data, phone: data?.phone ? mobileInput(data.phone) : '' }, customers) }; setCustomers((prev) => [...prev, c]).then(() => pushAudit({ action: 'Customer Created', entity: 'Customer', entityId: c.code || c.id, detail: `${c.code || ''} · ${c.name || ''}` })); return c; }}
             onQuickVehicle={(customerId, veh) => { const id = `v_${Date.now()}`; const v = { id, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === customerId ? { ...c, vehicles: [...(c.vehicles || []), v] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: v.regNo || v.id, detail: `${v.regNo || ''} ${v.model || ''}`.trim() })); return v; }}
             initialStatusFilter={pendingBillingStatusFilter}
@@ -15159,6 +15193,7 @@ export default function InventoryDashboard() {
           onSaveSupplier={persistSupplierEdit}
           onCreateSupplier={createSupplierNow}
           onClose={() => { closePartModal(); duplicateOriginRef.current = null; }}
+          onDirtyChange={handleModuleDirtyChange}
         />
       )}
       {partReviewDialog}
@@ -15173,6 +15208,7 @@ export default function InventoryDashboard() {
           saving={supplierSaving}
           onSave={handleSupplierSave}
           onClose={closeSupplierModal}
+          onDirtyChange={handleModuleDirtyChange}
         />
       )}
       {supplierReviewDialog}

@@ -171,28 +171,57 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // ---- Edit leases (CONCURRENCY PHASE 1b). A transient "one active editor per
-    // record" coordination lock. lockId = "<collection>__<docId>". This is a UX
-    // mechanism ONLY — the authoritative data-integrity layer is the Phase 1a
-    // `_rev` transaction on the record itself, which is unchanged. These rules
-    // exist so the lock cannot be stolen or corrupted from a raw client:
+    // ---- Edit leases (CONCURRENCY PHASE 1b, session-check hardened in PHASE
+    // 7b / PH7-27). A transient "one active editor per record" coordination
+    // lock. lockId = "<collection>__<docId>". This is a UX mechanism ONLY —
+    // the authoritative data-integrity layer is the Phase 1a `_rev`
+    // transaction on the record itself, which is unchanged. These rules exist
+    // so the lock cannot be stolen or corrupted from a raw client:
     //
     //   CREATE  — any signed-in user, but only for THEMSELVES, with a valid
     //             expiry no more than 3 minutes out (a client can't claim a
     //             record forever by writing a far-future expiresAt).
-    //   UPDATE  — the owner renewing their own lease (heartbeat), OR any
-    //             signed-in user taking over a lease that has already EXPIRED
-    //             (by server time) — and the requester must become the owner.
-    //   DELETE  — the owner releasing their own lease, OR anyone clearing an
-    //             already-expired lease. An active lease held by someone else
-    //             can never be deleted.
+    //   UPDATE  — the CURRENT holder (BOTH ownerUid AND sessionId matching
+    //             the document as it stands right now — not uid alone) may
+    //             renew (a future expiresAt, same as create) OR release (an
+    //             ALREADY-PAST expiresAt, signaling "I'm done") — OR any
+    //             signed-in user may take over a lease that has already
+    //             EXPIRED (by server time), becoming the new owner with a
+    //             fresh future expiry.
+    //   DELETE  — an already-expired lease only. A lease is now RELEASED by
+    //             updating it to a past expiresAt (see UPDATE above), not by
+    //             deleting it — a Firestore `delete` carries no payload for
+    //             the rules to check a session identity against, so it can
+    //             never be made session-aware; restricting delete to
+    //             already-expired documents closes that path entirely rather
+    //             than trying to patch it. lib/editLease.js's releaseLease no
+    //             longer calls delete for this reason (see its own comment).
+    //
+    //   PH7-27 (Phase 7 discovery): before this, a same-uid client that
+    //   bypassed lib/editLease.js's own session-aware transaction (talked to
+    //   Firestore directly) could overwrite OR delete its own other tab's
+    //   ACTIVE lease purely on ownerUid match — ownedByMe() alone was never
+    //   enough for "only the session that actually holds it may change it".
+    //   This closes that gap at the rules layer to match what
+    //   lib/editLease.js's client transaction already enforced for update,
+    //   and closes it more strictly than that for delete (see above).
     match /editLocks/{lockId} {
       function ownedByMe() {
         return signedIn() && resource.data.ownerUid == request.auth.uid;
       }
+      // Session continuity — only meaningful once ownedByMe() already holds
+      // (same uid); this is the extra check PH7-27 adds. A brand-new lease
+      // (no `resource` yet, i.e. create) or a takeover of an expired one
+      // never reaches this — see the update rule below.
+      function sameSession() {
+        return resource.data.sessionId == request.resource.data.sessionId;
+      }
       function expired() {
         return resource.data.expiresAt is timestamp && resource.data.expiresAt < request.time;
       }
+      // A genuine claim (create, or renew/takeover via update): own identity,
+      // a real future expiry capped at 3 minutes out (a client can't claim a
+      // record forever by writing a far-future expiresAt).
       function incomingShapeOk() {
         return request.resource.data.ownerUid == request.auth.uid
           && request.resource.data.sessionId is string
@@ -200,10 +229,23 @@ service cloud.firestore {
           && request.resource.data.expiresAt > request.time
           && request.resource.data.expiresAt < request.time + duration.value(3, 'm');
       }
+      // An explicit release: own identity, but the expiry is deliberately
+      // NOT in the future — the opposite shape from a claim. Only reachable
+      // by the current session releasing itself (see the update rule below);
+      // never lets a claim smuggle a stale expiresAt past incomingShapeOk().
+      function releaseShapeOk() {
+        return request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.sessionId is string
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt <= request.time;
+      }
       allow read:   if signedIn();
       allow create: if signedIn() && incomingShapeOk();
-      allow update: if signedIn() && incomingShapeOk() && (ownedByMe() || expired());
-      allow delete: if signedIn() && (ownedByMe() || expired());
+      allow update: if signedIn() && (
+        (expired() && incomingShapeOk()) ||
+        (ownedByMe() && sameSession() && (incomingShapeOk() || releaseShapeOk()))
+      );
+      allow delete: if signedIn() && expired();
     }
 
     // ---- Document-number counters (CONCURRENCY PHASE 2). One doc per sequence

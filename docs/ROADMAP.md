@@ -118,6 +118,58 @@ current release.
   Gates: `npm test` 128/128, `npm run test:rules` 98/98 (+4 new PH6b emulator
   assertions proving the timeout-then-retry equivalence against the real
   server), lint 0, build ✓. No `firestore.rules` change.
+- ~~**Browser / tab / lifecycle integrity.**~~ **DONE — CONCURRENCY PHASE 7
+  (discovery) + PHASE 7b (hardening), shipped and production-verified.**
+  Discovery found that tab duplication, the edit-lease rules, and in-app tab
+  navigation each had a lifecycle gap the Phase 1b–6b architecture didn't
+  cover; all three are closed:
+  - **Tab-duplication-safe operation identity (PH7-01, was CRITICAL).**
+    Duplicating a browser tab clones `sessionStorage` (per the HTML Living
+    Standard) — including the Phase 5b durable operation id — so a duplicated
+    tab could inherit the original tab's id and have a genuinely different
+    business action (e.g. a second, different-amount payment) silently
+    swallowed as "already applied," with a false-success UI. `window.name` is
+    the one relevant browser-context property the spec does NOT clone into a
+    duplicated/new tab, while it DOES survive a same-tab reload — so
+    `lib/durableOpId.js` now tags every stored id with a page-instance id
+    derived from `window.name`; an id whose tag doesn't match the current
+    page instance is never reused for a new intent. A same-tab refresh/retry
+    is completely unaffected (verified: id X stays X); a duplicated tab's new
+    action now correctly mints a new id (Y ≠ X); backend idempotency
+    (Phase 4b/5b/6b) is unchanged — this closes the client-side gap that let
+    a collision reach it in the first place, not a weakening of it.
+  - **Session-aware edit-lease rules (PH7-27, was MEDIUM).** `editLocks`'
+    Firestore rules previously authorized any write from the *same uid* onto
+    an ACTIVE lease, without checking `sessionId` — a raw client bypassing
+    `lib/editLease.js`'s own (already session-aware) transaction could
+    overwrite or delete its own other tab's active lease. The rules now
+    require the incoming write's `sessionId` to match the lease's current
+    `sessionId` too, for any write against a still-ACTIVE lease; only an
+    already-EXPIRED lease may be taken over without matching. Firestore's
+    `delete` carries no payload for rules to check identity against, so an
+    active lease is now released via a session-scoped **update** (a
+    backdated `expiresAt`) instead of a delete; `delete` itself is now
+    restricted to already-expired documents, for anyone. Proven with 10
+    emulator scenarios covering same-uid/different-session and
+    different-uid/different-session cases (`tests/rules/firestore.rules.test.cjs`,
+    "STEP 27 — PHASE 7b FIX").
+  - **Unsaved-edit tab-switch guard, generalized (PH7-02, was MEDIUM).**
+    Settings already warned before an in-app tab switch discarded unsaved
+    config; Customer, Part, Supplier, Job Card, and Invoice editors did not.
+    All five now report their own dirty state to the dashboard via a shared
+    `onDirtyChange` prop / `moduleDirtyRef`, reusing each editor's existing
+    dirty computation (Part/Supplier's `dirty`/`supDirty`, a new equivalent
+    for Customer/Invoice, JobCardModule's existing ref-based tracker routed
+    through one `setDirty` wrapper) — no new dirty-detection logic was
+    invented per editor. The guard never fires with no real change, never
+    fires after a successful save, and never gets stuck after a
+    cancel/discard (every editor resets the flag on its own unmount).
+  Gates: `npm test` 129/129, `npm run test:rules` 125/125 (+ new PH7-27
+  session-identity scenarios), lint 0, build ✓. One `firestore.rules` change
+  (`editLocks` only — session-scoped update/delete semantics; every other
+  collection unchanged). See KNOWN_LIMITATIONS.md for the residual
+  browser-coverage caveat (Chromium-family verified live; Firefox/Safari
+  expected identical per spec but not independently confirmed this session).
 
 ## Scale — before large datasets
 

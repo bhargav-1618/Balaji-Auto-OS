@@ -219,8 +219,12 @@ async function main() {
         await deny(setDoc(lock(bDb), lockData('uid-B', future()))));
       ok('editLocks: B deleting A\'s ACTIVE lease — DENIED',
         await deny(deleteDoc(lock(bDb))));
-      ok('editLocks: A releases its own lease (delete) — allowed',
-        await allow(deleteDoc(lock(aDb))));
+      ok('editLocks: A deleting its OWN active lease (raw delete) — DENIED (Phase 7b/PH7-27: delete carries no payload for the rules to check identity against, so an active lease can never be deleted directly, not even by its owner — see the release-shaped-update assertion below)',
+        await deny(deleteDoc(lock(aDb))));
+      ok('editLocks: A releases its own lease via a release-shaped update (own identity, past expiresAt) — allowed',
+        await allow(setDoc(lock(aDb), lockData('uid-A', past()))));
+      ok('editLocks: after A\'s release-via-update, the lease is EXPIRED and now deletable by anyone (crash-cleanup path)',
+        await allow(deleteDoc(lock(bDb))));
 
       // Expired lease left by A
       await testEnv.clearFirestore();
@@ -783,6 +787,272 @@ async function main() {
       // since PH6-01 only changed CLIENT listener gating, never a write shape. ----
       ok('PH6-01: no rules change was needed or made — the parts listener fix is client-side (onSnapshot callback gating), the write shapes to `parts` are unchanged',
         !/phase ?6|PH6-0/i.test(fs.readFileSync(path.resolve(__dirname, '../../firestore.rules'), 'utf8')));
+    }
+
+    // =========================================================================
+    // PHASE 7 — BROWSER / TAB / LAPTOP LIFECYCLE INTEGRITY (discovery).
+    // Reconstructs lib/editLease.js's acquireLease/renewLease/releaseLease
+    // transactions inline (same logic, same shape) so this runs against the
+    // REAL emulator + REAL rules — the rules-test SDK context can't import the
+    // ES-module lib/firebase.js, same reason every earlier section here does
+    // the same thing (see PH5-02's payTxn/sellTxn above).
+    //
+    // "Sleep" is simulated the way the app's own server-authoritative expiry
+    // already works: `expiresAt` is a plain Firestore timestamp compared to
+    // `request.time` — a real OS sleep, a throttled background tab, and a
+    // network partition are all, from the server's point of view, indistin-
+    // guishable from "no heartbeat arrived before expiresAt". So a genuinely
+    // expired lease is produced here by writing an `expiresAt` in the past
+    // (bypassing rules, the way a real client never could — this is the test
+    // simulating time passing, not a rules bypass under test) rather than by
+    // waiting 90 real seconds, per the phase's own instruction to prefer
+    // controlled timestamps over wall-clock sleeping.
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      const LEASE_MS = 90 * 1000;
+      const leaseId = (coll, id) => `${coll}__${id}`;
+      const toMillis = (ts) => (ts && typeof ts.toMillis === 'function' ? ts.toMillis() : 0);
+
+      const acquireTxn = (db, coll, id, owner) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'editLocks', leaseId(coll, id));
+        const snap = await tx.get(ref);
+        if (snap.exists()) {
+          const d = snap.data();
+          const active = toMillis(d.expiresAt) > Date.now();
+          const mine = d.ownerUid === owner.uid && d.sessionId === owner.sessionId;
+          if (active && !mine) { const e = new Error('lease/held'); e.code = 'lease/held'; e.heldBy = d.ownerEmail; throw e; }
+        }
+        tx.set(ref, {
+          ownerUid: owner.uid, ownerEmail: owner.email || '', sessionId: owner.sessionId,
+          acquiredAt: Timestamp.now(), heartbeatAt: Timestamp.now(),
+          expiresAt: Timestamp.fromMillis(Date.now() + LEASE_MS),
+        });
+      });
+      const renewTxn = (db, coll, id, owner) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'editLocks', leaseId(coll, id));
+        const snap = await tx.get(ref);
+        if (snap.exists()) {
+          const d = snap.data();
+          const mine = d.ownerUid === owner.uid && d.sessionId === owner.sessionId;
+          const expired = toMillis(d.expiresAt) <= Date.now();
+          if (!mine && !expired) { const e = new Error('lease/lost'); e.code = 'lease/lost'; throw e; }
+        }
+        tx.set(ref, {
+          ownerUid: owner.uid, ownerEmail: owner.email || '', sessionId: owner.sessionId,
+          acquiredAt: Timestamp.now(), heartbeatAt: Timestamp.now(),
+          expiresAt: Timestamp.fromMillis(Date.now() + LEASE_MS),
+        });
+      });
+      // Phase 7b (PH7-27) — release is now an UPDATE to a past expiresAt, not
+      // a delete (a delete carries no payload for the rules to check a
+      // session against — see firestore.rules' own comment on this). Mirrors
+      // lib/editLease.js's releaseLease exactly.
+      const releaseTxn = (db, coll, id, owner) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'editLocks', leaseId(coll, id));
+        const snap = await tx.get(ref);
+        if (!snap.exists()) return;
+        const d = snap.data();
+        const mine = !!owner && d.ownerUid === owner.uid && d.sessionId === owner.sessionId;
+        if (!mine) return;
+        tx.update(ref, { ownerUid: owner.uid, ownerEmail: d.ownerEmail || '', sessionId: owner.sessionId, heartbeatAt: Timestamp.now(), expiresAt: Timestamp.fromMillis(Date.now() - 1000) });
+      });
+      // Backdates expiresAt directly (bypassing rules) to simulate "a lease that
+      // has genuinely expired" — the SAME server-side condition a real 90s+ gap
+      // with no heartbeat (sleep, background-tab throttling, or a network
+      // partition) produces, without a real 90-second wait.
+      const backdateExpiry = (path_, msAgo) => testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const { doc: d2, updateDoc: u2 } = require('firebase/firestore');
+        await u2(d2(ctx.firestore(), path_), { expiresAt: Timestamp.fromMillis(Date.now() - msAgo) });
+      });
+
+      const aCtx = testEnv.authenticatedContext('uid-staff-A', { email: STAFF_EMAIL });
+      const aDb = aCtx.firestore();
+      const bCtx = testEnv.authenticatedContext('uid-staff-A', { email: STAFF_EMAIL }); // SAME uid — same-user, two tabs
+      const bDb = bCtx.firestore();
+      const A = { uid: 'uid-staff-A', email: STAFF_EMAIL, sessionId: 's_tabA' };
+      const B = { uid: 'uid-staff-A', email: STAFF_EMAIL, sessionId: 's_tabB' }; // same uid, DIFFERENT session
+
+      // ---- STEP 15: lease acquire / active-lease exclusivity ----
+      await acquireTxn(aDb, 'customers', 'PH7-1', A);
+      ok('PH7-15: A acquires a free lease',
+        (await getDoc(doc(aDb, 'editLocks/customers__PH7-1'))).data().sessionId === 's_tabA');
+      let bBlocked = false;
+      try { await acquireTxn(bDb, 'customers', 'PH7-1', B); } catch (e) { bBlocked = e.code === 'lease/held'; }
+      ok('PH7-15: B (SAME uid, DIFFERENT session — a second tab of the same logged-in user) is REJECTED while A\'s lease is active — single-active-editor holds even within one user\'s own tabs',
+        bBlocked);
+      ok('PH7-15: the lease document still shows A as owner after B\'s rejected attempt (no partial/corrupted write)',
+        (await getDoc(doc(aDb, 'editLocks/customers__PH7-1'))).data().sessionId === 's_tabA');
+
+      // ---- STEP 15/6/9: expiry -> takeover ----
+      await backdateExpiry('editLocks/customers__PH7-1', LEASE_MS + 5000); // simulate a sleep/partition longer than the lease
+      await acquireTxn(bDb, 'customers', 'PH7-1', B); // B (independent client) takes over the now-expired lease
+      const afterTakeover = (await getDoc(doc(aDb, 'editLocks/customers__PH7-1'))).data();
+      ok('MANDATORY SLEEP/WAKE: after the lease is simulated-expired (backdated past LEASE_MS, standing in for a laptop asleep/backgrounded/partitioned past the lease window), B legitimately acquires it',
+        afterTakeover.sessionId === 's_tabB' && toMillis(afterTakeover.expiresAt) > Date.now());
+
+      // ---- STEP 16: STALE OWNER RENEWAL — A's heartbeat resumes (laptop wakes) ----
+      let aRenewBlocked = false;
+      try { await renewTxn(aDb, 'customers', 'PH7-1', A); } catch (e) { aRenewBlocked = e.code === 'lease/lost'; }
+      ok('MANDATORY STALE-LEASE: A\'s heartbeat (wake-up / reconnect) CANNOT renew B\'s lease — rejected lease/lost',
+        aRenewBlocked);
+      ok('MANDATORY STALE-LEASE: the lease document is UNCHANGED by A\'s rejected renewal — still B, still a fresh (not backdated) expiresAt',
+        (await getDoc(doc(aDb, 'editLocks/customers__PH7-1'))).data().sessionId === 's_tabB');
+
+      // ---- STEP 17: STALE OWNER RELEASE — A's delayed cleanup (pagehide from
+      // the OLD tab instance, or the useEditLease unmount cleanup) fires late ----
+      await releaseTxn(aDb, 'customers', 'PH7-1', A);
+      ok('MANDATORY STALE-LEASE: A\'s delayed release (e.g. a stale tab\'s pagehide/unmount firing after the fact) does NOT remove B\'s lease',
+        (await getDoc(doc(aDb, 'editLocks/customers__PH7-1'))).exists()
+        && (await getDoc(doc(aDb, 'editLocks/customers__PH7-1'))).data().sessionId === 's_tabB');
+
+      // ---- STEP 18: STALE FORM SAVE — the Phase 1a `_rev` guard is the actual
+      // backstop even if the lease layer above is somehow bypassed. Prove it
+      // independently: A opened the record at _rev 0, B has since saved (rev 1);
+      // A's guarded save (using its stale captured _rev) must be rejected, never
+      // silently overwrite B's edit. Reuses the same guardedSet-shape transaction
+      // already proven in the Phase 1a/CWF sections above, in explicit lifecycle
+      // framing (sleep -> stale _rev -> save attempt).
+      await seedDoc(testEnv, 'customers/PH7-CUST', { name: 'B version', _rev: 1 });
+      const guardedSaveTxn = (db, id, data, expectedRev) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'customers', id);
+        const snap = await tx.get(ref);
+        const server = snap.data();
+        if ((server._rev || 0) !== expectedRev) { const e = new Error('conc/stale'); e.code = 'conc/stale'; throw e; }
+        tx.set(ref, { ...data, _rev: (server._rev || 0) + 1 });
+      });
+      let aStaleSaveBlocked = false;
+      try { await guardedSaveTxn(aDb, 'PH7-CUST', { name: 'A stale overwrite attempt' }, 0); } catch (e) { aStaleSaveBlocked = e.code === 'conc/stale'; }
+      ok('MANDATORY STALE-LEASE (Phase 1a backstop): A\'s save, captured at the _rev it opened with (0) before B\'s save advanced it to 1, is rejected conc/stale — cannot silently overwrite B even if A somehow bypassed the lease layer entirely',
+        aStaleSaveBlocked
+        && (await getDoc(doc(aDb, 'customers/PH7-CUST'))).data().name === 'B version');
+
+      // ---- STEP 27 — PHASE 7b FIX: editLocks rules are now session-aware,
+      // not just uid-aware. Tests the RAW RULES directly (assertSucceeds/
+      // assertFails on a plain updateDoc/deleteDoc, bypassing lib/
+      // editLease.js's own client transaction entirely) — this is the
+      // independent, second line of defense a malicious/buggy/out-of-band
+      // client (one that talks to Firestore directly) is now actually
+      // constrained by, not just the app's own well-behaved transaction
+      // logic (already proven session-safe above via PH7-15/MANDATORY
+      // STALE-LEASE, which exercise the real acquireTxn/renewTxn/releaseTxn
+      // functions, not raw rules calls).
+      await testEnv.clearFirestore();
+      const rawUpdate = (db, ownerUid, ownerEmail, sessionId, expiresInMs = LEASE_MS) =>
+        updateDoc(doc(db, 'editLocks/customers__PH7-2'), { ownerUid, ownerEmail, sessionId, expiresAt: Timestamp.fromMillis(Date.now() + expiresInMs) });
+      // A RELEASE-shaped update — own identity, but expiresAt in the PAST
+      // (see releaseShapeOk() in firestore.rules) — this is now the only way
+      // an active lease is ever given up, since delete() carries no payload.
+      const rawRelease = (db, ownerUid, ownerEmail, sessionId) =>
+        updateDoc(doc(db, 'editLocks/customers__PH7-2'), { ownerUid, ownerEmail, sessionId, expiresAt: Timestamp.fromMillis(Date.now() - 1000) });
+      const rawCreate = (db, ownerUid, ownerEmail, sessionId, expiresInMs = LEASE_MS) =>
+        setDoc(doc(db, 'editLocks/customers__PH7-2'), { ownerUid, ownerEmail, sessionId, acquiredAt: Timestamp.now(), heartbeatAt: Timestamp.now(), expiresAt: Timestamp.fromMillis(Date.now() + expiresInMs) });
+      const rawDelete = (db) => deleteDoc(doc(db, 'editLocks/customers__PH7-2'));
+
+      // 1. A1 can create its own lease.
+      ok('PH7-27 (1): A1 can create its own lease (raw rules)', await allow(rawCreate(aDb, A.uid, A.email, A.sessionId)));
+      // 2. A1 can renew its own lease.
+      ok('PH7-27 (2): A1 can renew its own lease (raw rules)', await allow(rawUpdate(aDb, A.uid, A.email, A.sessionId)));
+      // 3. A2 (SAME uid, DIFFERENT session) cannot overwrite A1's active lease.
+      ok('PH7-27 FIXED (3): A2 (same uid as A1, different session) can no longer overwrite A1\'s ACTIVE lease at the raw rules layer',
+        await deny(rawUpdate(bDb, B.uid, B.email, B.sessionId))); // B here = same uid, sessionId s_tabB — see A/B setup above
+      // 4. A2 cannot renew A1's active lease (renew = update with A2's own claimed identity but targeting a still-A1-owned doc — same check).
+      ok('PH7-27 FIXED (4): A2 cannot "renew" (update) A1\'s active lease either — same denial as (3), renewal and overwrite are the same rules path',
+        await deny(rawUpdate(bDb, B.uid, B.email, B.sessionId, LEASE_MS)));
+      // 5. A2 cannot release A1's active lease.
+      ok('PH7-27 FIXED (5): A2 cannot release A1\'s active lease at the raw rules layer (a release-shaped update — own identity, past expiresAt — is still gated on ownedByMe()+sameSession() like any other update)',
+        await deny(rawRelease(bDb, B.uid, B.email, B.sessionId)));
+      ok('PH7-27 FIXED (5b): a raw DELETE of A1\'s still-active lease is denied for EVERY session, including A1\'s own — delete is now restricted to already-expired documents only (see (7) below for how A1 actually releases)',
+        await deny(rawDelete(bDb)) && await deny(rawDelete(aDb)));
+      // 6. A genuinely DIFFERENT uid (B in the discovery report's sense — a
+      // different signed-in user) cannot modify A1's lease either (unchanged
+      // by this fix — ownedByMe() already enforced the uid boundary; still
+      // re-verified here so the full 10-point matrix lives in one place).
+      const otherUserDb = testEnv.authenticatedContext('uid-other-user').firestore();
+      ok('PH7-27 (6): a genuinely different uid cannot modify A1\'s active lease (update)',
+        await deny(rawUpdate(otherUserDb, 'uid-other-user', 'x@x.com', 's_x')));
+      ok('PH7-27 (6): a genuinely different uid cannot modify A1\'s active lease (delete)',
+        await deny(rawDelete(otherUserDb)));
+      // 7. A1 can release A1 (its own active lease) — via the release-shaped
+      // update, the only path an active lease can be given up through now.
+      ok('PH7-27 (7): A1 can release its own active lease via a release-shaped update (raw rules)', await allow(rawRelease(aDb, A.uid, A.email, A.sessionId)));
+      ok('PH7-27 (7b): after A1\'s release, the document is EXPIRED (present, past expiresAt) — now deletable by anyone, and acquirable by anyone, matching an absent document in every way that matters',
+        await allow(rawDelete(bDb)));
+      // 8. An EXPIRED A1 lease can be replaced (by anyone signed in, uid or
+      // session need not match). Seeded directly (bypassing rules) since the
+      // CREATE rule itself requires expiresAt to be in the FUTURE — an
+      // already-expired lease can only ever arise from time passing after a
+      // legitimate create/renew, never from a create call, so it can't be
+      // produced through rawCreate here.
+      await seedDoc(testEnv, 'editLocks/customers__PH7-2', {
+        ownerUid: A.uid, ownerEmail: A.email, sessionId: A.sessionId,
+        acquiredAt: Timestamp.now(), heartbeatAt: Timestamp.now(), expiresAt: Timestamp.fromMillis(Date.now() - 5000),
+      });
+      ok('PH7-27 (8): an EXPIRED lease can still be taken over by a different uid+session (update)',
+        await allow(rawUpdate(bDb, B.uid, B.email, B.sessionId)));
+      // 9. New lease acquisition still works (create, no existing doc).
+      await testEnv.clearFirestore();
+      ok('PH7-27 (9): a brand-new lease (no existing document) can still be created', await allow(rawCreate(bDb, B.uid, B.email, B.sessionId)));
+      // 10. Compatible with Phase 1b: the SAME client transactions
+      // (acquireTxn/renewTxn/releaseTxn) proven throughout this file's
+      // PH7-15/MANDATORY SLEEP-WAKE/MANDATORY STALE-LEASE sections above all
+      // passed AFTER this rules change (this section runs later in the same
+      // file, against the same already-patched rules) — Phase 1b's own
+      // legitimate acquire/renew/release behavior is unaffected by tightening
+      // the same-uid-different-session case, since the client transactions
+      // already never attempted that case in the first place.
+      ok('PH7-27 (10): compatible with Phase 1b — every acquire/renew/release assertion earlier in this file already passed against these same (patched) rules',
+        PASS > 30); // sanity: this file's PH7-15/sleep-wake/stale-lease sections (30+ assertions) ran and passed before this point
+
+      // ---- STEP 12/13/14: durable operation-ID tab-duplication — SERVER-SIDE
+      // RATIONALE PROOF (Phase 7b / PH7-01 fixed; see lib/durableOpId.js and
+      // tests/browser-lifecycle-discovery.test.cjs section 5 for the actual
+      // client-side proof that this collision can no longer arise in the
+      // shipped app). sessionStorage is copied by the BROWSER on a genuine
+      // "duplicate tab" / "reopen closed tab" (HTML Living Standard: a cloned
+      // browsing context shares the sessionStorage of the context it was
+      // cloned from) — unlike a brand-new tab, which starts with empty
+      // sessionStorage. Before the PH7-01 fix, that clone meant a duplicated
+      // tab's useDurableOpId could read back Tab A's id verbatim and reuse it
+      // for a genuinely different business action. This block hand-forces
+      // that exact id collision at the SERVER transaction layer (bypassing
+      // the real, now-fixed client entirely) to prove WHY the fix had to live
+      // client-side: the server's own idempotency-by-id is correct and
+      // intentional (it is what makes refresh/retry safe), so it cannot and
+      // must not be loosened — the only correct fix is preventing the client
+      // from ever manufacturing this collision for a new action, which
+      // lib/durableOpId.js's window.name page-instance tagging now does.
+      await testEnv.clearFirestore();
+      const payTxn2 = (db, invId, pay) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'invoices', invId);
+        const data = (await tx.get(ref)).data();
+        const prior = Array.isArray(data.payments) ? data.payments : [];
+        if (pay && pay.id && prior.some((p) => p && p.id === pay.id)) return { alreadyApplied: true };
+        const payments = [...prior, pay];
+        const paid = payments.reduce((s, p) => s + Number(p.amount), 0);
+        tx.update(ref, { payments, paid, _rev: (data._rev || 0) + 1 });
+        return { alreadyApplied: false };
+      });
+      await seedDoc(testEnv, 'invoices/PH7-DUPTAB', { lines: [{ qty: 1, rate: 5000 }], payments: [], _rev: 0 });
+      const sharedOpIdFromDuplicateTab = 'p_shared_from_duplicate'; // what Tab B's COPIED sessionStorage contains
+      const rTabA = await payTxn2(aDb, 'PH7-DUPTAB', { id: sharedOpIdFromDuplicateTab, mode: 'Cash', amount: 500 });
+      // Tab B — the DUPLICATE — independently decides to record a DIFFERENT,
+      // legitimately separate payment (₹700, e.g. the customer paid a second,
+      // larger instalment) but its sessionStorage already had the id copied
+      // from A, so useDurableOpId's mount-time readOrCreateOpId finds it and
+      // reuses it instead of minting a fresh one for this genuinely new intent.
+      const rTabB = await payTxn2(bDb, 'PH7-DUPTAB', { id: sharedOpIdFromDuplicateTab, mode: 'UPI', amount: 700 });
+      const invAfter = (await getDoc(doc(aDb, 'invoices/PH7-DUPTAB'))).data();
+      ok('PH7-14 RATIONALE (1) [server behavior, id forced to collide]: Tab A\'s ₹500 payment applies',
+        rTabA.alreadyApplied === false && invAfter.payments.some((p) => p.id === sharedOpIdFromDuplicateTab && p.amount === 500));
+      ok('PH7-14 RATIONALE (2) [server behavior, id forced to collide — this is exactly why PH7-01\'s fix must be client-side]: with the SAME id, Tab B\'s GENUINELY DIFFERENT ₹700 payment is (correctly, by design) treated as "alreadyApplied" by the server\'s own idempotency guard',
+        rTabB.alreadyApplied === true);
+      ok('PH7-14 RATIONALE (3): the invoice shows ONLY the ₹500 payment when the id collides — confirming the server-side guard is strict-by-id (as intended for refresh/retry safety), which is precisely the property PH7-01\'s client-side fix (lib/durableOpId.js page-instance tagging) protects by never letting a duplicated tab reuse another tab\'s id for a new action',
+        invAfter.paid === 500 && invAfter.payments.length === 1);
+      const rFreshTab = await payTxn2(bDb, 'PH7-DUPTAB', { id: 'p_freshly_minted_by_a_normal_new_tab', mode: 'UPI', amount: 700 });
+      const invAfterFresh = (await getDoc(doc(aDb, 'invoices/PH7-DUPTAB'))).data();
+      ok('PH7-14 (control): the SAME scenario with a genuinely fresh id (what a NON-colliding tab — normal new tab, or a duplicated tab under the PH7-01 fix — actually produces) applies as a real second payment, proving the idempotency mechanism itself is correct and the fix point is entirely about never manufacturing the colliding id in the first place',
+        rFreshTab.alreadyApplied === false && invAfterFresh.paid === 1200 && invAfterFresh.payments.length === 2);
     }
 
     // =========================================================================

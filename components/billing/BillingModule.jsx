@@ -536,7 +536,7 @@ function Section({ title, sub, children, defaultOpen = true, badge }) {
   );
 }
 
-function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], onSave, onClose, demoMode, demoCanEditPricing = true, onQuickCustomer, onQuickVehicle, onDownloadPDF, onDuplicate, onCreditNote, readOnly = false, banner = null }) {
+function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], onSave, onClose, demoMode, demoCanEditPricing = true, onQuickCustomer, onQuickVehicle, onDownloadPDF, onDuplicate, onCreditNote, readOnly = false, banner = null, onDirtyChange }) {
   // Billing settings (admin-controlled): GST & discount can be switched off entirely.
   const SETTINGS_KEY = demoMode ? 'maruti_settings_demo' : 'maruti_settings';
   const billingCfg = useMemo(() => { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { return {}; } }, [SETTINGS_KEY]);
@@ -624,8 +624,8 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   const undo = () => { if (!undoStack.current.length) return; setInvRaw((cur) => { redoStack.current.push(cur); return undoStack.current.pop(); }); force((x) => x + 1); };
   const redo = () => { if (!redoStack.current.length) return; setInvRaw((cur) => { undoStack.current.push(cur); return redoStack.current.pop(); }); force((x) => x + 1); };
   // Warn on close if there are unsaved edits (any edit pushes onto the undo stack).
+  const dirty = undoStack.current.length > 0 && JSON.stringify(inv) !== JSON.stringify(initial);
   const guardedClose = async () => {
-    const dirty = undoStack.current.length > 0 && JSON.stringify(inv) !== JSON.stringify(initial);
     if (dirty) {
       const ok = await confirmDialog({ title: 'Discard unsaved changes?', message: 'This invoice has changes that haven’t been saved.', confirmText: 'Discard', cancelText: 'Keep editing', danger: true });
       if (!ok) return;
@@ -633,6 +633,13 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     try { localStorage.removeItem(DRAFT_KEY); } catch {}
     onClose();
   };
+  // PHASE 7b (PH7-02) — surface the same dirty state to the dashboard's tab-switch
+  // guard, which guardedClose's own confirm above cannot cover (a sidebar/tab click
+  // never calls guardedClose — it unmounts this modal directly). Reset unconditionally
+  // on unmount so the flag can never outlive this editor, whether it closed via a
+  // successful save or a discarded/cancelled edit.
+  useEffect(() => { if (onDirtyChange) onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, [onDirtyChange]);
   const set = (patch) => setInv((s) => ({ ...s, ...patch }));
   const [partQ, setPartQ] = useState('');
   const [replaceFor, setReplaceFor] = useState(null); // line id awaiting a new part
@@ -1980,7 +1987,7 @@ function BarPair({ parts, labour }) {
 const defaultBillView = () => ({ q: '', statusF: 'All', payModeF: 'All', dateF: 'All' });
 const billingViewState = defaultBillView();
 
-export default function BillingModule({ demoMode = false, demoCanDelete = false, demoCanEditPricing = true, demoCanExport = true, canManage = true, isAdmin = false, invoices, customers = [], inventory = [], jobCards = [], onPersist, onDelete, onCollectPayment, onRestoreStock, onQuickCustomer, onQuickVehicle, initialStatusFilter, onInitialStatusFilterHandled, actorEmail, onCapacityCleanup }) {
+export default function BillingModule({ demoMode = false, demoCanDelete = false, demoCanEditPricing = true, demoCanExport = true, canManage = true, isAdmin = false, invoices, customers = [], inventory = [], jobCards = [], onPersist, onDelete, onCollectPayment, onRestoreStock, onQuickCustomer, onQuickVehicle, initialStatusFilter, onInitialStatusFilterHandled, actorEmail, onCapacityCleanup, onDirtyChange }) {
   const { t } = useTranslation();
   const SETTINGS_KEY = demoMode ? 'maruti_settings_demo' : 'maruti_settings';
   const V = billingViewState;
@@ -3109,7 +3116,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           the real outcome and only closes/toasts on confirmed success; on failure the modal
           stays open (so nothing typed is lost) and the shared persistence layer's own toast
           already told the user what happened. */}
-      {edit && <InvoiceModal key={`inv:${edit.id || 'new'}:${revOf(edit)}`} initial={edit} readOnly={invoiceViewOnly} banner={isPersistedEdit ? invoiceBanner : null} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { let saved; try { saved = await onPersist?.(iv); } catch (e) { return false; } const finalIv = saved || iv; invoiceLease.release(); setEdit(null); toast.success(`${finalIv.isEstimate ? 'Estimate' : 'Invoice'} ${finalIv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(finalIv), 120); return finalIv; }} onClose={closeInvoiceEditor} />}
+      {edit && <InvoiceModal key={`inv:${edit.id || 'new'}:${revOf(edit)}`} initial={edit} readOnly={invoiceViewOnly} banner={isPersistedEdit ? invoiceBanner : null} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { let saved; try { saved = await onPersist?.(iv); } catch (e) { return false; } const finalIv = saved || iv; invoiceLease.release(); setEdit(null); toast.success(`${finalIv.isEstimate ? 'Estimate' : 'Invoice'} ${finalIv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(finalIv), 120); return finalIv; }} onClose={closeInvoiceEditor} onDirtyChange={onDirtyChange} />}
       {invoiceReviewOpen && isPersistedEdit && invoiceSync.latest && (
         <ConflictReviewDialog
           mode="review"

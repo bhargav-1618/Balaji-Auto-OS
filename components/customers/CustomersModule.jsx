@@ -248,7 +248,7 @@ const CUSTOMER_CONFLICT_FIELDS = [
   { key: 'vehicles', label: 'Vehicles', format: (v) => `${(v || []).length} vehicle${(v || []).length === 1 ? '' : 's'}` },
 ];
 
-function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMode = false, formValuesRef, conflict }) {
+function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMode = false, formValuesRef, conflict, onDirtyChange }) {
   const [f, setF] = useState(initial);
   // Phase 1c — expose the in-progress form so the module can build a conflict rebase
   // ("Keep my changes") without lifting all of this component's state.
@@ -330,6 +330,13 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
     window.addEventListener('beforeunload', h);
     return () => window.removeEventListener('beforeunload', h);
   }, [dirty]);
+  // PHASE 7b (PH7-02) — surface this editor's dirty state to the dashboard so an
+  // in-app tab switch (which beforeunload above cannot see, since it never fires
+  // for an SPA navigation) also confirms before discarding unsaved changes. Reset
+  // to false unconditionally on unmount — reached via BOTH a successful save and a
+  // cancel/close, so the flag can never outlive the editor that set it.
+  useEffect(() => { if (onDirtyChange) onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, [onDirtyChange]);
   // Clears the draft ONLY when this wizard unmounts as a result of a save that the
   // parent confirmed succeeded (saveCustomer only unmounts us via onClose/setEditCust(null)
   // after its own await resolves — see C-1). Cancel/Escape/backdrop-close never sets
@@ -1076,7 +1083,7 @@ function VehicleModal({ initial, onSave, onClose }) {
 const defaultView = () => ({ q: '', typeF: 'All', statusF: 'All', page: 1, perPage: 10, selId: null, scrollY: 0, detailTab: 'Vehicles', drawerScrollY: 0 });
 const customersViewState = defaultView();
 
-export default function CustomersModule({ demoMode = false, demoCanDelete = false, demoCanExport = true, canManage = true, jobCards = [], invoices = [], customers, setCustomers, onSaveCustomerEdit, onCreateJobCard, onCreateInvoice, onOpenJobCard, onOpenInvoice, onAudit }) {
+export default function CustomersModule({ demoMode = false, demoCanDelete = false, demoCanExport = true, canManage = true, jobCards = [], invoices = [], customers, setCustomers, onSaveCustomerEdit, onCreateJobCard, onCreateInvoice, onOpenJobCard, onOpenInvoice, onAudit, onDirtyChange }) {
   const { t } = useTranslation();
   const V = customersViewState; // module-scoped cache; survives unmount on tab switch
   const [q, setQ] = useState(V.q);
@@ -2260,6 +2267,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
           demoMode={demoMode}
           formValuesRef={wizardValuesRef}
           conflict={isPersistedCust(editCust.id) ? { status: recordSync.status, onReview: () => setReviewOpen(true), onClose: closeCustomerEditor } : null}
+          onDirtyChange={onDirtyChange}
         />
       )}
       {reviewOpen && isPersistedCust(editCust && editCust.id) && recordSync.latest && (

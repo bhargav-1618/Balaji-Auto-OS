@@ -20,15 +20,18 @@ ok('appSettings WRITE is admin-only (staff cannot self-promote)',
   /match \/appSettings\/\{docId\}[\s\S]*?allow create, update: if isAdmin\(\)/.test(rules));
 
 // 2. every destructive delete on BUSINESS DATA is admin-gated. The one exception
-// is editLocks (Phase 1b) — a transient coordination lock a user releases for
-// themselves, or anyone clears once it has expired; it holds no business data.
+// is editLocks (Phase 1b, session-check hardened Phase 7b/PH7-27) — a transient
+// coordination lock, deletable only once it has EXPIRED (never an active one,
+// not even by its own owner — an active lease is given up via a release-shaped
+// UPDATE instead, since delete carries no payload for the rules to check a
+// releasing session's identity against); it holds no business data.
 const deleteLines = rules.split('\n').filter((l) => /allow delete:/.test(l));
-const businessDeletes = deleteLines.filter((l) => !/ownedByMe\(\) \|\| expired\(\)/.test(l));
+const businessDeletes = deleteLines.filter((l) => !/^\s*allow delete: if signedIn\(\) && expired\(\);\s*$/.test(l));
 ok('every delete rule on business data is admin-only or explicitly false',
   businessDeletes.length > 0 && businessDeletes.every((l) => /isAdmin\(\)/.test(l) || /if false/.test(l)),
   businessDeletes.filter((l) => !/isAdmin\(\)|if false/.test(l)).join(' | '));
-ok('editLocks delete is scoped to the owner or an expired lease (never a stranger)',
-  /match \/editLocks\/\{lockId\}[\s\S]*?allow delete: if signedIn\(\) && \(ownedByMe\(\) \|\| expired\(\)\)/.test(rules));
+ok('editLocks delete is restricted to an already-EXPIRED lease only (never an active one, not even by its own owner — PH7-27 closes the gap raw delete cannot be made session-aware for)',
+  /match \/editLocks\/\{lockId\}[\s\S]*?allow delete: if signedIn\(\) && expired\(\);/.test(rules));
 
 // 3. ledgers are immutable (append-only) — audit log can't be tampered
 for (const led of ['sales', 'restocks', 'stockAdjustments', 'auditLog']) {

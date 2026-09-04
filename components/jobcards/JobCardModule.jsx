@@ -423,7 +423,7 @@ const JOBCARD_CONFLICT_FIELDS = [
 const defaultJCView = () => ({ q: '', statusF: 'All' });
 const jcViewState = defaultJCView();
 
-export default function JobCardModule({ demoMode = false, demoCanDelete = false, canManage = true, isAdmin = false, inventory = [], customers = [], invoices = [], onPersist, onDelete, onRegisterVehicle, savedCards = [], onOpenCustomer, onOpenVehicle, onCreateInvoice, onOpenInvoice, initialKpiFilter, onInitialKpiFilterHandled, actorEmail, onCapacityCleanup }) {
+export default function JobCardModule({ demoMode = false, demoCanDelete = false, canManage = true, isAdmin = false, inventory = [], customers = [], invoices = [], onPersist, onDelete, onRegisterVehicle, savedCards = [], onOpenCustomer, onOpenVehicle, onCreateInvoice, onOpenInvoice, initialKpiFilter, onInitialKpiFilterHandled, actorEmail, onCapacityCleanup, onDirtyChange }) {
   const { t } = useTranslation();
   const savedRef = useRef(savedCards);
   savedRef.current = savedCards;
@@ -506,7 +506,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     if (!r.ok) { toast.error(`🔒 ${r.heldBy} is still editing this job card.`); return; }
     if (jcSync.latest) applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jcSync.latest }));
     jcSync.markSynced();
-    dirty.current = false;
+    setDirty(false);
     setJcViewOnly(false);
   }, [leasedJobNo, jcLease, jcSync, demoMode]); // eslint-disable-line react-hooks/exhaustive-deps
   // Job Details drawer: reset its scroll to the top each time it opens (Issue 2) and lock
@@ -650,9 +650,9 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
       setJcViewOnly(false);
     }
     applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jc }));
-    dirty.current = false; setCopyUndo({}); appScrollTo({ top: 0, behavior: 'smooth' });
+    setDirty(false); setCopyUndo({}); appScrollTo({ top: 0, behavior: 'smooth' });
   };
-  const duplicateCard = (jc) => { const copy = { ...jc, jobNo: nextJobCardNumber(savedRef.current, readJcDefaults(demoMode).prefix), status: 'Received', statusLog: [{ status: 'Received', at: Date.now() }], savedAt: undefined }; applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...copy })); dirty.current = true; setCopyUndo({}); toast.success('Duplicated — review and save as a new card'); appScrollTo({ top: 0, behavior: 'smooth' }); };
+  const duplicateCard = (jc) => { const copy = { ...jc, jobNo: nextJobCardNumber(savedRef.current, readJcDefaults(demoMode).prefix), status: 'Received', statusLog: [{ status: 'Received', at: Date.now() }], savedAt: undefined }; applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...copy })); setDirty(true); setCopyUndo({}); toast.success('Duplicated — review and save as a new card'); appScrollTo({ top: 0, behavior: 'smooth' }); };
   // JC 1.2: copy a field from the most recent saved job card, snapshotting the current
   // (possibly hand-typed, unsaved) value first so it can be restored exactly.
   const copyPrevious = (key) => {
@@ -664,10 +664,20 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
   const undoCopy = (key) => {
     if (!(key in copyUndo)) return;
     applyCard((c) => ({ ...c, [key]: copyUndo[key] }));
-    dirty.current = true;
+    setDirty(true);
     setCopyUndo((u) => { const n = { ...u }; delete n[key]; return n; });
   };
   const dirty = useRef(false);
+  // PHASE 7b (PH7-02) — surface the same in-progress-edit state to the dashboard's
+  // tab-switch guard (dirty.current alone is invisible to it; a ref write triggers
+  // no effect). Every assignment site below is routed through this instead of
+  // writing dirty.current directly, so the parent's flag never drifts from this
+  // module's own.
+  const setDirty = useCallback((v) => { dirty.current = v; if (onDirtyChange) onDirtyChange(v); }, [onDirtyChange]);
+  // Defensive backstop: whatever state the draft was in, the whole module unmounting
+  // (a tab switch away from Job Cards) means there is no more open editor for the
+  // dashboard's guard to protect — never leave it stuck reporting dirty.
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, [onDirtyChange]);
   const cardRef = useRef(card);
   // Synchronous double-save guard. disabled={saving} is async React state, so a rapid
   // second click can pass before the button re-renders disabled — persisting the card
@@ -691,9 +701,9 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
   }, []);
 
   const set = useCallback((patch) => {
-    dirty.current = true;
+    setDirty(true);
     applyCard((c) => ({ ...c, ...patch }));
-  }, [applyCard]);
+  }, [applyCard, setDirty]);
 
   // Deep-link (Issue E): a job card opened in a new tab from Customers lands here — load
   // the actual record into the editor, not just a search. savedCards load async, so this
@@ -723,7 +733,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     if (match) {
       jobOpenDone.current = true;
       applyCard(splitVehicle({ ...emptyCard(savedCards, readJcDefaults(demoMode)), ...match }));
-      dirty.current = false;
+      setDirty(false);
       try { localStorage.removeItem('maruti_jobcard_open'); } catch {}
     } else if ((savedCards || []).length) {
       // Loaded, but genuinely not found (e.g. beyond the live window, or deleted) — filter
@@ -812,7 +822,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
       r.onload = () => applyCard((c) => ({ ...c, [key]: [...c[key], r.result].slice(0, 8) }));
       r.readAsDataURL(f);
     });
-    dirty.current = true;
+    setDirty(true);
   };
   const onDrop = (key) => (e) => { e.preventDefault(); addPhotos(key, e.dataTransfer.files); };
 
@@ -924,7 +934,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
         savedAt: Date.now(),
       });
       try { localStorage.removeItem(DRAFT_KEY); } catch {}
-      dirty.current = false;
+      setDirty(false);
       jcLease.release(); setLeasedJobNo(null); setJcViewOnly(false);   // Phase 1b — hand the lease back after a real save
       toast.success(asDraft ? `Draft saved — ${card.customer}` : `Job card ${card.jobNo} saved`);
       applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode)));
@@ -1353,7 +1363,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                 is the reachable entry point below xl; see the matching exit toggle in the
                 preview column's own header, fixed the same way. */}
             <button onClick={() => setFullPreview(true)} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition xl:hidden flex items-center gap-1.5"><FileDown size={14} /> Preview PDF</button>
-            <button onClick={async () => { if (dirty.current && !await confirmDialog({ title: 'Discard the current draft?', confirmText: 'Discard', danger: true })) return; jcLease.release(); setLeasedJobNo(null); setJcViewOnly(false); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); dirty.current = false; setCopyUndo({}); try { localStorage.removeItem(DRAFT_KEY); } catch {} }} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition">New / Clear</button>
+            <button onClick={async () => { if (dirty.current && !await confirmDialog({ title: 'Discard the current draft?', confirmText: 'Discard', danger: true })) return; jcLease.release(); setLeasedJobNo(null); setJcViewOnly(false); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); setDirty(false); setCopyUndo({}); try { localStorage.removeItem(DRAFT_KEY); } catch {} }} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition">New / Clear</button>
             {!jcViewOnly && <button onClick={() => saveCard(true)} disabled={saving || !card.customer?.trim()} title="Park this job card — nothing enters the workshop queue yet" className="h-10 px-4 rounded-xl text-xs font-bold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 active:scale-95 transition disabled:opacity-40">Save Draft</button>}
             {/* NOTE: must be () => saveCard(false), NOT onClick={saveCard}. React passes the
                 click event as the first argument, which would land in `asDraft` as a truthy
@@ -1368,8 +1378,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             {jcViewOnly && jcLease.status === 'held' && <EditLeaseBanner status="held" heldByEmail={jcLease.heldByEmail} />}
             {jcViewOnly && jcLease.status !== 'held' && <EditAvailableBar onEdit={claimJobCardEdit} />}
             {jcViewOnly
-              ? <RecordUpdatedNotice status={jcSync.status} onAcknowledge={() => { if (jcSync.latest) applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jcSync.latest })); jcSync.markSynced(); dirty.current = false; }} />
-              : <RecordConflictBanner status={jcSync.status} onReview={() => setJcReviewOpen(true)} onClose={() => { jcLease.release(); setLeasedJobNo(null); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); dirty.current = false; }} />}
+              ? <RecordUpdatedNotice status={jcSync.status} onAcknowledge={() => { if (jcSync.latest) applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jcSync.latest })); jcSync.markSynced(); setDirty(false); }} />
+              : <RecordConflictBanner status={jcSync.status} onReview={() => setJcReviewOpen(true)} onClose={() => { jcLease.release(); setLeasedJobNo(null); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); setDirty(false); }} />}
           </div>
         )}
         {jcReviewOpen && leasedJobNo && jcSync.latest && (
@@ -1379,7 +1389,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             fields={JOBCARD_CONFLICT_FIELDS}
             opened={card}
             latest={jcSync.latest}
-            onUseLatest={(latest) => { setJcReviewOpen(false); jcSync.markSynced(revOf(latest)); applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...latest })); dirty.current = false; }}
+            onUseLatest={(latest) => { setJcReviewOpen(false); jcSync.markSynced(revOf(latest)); applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...latest })); setDirty(false); }}
             onClose={() => setJcReviewOpen(false)}
           />
         )}
