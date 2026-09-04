@@ -85,6 +85,9 @@ current release.
   - `commitStock` (inline stepper) writes its ledger row to a deterministic id.
   Residual: `sessionStorage` does not survive the tab being *closed* (vs refreshed);
   an advisory `auditLog` line can still duplicate. Documented in KNOWN_LIMITATIONS.md.
+  Shipped in commit `fix(reliability): make business operations refresh-safe`
+  (`85e4cd3`); production build `YV9LAPH1sS-he7PKrrv0h`. Gates: `npm test` 127/127,
+  `npm run test:rules` 94/94, lint 0, build ✓. No `firestore.rules` change.
 
 ## Scale — before large datasets
 
