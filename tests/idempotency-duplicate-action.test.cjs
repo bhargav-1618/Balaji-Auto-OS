@@ -67,9 +67,10 @@ console.log('lib/opId.js — operation identity contract\n');
 ok('newOpId is a pure id factory (timestamp is for ordering, not identity)',
   /export const newOpId = \(prefix = 'op'\) =>/.test(opIdLib));
 ok('the lifecycle contract is documented (one opId per intent, reused on retry, new per new action)',
-  /reuses it[\s\S]{0,20}for every retry/i.test(opIdLib) && /NEW opId is created only when the user starts a NEW/i.test(opIdLib));
-ok('the browser-refresh limitation is documented',
-  /does NOT survive a full browser refresh/i.test(opIdLib));
+  /reuses it for\s*\n?\s*\/\/\s*every retry of that same intent/i.test(opIdLib) && /A NEW opId is created only when the user starts a NEW/i.test(opIdLib));
+ok('Phase 5b: the id is kept in sessionStorage so it survives a browser refresh',
+  /kept in `sessionStorage`|SURVIVES A\s*\n?\s*\/\/\s*BROWSER REFRESH/i.test(opIdLib)
+  && /lib\/durableOpId\.js/.test(opIdLib));
 
 // =====================================================================
 // PH4-01 — COLLECT PAYMENT
@@ -80,9 +81,9 @@ const payTxn = slice(dash, 'const collectInvoicePayment = async', 'const deleteI
 ok('[OK] PaymentModal has a synchronous in-flight guard (blocks double-click)',
   /const savingRef = useRef\(false\);/.test(bill)
   && /if \(savingRef\.current\) return;/.test(slice(bill, 'function PaymentModal', 'export default')));
-ok('PaymentModal owns ONE stable pay-op id in a ref, reused for every retry',
-  /const payOpIdRef = useRef\(`p_/.test(bill)
-  && /opId: payOpIdRef\.current/.test(bill));
+ok('PaymentModal owns ONE stable pay-op id, reused for every retry (Phase 5b: DURABLE — survives a refresh)',
+  /useDurableOpId\(`payment:\$\{invoice\.id\}`, 'p'\)/.test(bill)
+  && /opId: payOpId/.test(bill));
 ok('the PaymentModal render is keyed per invoice so a new "collect payment" remounts (fresh opId)',
   /<PaymentModal key=\{`pay:\$\{payFor\.id\}`\}/.test(bill));
 ok('collectPayment uses meta.opId as the payment row id (not a fresh random each call)',
@@ -140,9 +141,9 @@ const { applyPoReceive } = require('../lib/poReceive.js');
 ok('[OK] receivePO has an in-flight Set guard keyed by po.id',
   /const poAdvancing = useRef\(new Set\(\)\)/.test(dash)
   && /if \(poAdvancing\.current\.has\(po\.id\)\) return;/.test(dash));
-ok('ReceivePOForm owns ONE stable receiptId in a ref and passes it to onSubmit',
-  /const receiptIdRef = useRef\(`rcpt_/.test(billPO)
-  && /onSubmit\?\.\(receivedLines, receiptIdRef\.current\)/.test(billPO));
+ok('ReceivePOForm owns ONE stable receiptId, passed to onSubmit (Phase 5b: DURABLE)',
+  /useDurableOpId\(`receive:\$\{po\?\.id \|\| 'po'\}`, 'rcpt'\)/.test(billPO)
+  && /onSubmit\?\.\(receivedLines, receiptId\)/.test(billPO));
 ok('poReceiveDoc reads appliedReceiptIds BEFORE any write and no-ops on a known receiptId',
   /const applied = Array\.isArray\(server\.appliedReceiptIds\) \? server\.appliedReceiptIds : \[\];/.test(po)
   && /if \(receiptId && applied\.includes\(receiptId\)\) \{[\s\S]{0,120}alreadyApplied: true/.test(po));
@@ -186,9 +187,9 @@ console.log('\nPH4-03  Quick Sell / Stock Out\n');
 const sellBlock = slice(dash, 'async function handleSellInner', 'async function adjustStockLine');
 ok('[OK] handleSell has a synchronous in-flight guard (sellLockRef)',
   /const sellLockRef = useRef\(false\)/.test(dash) && /if \(sellLockRef\.current\) return;/.test(dash));
-ok('CheckoutModal owns ONE stable sale-op id in a ref, passed as the 4th confirm arg',
-  /saleOpIdRef = useRef\(`sale_/.test(dash)
-  && /onConfirm\(q, p, floor > 0 && p < floor, saleOpIdRef\.current\)/.test(dash));
+ok('CheckoutModal owns ONE stable sale-op id, passed as the 4th confirm arg (Phase 5b: DURABLE)',
+  /useDurableOpId\(`sell:\$\{part\.id\}`, 'sale'\)/.test(dash)
+  && /onConfirm\(q, p, floor > 0 && p < floor, saleOpId\)/.test(dash));
 ok('the CheckoutModal render is keyed per part so a new sale remounts (fresh opId)',
   /<CheckoutModal key=\{`co:\$\{checkoutPart\.id\}`\}/.test(dash));
 ok('the WHOLE sale is one transaction: sale row + stock + salesCount + rollup, keyed by sales/{opId}',
@@ -254,11 +255,11 @@ ok('ad-hoc restock is now ONE transaction keyed by restocks/{restockOpId}',
 ok('adjust/restock reads (marker + part) both happen before any write',
   /const adjSnap = await tx\.get\(adjRef\);\s*\n\s*const partSnap = await tx\.get\(partRef\);/.test(adjBlock)
   && /const rsSnap = await tx\.get\(rsRef\);\s*\n\s*const partSnap = await tx\.get\(partRef\);/.test(rsBlock));
-ok('the modals own stable op ids in refs (StockAdjustModal / RestockModal)',
-  /adjustOpIdRef = useRef\(`adj_/.test(dash) && /restockOpIdRef = useRef\(`rs_/.test(dash));
-ok('bulk adjust / bulk receive generate ONE op id per row, reused on a whole-batch retry',
-  /opId: `adj_\$\{Date\.now\(\)\.toString\(36\)\}[^`]*\$\{p\.id\.slice\(0, 6\)\}`/.test(dash)
-  && /opId: `rs_\$\{Date\.now\(\)\.toString\(36\)\}[^`]*\$\{part\.id\.slice\(0, 6\)\}`/.test(dash));
+ok('the modals own stable op ids (StockAdjustModal / RestockModal) — Phase 5b: DURABLE',
+  /useDurableOpId\(`adjust:\$\{part\.id\}`, 'adj'\)/.test(dash) && /useDurableOpId\(`restock:\$\{part\.id\}`, 'rs'\)/.test(dash));
+ok('bulk adjust / bulk receive use ONE DURABLE op id per row, recovered on a refresh',
+  /opId: readOrCreateOpId\(`bulk-adjust:\$\{p\.id\}`, 'adj'\)/.test(dash)
+  && /opId: readOrCreateOpId\(`bulk-restock:\$\{part\.id\}`, 'rs'\)/.test(dash));
 ok('the adjust/restock error messages admit uncertainty',
   /press Record adjustment again \(a repeat is safe\)/.test(dash)
   && /press Receive again \(a repeat is safe\)/.test(dash));
@@ -285,23 +286,23 @@ ok('PH4-05 (restock replay): +8 applied once → stock 13, one restock row',
 console.log('\nPH4-06  Create Purchase Order / Create Supplier\n');
 ok('[OK] createPO has a boolean in-flight guard (poCreateLock)',
   /const poCreateLock = useRef\(false\)/.test(dash) && /if \(poCreateLock\.current\) return false;/.test(dash));
-ok('POCreateForm owns ONE stable poId in a ref and passes it to onSubmit',
-  /const poIdRef = useRef\(`po_/.test(billPO) && /poId: poIdRef\.current/.test(billPO));
+ok('POCreateForm owns ONE stable poId, passed to onSubmit (Phase 5b: DURABLE)',
+  /useDurableOpId\('create-po', 'po'\)/.test(billPO) && /\bpoId,/.test(billPO));
 ok('poCreateDoc writes to that exact doc id with setDoc(merge) when a poId is supplied',
   /if \(poId\) return setDoc\(doc\(db, 'purchaseOrders', String\(poId\)\), data, \{ merge: true \}\)/.test(po));
 ok('createPOInner threads input.poId (stable) instead of a fresh id per retry',
   /const poId = input\.poId \|\| `po_/.test(dash)
   && /await poCreateDoc\(base, user\?\.email, poId\)/.test(dash));
-ok('SupplierModal owns ONE stable createOpId in a ref and passes it in onSave',
-  /createOpIdRef = useRef\(`sup_/.test(dash) && /createOpId: createOpIdRef\.current/.test(dash));
+ok('SupplierModal owns ONE stable createOpId, passed in onSave (Phase 5b: DURABLE)',
+  /useDurableOpId\('create-supplier', 'sup'\)/.test(dash) && /_rev: supplier\?\._rev, createOpId \}/.test(dash));
 ok('handleSupplierSaveInner setDoc()s a new supplier to the client-stable id (no addDoc auto-id)',
   /const newId = formData\.createOpId \|\| `sup_/.test(dash)
   && /await setDoc\(doc\(db, COLLECTIONS\.SUPPLIERS, newId\), \{ \.\.\.payload, createdAt: serverTimestamp\(\) \}, \{ merge: true \}\)/.test(dash));
 ok('createSupplierNow (quick-create) uses a deterministic id derived from the name',
   /const quickId = `sup_qc_/.test(dash) && /setDoc\(doc\(db, COLLECTIONS\.SUPPLIERS, quickId\)/.test(dash));
 // Step 6 global-audit finding: Create Part is the same PH4-06 class (was addDoc auto-id).
-ok('PartModal owns ONE stable createOpId ref, sent only on a NEW part',
-  /createOpIdRef = useRef\(`part_/.test(dash) && /if \(!isEdit\) out\.createOpId = createOpIdRef\.current;/.test(dash));
+ok('PartModal owns ONE stable createOpId, sent only on a NEW part (Phase 5b: DURABLE)',
+  /useDurableOpId\('create-part', 'part'\)/.test(dash) && /if \(!isEdit\) out\.createOpId = createOpId;/.test(dash));
 ok('a new part is written with setDoc to the client-stable id (no addDoc auto-id)',
   /newPartId = formData\.createOpId \|\| `part_/.test(dash)
   && /await setDoc\(doc\(db, COLLECTIONS\.PARTS, newPartId\)[\s\S]{0,160}\{ merge: true \}\)/.test(dash)
@@ -338,14 +339,18 @@ ok('a reservation baseline map pins the reserved-stock effect per jobNo',
   /const reserveBaselineRef = useRef\(new Map\(\)\)/.test(dash)
   && /const pinReserveBaseline = \(jobNo, prior\) =>/.test(dash));
 ok('the reserve delta is applied AFTER the awaited job-card write, not before it',
-  /await persistJobCardsDiff\(prev, next\);[\s\S]{0,600}await applyReserveDelta\(reserveDelta\(reserveBaseline, card\)\);/.test(jcBlock)
+  /await persistJobCardsDiff\(prev, next\);[\s\S]{0,600}await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);/.test(jcBlock)
   && !/applyReserveDelta[\s\S]{0,400}await persistJobCardsDiff\(prev, next\);/.test(jcBlock));
 ok('the guarded-txn edit path also defers the reserve delta until after saveGuarded',
-  /store\.saveGuarded\(COLLECTIONS\.JOB_CARDS[\s\S]{0,600}await applyReserveDelta\(reserveDelta\(reserveBaseline, card\)\);/.test(jcBlock));
+  /store\.saveGuarded\(COLLECTIONS\.JOB_CARDS[\s\S]{0,600}await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);/.test(jcBlock));
 ok('the baseline is advanced only after a confirmed write (so a retry recomputes the same delta)',
-  /await applyReserveDelta\(reserveDelta\(reserveBaseline, card\)\);\s*\n\s*reserveBaselineRef\.current\.set\(card\.jobNo, card\);/.test(jcBlock));
-ok('deleteJobCard also defers the reservation RELEASE until the delete is confirmed',
-  /await persistJobCardsDiff\(prev, next\);\s*\n[\s\S]{0,200}await applyReserveDelta\(reserveDelta\(baseline, null\)\);/.test(dash));
+  /await applyReserveDelta\(reserveDelta\(reserveBaseline, card\), reserveOpId\);\s*\n\s*reserveBaselineRef\.current\.set\(card\.jobNo, card\);/.test(jcBlock));
+ok('Phase 5b: the reservation increment carries a DURABLE reserveOpId + per-part appliedReserveIds marker',
+  /const reserveOpId = demoMode \? null : readOrCreateOpId\(reserveScope, 'jcr'\);/.test(jcBlock)
+  && /if \(reserveOpId && applied\.includes\(reserveOpId\)\) return;/.test(dash)
+  && /appliedReserveIds: \[\.\.\.applied, reserveOpId\]\.slice\(-40\)/.test(dash));
+ok('deleteJobCard also defers the reservation RELEASE until the delete is confirmed (with a durable id)',
+  /await persistJobCardsDiff\(prev, next\);\s*\n[\s\S]{0,240}await applyReserveDelta\(reserveDelta\(baseline, null\), relOpId\);/.test(dash));
 ok('the job-card doc write is keyed by jobNo (setDoc merge) — a retry rewrites the same doc',
   /batchOps\.push\(\{\s*\n?\s*type: 'set',[\s\S]{0,200}merge: true,/.test(read('../services/persistenceStore.js')));
 

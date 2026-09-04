@@ -614,6 +614,97 @@ async function main() {
     }
 
     // =========================================================================
+    // PHASE 5b — REFRESH / RELOAD RELIABILITY (regression). Models the exact
+    // Phase 5 danger: a transaction COMMITS server-side, the client never sees the
+    // response (browser refresh), the client state is reset, the DURABLE operation
+    // id is RECOVERED from sessionStorage, and the SAME operation is replayed.
+    // Proves one business effect against the real emulator + the real rules.
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      const aDb = testEnv.authenticatedContext('uid-A', { email: STAFF_EMAIL }).firestore();
+
+      // ---- PH5-02: payment — recover payOpId across a "refresh", retry ----
+      const payTxn = (db, invId, pay) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'invoices', invId);
+        const data = (await tx.get(ref)).data();
+        const prior = Array.isArray(data.payments) ? data.payments : [];
+        if (pay && pay.id && prior.some((p) => p && p.id === pay.id)) return { alreadyApplied: true };
+        const payments = [...prior, pay];
+        const grand = (data.lines || []).reduce((s, l) => s + Number(l.qty) * Number(l.rate), 0);
+        const paid = payments.reduce((s, p) => s + Number(p.amount), 0);
+        tx.update(ref, { payments, paid, balance: grand - paid, _rev: (data._rev || 0) + 1 });
+        return { alreadyApplied: false };
+      });
+      await seedDoc(testEnv, 'invoices/PH5-INV', { lines: [{ qty: 1, rate: 500 }], payments: [], _rev: 0 });
+      const durablePayId = 'p_durable_1';                 // sessionStorage: ph5b:op:payment:PH5-INV
+      await payTxn(aDb, 'PH5-INV', { id: durablePayId, mode: 'Cash', amount: 500 }); // commits; ack lost
+      // ...browser refreshes. React state gone. sessionStorage kept. user retries:
+      const r = await payTxn(aDb, 'PH5-INV', { id: durablePayId, mode: 'Cash', amount: 500 });
+      const inv = (await getDoc(doc(aDb, 'invoices/PH5-INV'))).data();
+      ok('PH5-02: payment committed, "refresh", recover the durable id, retry -> ONE payment, paid 500',
+        r.alreadyApplied === true && inv.payments.length === 1 && inv.paid === 500 && inv.balance === 0);
+      // a genuinely separate later payment (fresh durable id after the first was cleared)
+      await payTxn(aDb, 'PH5-INV', { id: 'p_durable_2', mode: 'UPI', amount: 200 });
+      const inv2 = (await getDoc(doc(aDb, 'invoices/PH5-INV'))).data();
+      ok('PH5-02: a new durable id after the first cleared -> a legitimate second payment',
+        inv2.payments.length === 2 && inv2.paid === 700);
+
+      // ---- PH5-02: quick sell — recover saleOpId across a "refresh" ----
+      const sellTxn = (db, partId, want, opId) => runTransaction(db, async (tx) => {
+        const saleRef = doc(db, 'sales', opId);
+        const partRef = doc(db, 'parts', partId);
+        const sSnap = await tx.get(saleRef);
+        const pSnap = await tx.get(partRef);
+        if (sSnap.exists()) return { alreadyApplied: true };
+        tx.set(saleRef, { partId, qty: want });
+        tx.update(partRef, { stock: increment(-want), salesCount: increment(want) });
+        tx.set(doc(db, 'salesRollups', '2026-09'), { units: increment(want) }, { merge: true });
+        return { alreadyApplied: false };
+      });
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'parts/PH5-SELL', { stock: 10, salesCount: 0 });
+      const durableSaleId = 'sale_durable_1';
+      await sellTxn(aDb, 'PH5-SELL', 3, durableSaleId);   // commits; ack lost
+      await sellTxn(aDb, 'PH5-SELL', 3, durableSaleId);   // refresh + recover id + retry
+      const sp = (await getDoc(doc(aDb, 'parts/PH5-SELL'))).data();
+      const rows = (await getDocs(collection(aDb, 'sales'))).size;
+      ok('PH5-02: quick sell committed, "refresh", recover the durable id, retry -> stock -3 once, ONE sales row',
+        sp.stock === 7 && rows === 1);
+
+      // ---- PH5-04: job-card reservation — appliedReserveIds marker ----
+      const reserveTxn = (db, partId, delta, reserveOpId) => runTransaction(db, async (tx) => {
+        const ref = doc(db, 'parts', partId);
+        const snap = await tx.get(ref);
+        const applied = Array.isArray(snap.data().appliedReserveIds) ? snap.data().appliedReserveIds : [];
+        if (reserveOpId && applied.includes(reserveOpId)) return;
+        tx.update(ref, { reserved: increment(delta), appliedReserveIds: [...applied, reserveOpId].slice(-40) });
+      });
+      await testEnv.clearFirestore();
+      await seedDoc(testEnv, 'parts/PH5-JC', { stock: 20, reserved: 0 });
+      await reserveTxn(aDb, 'PH5-JC', 2, 'jcr_durable_1'); // job-card save commits; ack lost
+      await reserveTxn(aDb, 'PH5-JC', 2, 'jcr_durable_1'); // refresh + recover id + retry
+      const jp = (await getDoc(doc(aDb, 'parts/PH5-JC'))).data();
+      ok('PH5-04: job-card reservation committed, "refresh", recover the durable id, retry -> reserved = 2 (once)',
+        jp.reserved === 2 && Array.isArray(jp.appliedReserveIds) && jp.appliedReserveIds.length === 1);
+      ok('PH5-04: writing appliedReserveIds on a parts doc is allowed by the rules (no rules change)',
+        jp.appliedReserveIds[0] === 'jcr_durable_1');
+
+      // ---- PH5-03: create PO / supplier / part — recovered stable id ----
+      await testEnv.clearFirestore();
+      const createWithId = (coll, id, data) => setDoc(doc(aDb, coll, id), data, { merge: true });
+      for (const [coll, id] of [['purchaseOrders', 'po_durable_1'], ['suppliers', 'sup_durable_1'], ['parts', 'part_durable_1']]) {
+        await createWithId(coll, id, { name: 'ZZ QA', createdAt: 1 });
+        await createWithId(coll, id, { name: 'ZZ QA', createdAt: 1 }); // refresh + recover id + retry
+      }
+      const poC = (await getDocs(collection(aDb, 'purchaseOrders'))).size;
+      const supC = (await getDocs(collection(aDb, 'suppliers'))).size;
+      const partC = (await getDocs(collection(aDb, 'parts'))).size;
+      ok('PH5-03: create PO/supplier/part, "refresh", recover the durable id, retry -> ONE doc each',
+        poC === 1 && supC === 1 && partC === 1);
+    }
+
+    // =========================================================================
     // Deny-by-default fallback for any collection not explicitly listed.
     // =========================================================================
     await testEnv.clearFirestore();

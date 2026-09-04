@@ -64,10 +64,27 @@ current release.
     write is confirmed, from a pinned per-`jobNo` baseline, so a retry neither
     double-reserves nor drops the reservation.
   Error messages on these paths changed from "Nothing was changed" to uncertainty-aware
-  wording ("…it may already be recorded — press … again, a repeat is safe"). Residual:
-  the op id is a `useRef` and does not survive a full browser refresh (documented in
-  KNOWN_LIMITATIONS.md); a duplicate delivery may still write a second advisory
-  `auditLog` line.
+  wording ("…it may already be recorded — press … again, a repeat is safe").
+- ~~**Refresh / reload during a workflow.**~~ **DONE — CONCURRENCY PHASE 5b, shipped
+  and verified (emulator + production).** The Phase 5 audit found that the Phase 4b
+  operation ids were `useRef`s the browser destroyed on refresh, so *commit → lost
+  ack → reload → retry* still duplicated payment / quick-sell / PO-receive / stock
+  moves, and a walk-in invoice could be created twice. Fixed:
+  - operation identity moved to **`sessionStorage`** (`lib/durableOpId` +
+    `hooks/useDurableOpId`), keyed by workflow + record, so it survives a tab
+    refresh and a retry recovers the same id → the existing backend markers make it
+    a no-op. Cleared on a confirmed result; kept on an ambiguous one, with a
+    "check the record before retrying" banner on the modal;
+  - the **invoice new-form draft** uses one static key that survives a refresh and
+    carries the invoice's client id (Restore/Discard banner); `persistInvoice`
+    reuses an already-allocated number on a retry (no second number); a
+    near-identical recent **walk-in** invoice prompts for confirmation (PH5-07);
+  - the **job-card reservation** gained a durable `jc-reserve:<jobNo>` op id plus a
+    per-part `appliedReserveIds` transaction marker, so `reserved` increments
+    exactly once across a reload + retry;
+  - `commitStock` (inline stepper) writes its ledger row to a deterministic id.
+  Residual: `sessionStorage` does not survive the tab being *closed* (vs refreshed);
+  an advisory `auditLog` line can still duplicate. Documented in KNOWN_LIMITATIONS.md.
 
 ## Scale — before large datasets
 

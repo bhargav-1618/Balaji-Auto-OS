@@ -77,20 +77,42 @@ rules published.)*
   whole sale is now one transaction: stock + ledger row + monthly rollup), manual
   stock adjustment (`stockAdjustments/{opId}`), ad-hoc restock (`restocks/{opId}`),
   create PO / create supplier (client-stable doc id via `setDoc(..., {merge:true})`),
-  new job-card stock reservation (applied only after the card write is confirmed,
-  from a pinned per-`jobNo` baseline). `lib/opId.js` documents the contract.
+  new job-card stock reservation. `lib/opId.js` documents the contract.
+- **Refresh / reload during a workflow is now recoverable** (CONCURRENCY PHASE 5b —
+  shipped, emulator + production verified). The Phase 4b operation id now lives in
+  **`sessionStorage`** (`lib/durableOpId`, `hooks/useDurableOpId`), keyed by
+  workflow + record, so it **survives a browser refresh of the tab**. The sequence
+  *transaction commits server-side → the ack is lost to a refresh → the user
+  reloads and retries* now recovers the same id and the existing backend markers
+  make it a no-op — one business effect, not two. Covered: payment
+  (`payment:<invoiceId>`), PO receive (`receive:<poId>`), quick sell
+  (`sell:<partId>`), stock adjust (`adjust:<partId>`), ad-hoc restock
+  (`restock:<partId>`), bulk adjust/receive (per-part), create PO / supplier / part
+  (`create-po` / `create-supplier` / `create-part`), and the job-card reservation
+  (`jc-reserve:<jobNo>` + a per-part `appliedReserveIds` marker so `reserved`
+  increments exactly once across a reload). The id is cleared on a *confirmed*
+  result (success, or a business rejection that definitely did not commit); an
+  *ambiguous* failure keeps it, and the affected modal shows a "check the record
+  before retrying" notice. The **invoice new-form draft** now uses one static
+  localStorage key (`maruti_invoice_draft_v2_*`) that survives a refresh and
+  carries the invoice's client id, with a Restore/Discard banner like every other
+  create form; `persistInvoice` reuses an already-allocated number on a retry, and
+  a near-identical recent walk-in invoice prompts for confirmation.
   Residual, low severity:
-  - The operation id lives in a React `useRef`, so it does **not** survive a full
-    browser refresh. If the user hard-refreshes *between* an ambiguous failure and a
-    retry, the retry is treated as a new intent. If the first attempt had actually
-    committed, the duplicate is still visible in the record for the user to see and
-    correct; nothing is silently corrupted.
-  - Invoice numbering (PHASE 2) is unchanged: a save that fails **after** the
-    `counters/` transaction allocated a number still skips that number (a gap, legal
-    under GST Rule 46(b)). This was a deliberate design choice, not reworked in 4b.
+  - The operation id lives in `sessionStorage`, so it does not survive the tab
+    being **closed** (as opposed to refreshed), a different browser, or private
+    mode with storage blocked. In those cases a retry is a new intent; if the
+    first attempt committed the record still shows it (no silent corruption).
+  - Invoice numbering (PHASE 2): a save that fails **after** the `counters/`
+    transaction allocated a number *and* whose invoice document is never written
+    (e.g. browser data cleared before the queued write replays) still skips that
+    number — a gap, legal under GST Rule 46(b). A retry that recovers the draft
+    reuses the same number.
   - A duplicate delivery may still write a second **audit-log** line for the same
     action (the `auditLog` collection is append-only and advisory); the business
-    records themselves are single-effect.
+    records themselves are single-effect. The `commitStock` inline-stepper
+    "quick restock" ledger row is now a deterministic-id `setDoc` (one row per
+    target level); its advisory audit line can still duplicate.
 
 ## 🟡 Performance (fine at current scale)
 

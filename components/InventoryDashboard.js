@@ -95,6 +95,8 @@ import { formatDocNo } from '../lib/docCounter';
 import { useEditLease } from '../hooks/useEditLease';
 import { useRecordSync } from '../hooks/useRecordSync';
 import { useLeaseReleaseToast } from '../hooks/useLeaseReleaseToast';
+import { useDurableOpId } from '../hooks/useDurableOpId';
+import { clearOpId, readOrCreateOpId } from '../lib/durableOpId';
 import EditLeaseBanner from './common/EditLeaseBanner';
 import EditAvailableBar from './common/EditAvailableBar';
 import RecordUpdatedNotice from './common/RecordUpdatedNotice';
@@ -982,8 +984,10 @@ function RestockModal({ part, suppliers = [], onConfirm, onClose, asPage = false
   const [notes, setNotes] = useState('');
   const [updateDefaultPrice, setUpdateDefaultPrice] = useState(false);
   const [updateDefaultSupplier, setUpdateDefaultSupplier] = useState(false);
-  // Phase 4b (PH4-05) — stable restock-op id for the life of this modal.
-  const restockOpIdRef = useRef(`rs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  // Phase 4b (PH4-05) + Phase 5b (PH5-02) — durable restock-op id for this
+  // "receive stock for this part" intent; survives a browser refresh so a reload
+  // + retry recovers the same id and `restocks/{opId}` de-duplicates.
+  const { opId: restockOpId, hadPending: restockPending } = useDurableOpId(`restock:${part.id}`, 'rs');
 
   const n = Math.max(0, parseInt(qty, 10) || 0);
   const cost = Math.max(0, parseFloat(unitCost) || 0);
@@ -1018,7 +1022,7 @@ function RestockModal({ part, suppliers = [], onConfirm, onClose, asPage = false
       notes: notes.trim(),
       updateDefaultPrice: priceDiffers && updateDefaultPrice,
       updateDefaultSupplier: supplierDiffers && updateDefaultSupplier,
-      opId: restockOpIdRef.current,
+      opId: restockOpId,
     });
   }
 
@@ -1032,6 +1036,12 @@ function RestockModal({ part, suppliers = [], onConfirm, onClose, asPage = false
   const infoValue = 'text-sm text-white/85 font-medium truncate';
   const body = (
     <>
+        {restockPending && (
+          <div role="status" className="rounded-xl p-3 mb-4 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+            <span aria-hidden>⚠️</span>
+            <span>A stock receipt for this part may not have finished before the page reloaded. <b>Check Stock In first.</b> Pressing Receive again is safe — a repeat of the same receipt is ignored.</span>
+          </div>
+        )}
         {/* Section A — current inventory record, reference only */}
         <div className="rounded-xl px-4 py-3.5 mb-4" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.08)' }}>
           <div className={infoGrid}>
@@ -1167,11 +1177,13 @@ function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPage = fal
   const [qty, setQty] = useState('1');
   const [price, setPrice] = useState(String(mrp || ''));
   const [error, setError] = useState('');
-  // Phase 4b (PH4-03) — ONE stable sale-operation id for the life of this modal.
-  // Every "Confirm Sale" press (including a retry after an ambiguous failure)
-  // reuses it; handleSell's transaction writes the sale as `sales/{saleOpId}` and
-  // no-ops on a repeat. A genuinely separate later sale opens a fresh modal.
-  const saleOpIdRef = useRef(`sale_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  // Phase 4b (PH4-03) + Phase 5b (PH5-02) — ONE stable sale-operation id for this
+  // "sell this part" intent. Stored in sessionStorage (via useDurableOpId) so it
+  // SURVIVES A BROWSER REFRESH: handleSell's transaction writes the sale as
+  // `sales/{saleOpId}` and no-ops on a repeat, so a reload + retry of the same
+  // intent stays exactly-once. `hadPending` = an earlier sale attempt on this part
+  // did not confirm before the page went away — warn before the retry.
+  const { opId: saleOpId, hadPending: salePending } = useDurableOpId(`sell:${part.id}`, 'sale');
 
   const blockKeys = (e) => ['e', 'E', '+', '-', '.'].includes(e.key) && e.preventDefault();
 
@@ -1199,7 +1211,7 @@ function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPage = fal
       }
       return;
     }
-    onConfirm(q, p, floor > 0 && p < floor, saleOpIdRef.current); // 3rd arg = belowFloorOverride, 4th = stable sale-op id
+    onConfirm(q, p, floor > 0 && p < floor, saleOpId); // 3rd arg = belowFloorOverride, 4th = durable sale-op id
   }
 
   const fieldLabel = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1.5';
@@ -1246,6 +1258,12 @@ function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPage = fal
         </div>
 
         <div className="p-5 space-y-4">
+          {salePending && (
+            <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+              <span aria-hidden>⚠️</span>
+              <span>A sale of this part may not have finished before the page reloaded. <b>Check Stock Out first.</b> If you press Confirm Sale again it is safe — a repeat of the same sale is ignored.</span>
+            </div>
+          )}
           <div className="rounded-xl p-3" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
             <p className="text-sm font-semibold text-white">{part.name}</p>
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs">
@@ -1383,8 +1401,10 @@ function StockAdjustModal({ part, history = [], onConfirm, onClose, asPage = fal
   // adjustment" button clickable for the round-trip — a fast double-click could
   // fire two separate stock-adjustment writes for one intended action.
   const [saving, setSaving] = useState(false);
-  // Phase 4b (PH4-04) — stable adjustment-op id for the life of this modal.
-  const adjustOpIdRef = useRef(`adj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  // Phase 4b (PH4-04) + Phase 5b (PH5-02) — durable adjustment-op id for this
+  // "adjust this part's stock" intent; survives a browser refresh so a reload +
+  // retry recovers the same id and `stockAdjustments/{opId}` de-duplicates.
+  const { opId: adjustOpId, hadPending: adjustPending } = useDurableOpId(`adjust:${part.id}`, 'adj');
   const blockKeys = (e) => ['e', 'E', '+', '-', '.'].includes(e.key) && e.preventDefault();
   const isCorrection = direction === 'correction';
 
@@ -1424,7 +1444,7 @@ function StockAdjustModal({ part, history = [], onConfirm, onClose, asPage = fal
       reason: isCorrection ? 'Correction' : reason,
       notes: notes.trim(),
       correctsId: isCorrection ? (correctsId || null) : null,
-      opId: adjustOpIdRef.current,
+      opId: adjustOpId,
     });
     setSaving(false);
   }
@@ -1436,6 +1456,12 @@ function StockAdjustModal({ part, history = [], onConfirm, onClose, asPage = fal
 
   const inner = (
     <>
+          {adjustPending && (
+            <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+              <span aria-hidden>⚠️</span>
+              <span>A stock adjustment for this part may not have finished before the page reloaded. <b>Check Movement History first.</b> Recording it again is safe — a repeat of the same adjustment is ignored.</span>
+            </div>
+          )}
           {/* Issue 3: direction — reduce (loss) or correction (add stock back) */}
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => { setDirection('reduce'); setError(''); }} className={`py-2.5 rounded-xl text-sm font-bold border transition ${!isCorrection ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-white/5 text-white/50 border-white/10'}`}>− Reduce</button>
@@ -1541,7 +1567,10 @@ function BulkAdjustModal({ parts, onSubmit, onClose }) {
   const modalRef = useRef(null);
   // Phase 4b (PH4-04) — one stable adjustment-op id per row, fixed at mount so a
   // whole-batch retry reuses them (each line is deduped server-side by its opId).
-  const [rows, setRows] = useState(() => parts.map((p) => ({ part: p, qty: '1', reason: '', notes: '', opId: `adj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}_${p.id.slice(0, 6)}` })));
+  // Phase 5b — each row's op id is DURABLE (sessionStorage, keyed per part) so a
+  // browser refresh + reopening Bulk Adjust recovers the pending ids and the
+  // per-part `stockAdjustments/{opId}` marker de-duplicates the retry.
+  const [rows, setRows] = useState(() => parts.map((p) => ({ part: p, qty: '1', reason: '', notes: '', opId: readOrCreateOpId(`bulk-adjust:${p.id}`, 'adj') })));
   const updateRow = (partId, patch) => setRows((prev) => prev.map((r) => (r.part.id === partId ? { ...r, ...patch } : r)));
   const removeRow = (partId) => setRows((prev) => prev.filter((r) => r.part.id !== partId));
   const isRowValid = (r) => { const q = parseInt(r.qty, 10) || 0; return q > 0 && q <= (r.part.stock || 0) && !!r.reason; };
@@ -2689,11 +2718,12 @@ const SUPPLIER_CONFLICT_FIELDS = [
 // Add / Edit Part Modal — Requirement 3 (learning comboboxes) + Base64 image
 // ---------------------------------------------------------------------------
 function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, onSaveSupplier, onCreateSupplier, isAdmin = true, categoryTree = CATEGORY_TREE, vehicleTree = VEHICLE_TREE, salesHistory = [], onAddCategory, onAddVehicle, asPage = false, demoMode = false, readOnly = false, banner = null }) {
-  // Phase 4b (PH4-06 class) — one stable id per "Add Part" intent, created once for
-  // the life of this modal instance (the parent keys the render per part id), so a
-  // retry after an ambiguous save re-writes the SAME part doc instead of creating a
-  // second one. Unused on edit (the doc id is already known).
-  const createOpIdRef = useRef(`part_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  // Phase 4b (PH4-06 class) + Phase 5b (PH5-03) — one stable id per "Add Part"
+  // intent, kept in sessionStorage so it SURVIVES A BROWSER REFRESH: a reload +
+  // retry re-writes the SAME `parts/<id>` doc (setDoc merge) instead of creating a
+  // second one. Unused on edit (the doc id is already known). Cleared by the
+  // container once the create is server-confirmed.
+  const { opId: createOpId, hadPending: createPending } = useDurableOpId('create-part', 'part');
   // PRODUCTIVITY: recent sales summary for this part (purchasing aid).
   const saleStats = useMemo(() => {
     if (!part?.id) return null;
@@ -3040,7 +3070,7 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
     // Phase 1a — carry the `_rev` this part had when the editor opened, so the
     // guarded save can reject a stale overwrite. Concurrency metadata, not a form field.
     out._rev = part?._rev;
-    if (!isEdit) out.createOpId = createOpIdRef.current;
+    if (!isEdit) out.createOpId = createOpId;
     onSave(out);
   }
 
@@ -3069,6 +3099,12 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
 
   const formEl = (
         <form ref={formBodyRef} id="part-form" onSubmit={handleSubmit} className="p-5 space-y-4 safe-bottom-pad">
+          {createPending && !isEdit && (
+            <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+              <span aria-hidden>⚠️</span>
+              <span>A new part may not have finished saving before the page reloaded. <b>Check the parts list first.</b> Saving again is safe — it updates the same part, it will not create a duplicate.</span>
+            </div>
+          )}
           {draftMeta && !isEdit && (
             <div className="rounded-xl p-3 flex items-center gap-3 flex-wrap" style={{ background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.3)' }}>
               <span className="text-xs text-white/75 flex-1 min-w-[140px]">Unsaved draft{draftMeta.ts ? ` from ${new Date(draftMeta.ts).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : ''} found.</span>
@@ -3779,11 +3815,11 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
   });
   const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
 
-  // Phase 4b (PH4-06) — one stable id per "Add Supplier" intent. Created once for
-  // the life of this modal instance (the parent forces a remount per intent), so a
-  // retry after an ambiguous save re-writes the SAME supplier doc rather than
-  // creating a second one. Unused on edit (the doc id is already known).
-  const createOpIdRef = useRef(`sup_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  // Phase 4b (PH4-06) + Phase 5b (PH5-03) — one stable id per "Add Supplier"
+  // intent, kept in sessionStorage so it SURVIVES A BROWSER REFRESH: a reload +
+  // retry re-writes the SAME `suppliers/<id>` doc (setDoc merge), never a second
+  // one. Unused on edit. Cleared by the container once the create is confirmed.
+  const { opId: createOpId, hadPending: createPending } = useDurableOpId('create-supplier', 'sup');
 
   // FIX 3: labeled multi-contact phone cards
   const updateContact = (idx, key, val) =>
@@ -3877,7 +3913,7 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
     if (form.email && !isValidEmail(form.email)) { toast.error(`${EMAIL_ERROR}, or leave it blank.`); return; }
     clearSupDraft();
     // Phase 1a — carry the `_rev` this supplier had when the editor opened.
-    onSave({ ...form, gst: (form.gst || '').trim().toUpperCase(), state: stateFromGst, _rev: supplier?._rev, createOpId: createOpIdRef.current });
+    onSave({ ...form, gst: (form.gst || '').trim().toUpperCase(), state: stateFromGst, _rev: supplier?._rev, createOpId });
   }
 
   const fieldLabel = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1.5';
@@ -3886,6 +3922,12 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
 
   const formEl = (
         <form onSubmit={handleSubmit} className="p-5 space-y-4 safe-bottom-pad">
+          {createPending && !isEdit && (
+            <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+              <span aria-hidden>⚠️</span>
+              <span>A new supplier may not have finished saving before the page reloaded. <b>Check the Suppliers list first.</b> Saving again is safe — it will not create a duplicate.</span>
+            </div>
+          )}
           {supDraft && !isEdit && (
             <div className="rounded-xl p-3 flex items-center gap-3 flex-wrap" style={{ background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.3)' }}>
               <span className="text-xs text-white/75 flex-1 min-w-[140px]">Unsaved supplier draft{supDraft.ts ? ` from ${new Date(supDraft.ts).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : ''} found.</span>
@@ -5568,7 +5610,7 @@ function BulkReceiveModal({ inventory, suppliers = [], onSubmit, onClose }) {
   const addLine = (part) => {
     // Phase 4b (PH4-05) — one stable restock-op id per line, fixed when the line is
     // added so a whole-batch retry reuses it (server dedups by opId).
-    setLines((prev) => [...prev, { part, qty: 1, unitCost: part.purchasePrice || 0, opId: `rs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}_${part.id.slice(0, 6)}` }]);
+    setLines((prev) => [...prev, { part, qty: 1, unitCost: part.purchasePrice || 0, opId: readOrCreateOpId(`bulk-restock:${part.id}`, 'rs') }]);
     setPickerQ('');
     setPickerOpen(false);
   };
@@ -9895,17 +9937,25 @@ export default function InventoryDashboard() {
     let target = iv;
     if (iv.__allocSeq) {
       const { __allocSeq, __allocPrefix, __allocSeed, ...rest } = iv;
-      let n;
-      try {
-        n = await store.allocateNumber(__allocSeq, __allocSeed);
-      } catch (err) {
-        // The counter transaction needs connectivity (as does every other invoice
-        // write — the guarded edit and the payment transaction). Tell the user;
-        // BillingModule's onSave wrapper keeps the editor open with nothing lost.
-        toast.error('Could not reserve an invoice number — check your connection and try again.');
-        throw err;
+      // Phase 5b (PH5-07) — if THIS invoice id already exists with a real number,
+      // this is a retry (e.g. after a browser refresh whose ack was lost, using
+      // the recovered draft): reuse that number, never allocate a second one.
+      const already = invoicesRef.current.find((x) => x.id === iv.id);
+      if (already && already.invNo && !/^DRF/i.test(already.invNo)) {
+        target = { ...rest, invNo: already.invNo };
+      } else {
+        let n;
+        try {
+          n = await store.allocateNumber(__allocSeq, __allocSeed);
+        } catch (err) {
+          // The counter transaction needs connectivity (as does every other invoice
+          // write — the guarded edit and the payment transaction). Tell the user;
+          // BillingModule's onSave wrapper keeps the editor open with nothing lost.
+          toast.error('Could not reserve an invoice number — check your connection and try again.');
+          throw err;
+        }
+        target = { ...rest, invNo: formatDocNo(__allocPrefix, n) };
       }
-      target = { ...rest, invNo: formatDocNo(__allocPrefix, n) };
     }
 
     // Read prior from a ref, NOT from inside the updater, so the effects below run
@@ -10119,7 +10169,12 @@ export default function InventoryDashboard() {
   // forget inside a synchronous try/catch that could never catch a real write rejection.
   // Now reads/writes inventoryRef synchronously, genuinely awaits every write, and
   // returns a promise that rejects (after logging + toasting) if any write failed.
-  const applyReserveDelta = (deltaMap) => {
+  // Phase 5b (PH5-04) — `reserveOpId` (durable, per job-card-save intent) makes the
+  // reserved-stock increment idempotent across a browser refresh + retry: each
+  // part records the applied reservation-op ids in a bounded `appliedReserveIds`
+  // list, read inside a transaction BEFORE the increment. So a queued replay of
+  // the write plus a user retry apply `reserved += delta` exactly once.
+  const applyReserveDelta = (deltaMap, reserveOpId = null) => {
     const ids = Object.keys(deltaMap).filter((id) => deltaMap[id] !== 0);
     if (!ids.length) return Promise.resolve();
     const prev = inventoryRef.current;
@@ -10138,7 +10193,18 @@ export default function InventoryDashboard() {
       }
       return Promise.resolve();
     }
-    return Promise.allSettled(ids.map((id) => updateDoc(doc(db, COLLECTIONS.PARTS, id), { reserved: increment(deltaMap[id]), updatedAt: serverTimestamp() })))
+    return Promise.allSettled(ids.map((id) => runTransaction(db, async (tx) => {
+      const ref = doc(db, COLLECTIONS.PARTS, id);
+      const snap = await tx.get(ref);
+      if (!snap.exists()) return;
+      const applied = Array.isArray(snap.data().appliedReserveIds) ? snap.data().appliedReserveIds : [];
+      if (reserveOpId && applied.includes(reserveOpId)) return; // this reservation delta is already on the server
+      tx.update(ref, {
+        reserved: increment(deltaMap[id]),
+        ...(reserveOpId ? { appliedReserveIds: [...applied, reserveOpId].slice(-40) } : {}),
+        updatedAt: serverTimestamp(),
+      });
+    })))
       .then((results) => {
         const failed = results.filter((r) => r.status === 'rejected');
         if (failed.length) {
@@ -10171,19 +10237,26 @@ export default function InventoryDashboard() {
     const prev = jobCardsRef.current;
     const prior = prev.find((c) => c.jobNo === jobNo);
     const baseline = pinReserveBaseline(jobNo, prior);
+    const relScope = `jc-reserve-del:${jobNo}`;
+    const relOpId = demoMode ? null : readOrCreateOpId(relScope, 'jcrd');
     const next = prev.filter((c) => c.jobNo !== jobNo);
     jobCardsRef.current = next;
     setJobCards(next);
     await persistJobCardsDiff(prev, next);
     // release any reservation this card held — only after the delete is confirmed,
     // so a failed delete + retry doesn't free reserved stock while the card lives.
-    await applyReserveDelta(reserveDelta(baseline, null));
+    await applyReserveDelta(reserveDelta(baseline, null), relOpId);
     reserveBaselineRef.current.delete(jobNo);
+    clearOpId(relScope);
   };
   const persistJobCard = async (card) => {
     const prev = jobCardsRef.current;
     const prior = prev.find((c) => c.jobNo === card.jobNo);
     const reserveBaseline = pinReserveBaseline(card.jobNo, prior);
+    // Phase 5b (PH5-04) — durable reservation-op id for THIS save intent; recovered
+    // on a refresh + retry so the reserved-stock increment applies exactly once.
+    const reserveScope = `jc-reserve:${card.jobNo}`;
+    const reserveOpId = demoMode ? null : readOrCreateOpId(reserveScope, 'jcr');
     // preserve creation order for the Firestore orderBy('createdAt') subscription
     const stamped = prior ? card : { ...card, createdAt: card.createdAt || serverTimestamp(), createdAtMs: card.createdAtMs || Date.now() };
     // Phase 1a — editing an EXISTING job card goes through the revision-guarded
@@ -10203,8 +10276,9 @@ export default function InventoryDashboard() {
       setJobCards(next);
       // PH4-07 — reservation delta from the pinned baseline, after the guarded
       // write is confirmed; advance the baseline so a later edit diffs from here.
-      await applyReserveDelta(reserveDelta(reserveBaseline, card));
+      await applyReserveDelta(reserveDelta(reserveBaseline, card), reserveOpId);
       reserveBaselineRef.current.set(card.jobNo, card);
+      clearOpId(reserveScope); // Phase 5b — this save is confirmed; the next edit is a new intent
       const label = `${merged.jobNo} · ${merged.customer || ''}${merged.vehicle ? ` · ${merged.vehicle}` : ''}`;
       if (prior.status !== merged.status) {
         pushAudit({ action: 'Job Card Status Changed', entity: 'Job Card', entityId: merged.jobNo, detail: `${label} · ${prior.status || ''} → ${merged.status || ''}` });
@@ -10220,8 +10294,9 @@ export default function InventoryDashboard() {
     // PH4-07 — apply the reservation delta ONLY after the job-card doc write is
     // confirmed, computed from the pinned baseline so a retry after a failed write
     // neither double-reserves nor drops the reservation. H-5A: reserveDelta (pure).
-    await applyReserveDelta(reserveDelta(reserveBaseline, card));
+    await applyReserveDelta(reserveDelta(reserveBaseline, card), reserveOpId);
     reserveBaselineRef.current.set(card.jobNo, card);
+    clearOpId(reserveScope); // Phase 5b — this save is confirmed
     // Audit AFTER the write above has actually succeeded (an awaited call that
     // throws on failure) — one entry per save, picking status-change over a
     // generic "Updated" when that's what actually happened, same rule as invoices.
@@ -11036,12 +11111,17 @@ export default function InventoryDashboard() {
         updatedAt: serverTimestamp(),
       });
       if (delta > 0 && partSnapshot) {
-        await addDoc(collection(db, COLLECTIONS.RESTOCKS), {
-          partId, name: partSnapshot.name || '', sku: partSnapshot.sku || '',
+        // Phase 5b (PH5-05) — deterministic ledger doc id (part + the stock level
+        // this nudge targets). A browser refresh + retyping the same target value
+        // re-writes the SAME `restocks` row instead of adding a second one; the
+        // stock field itself is already an absolute set, so it stays correct.
+        const qrId = `qr_${partId}_${safeStock}`;
+        await setDoc(doc(db, COLLECTIONS.RESTOCKS, qrId), {
+          opId: qrId, partId, name: partSnapshot.name || '', sku: partSnapshot.sku || '',
           qty: delta, quantity: delta, unitCost: partSnapshot.purchasePrice || 0, total: delta * (partSnapshot.purchasePrice || 0),
           supplier: '', supplierName: '', reference: '', notes: 'Quick restock',
           by: user?.uid || null, byEmail: user?.email || null, createdAt: serverTimestamp(),
-        }).catch((e) => console.error('Quick restock ledger write failed:', e));
+        }, { merge: true }).catch((e) => console.error('Quick restock ledger write failed:', e));
         writeAudit('quick_restock', { partId, name: partSnapshot.name || '' }, { qty: delta, stockBefore: prevStock, stockAfter: safeStock });
       }
     } catch (err) {
@@ -11302,6 +11382,7 @@ export default function InventoryDashboard() {
         const newId = formData.createOpId || `sup_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
         await setDoc(doc(db, COLLECTIONS.SUPPLIERS, newId), { ...payload, createdAt: serverTimestamp() }, { merge: true });
         writeAudit('create_supplier', { supplierId: newId, name: primaryName });
+        clearOpId('create-supplier'); // Phase 5b — new supplier is confirmed; the next "Add Supplier" is a new intent
       }
       toast.success(formData.id ? 'Supplier updated — synced to linked parts' : 'Supplier added');
     } catch (err) {
@@ -12131,6 +12212,7 @@ export default function InventoryDashboard() {
         writeAudit('create_part', { partId, name: payload.name });
       }
 
+      if (!formData.id) clearOpId('create-part'); // Phase 5b — new part is server-confirmed; the next "Add Part" is a new intent
       if (copiedFrom) toast.success('Copy saved to Archive — restore it to activate');
       else smartSaveToast(formData.name, { isEdit: !!formData.id, hasSupplier: (formData.suppliers || []).some((r) => (r.name || '').trim()) });
     } catch (err) {
@@ -12325,8 +12407,9 @@ export default function InventoryDashboard() {
       // live: a real seeded sale record has category:"Parts", revenueType:"Parts" —
       // matching that exact shape, not inventing a new field.
       const demoOpId = saleOpId || 'demo-sale-' + now.getTime();
-      if (sales.some((s) => s.id === demoOpId || s.opId === demoOpId)) { setCheckoutPart(null); toast.success(`${part.name} — this sale is already recorded (demo)`); return; }
+      if (sales.some((s) => s.id === demoOpId || s.opId === demoOpId)) { if (saleOpId) clearOpId(`sell:${part.id}`); setCheckoutPart(null); toast.success(`${part.name} — this sale is already recorded (demo)`); return; }
       setSales((prev) => [{ id: demoOpId, opId: demoOpId, partId: part.id, name: part.name, partName: part.name, sku: part.sku, category: 'Parts', revenueType: 'Parts', brands: [part.vehicle].filter(Boolean), qty: sold, quantity: sold, unitPrice: pricePerUnit, unitCost, costPrice: unitCost, revenue, total: revenue, totalPrice: revenue, cost, profit: revenue - cost, soldByEmail: 'demo@balajiautoos.com', createdAt: stamp }, ...prev]);
+      if (saleOpId) clearOpId(`sell:${part.id}`);
       setCheckoutPart(null);
       toast.success(`Sold ${sold} × ${part.name} (demo)`);
       writeAudit('sell_part', { partId: part.id, name: part.name || '' }, { qty: sold, unitPrice: pricePerUnit, revenue });
@@ -12401,14 +12484,21 @@ export default function InventoryDashboard() {
         alreadyApplied = result.alreadyApplied;
       } catch (err) {
         console.error('Sale transaction failed:', err);
+        const isDefiniteNoCommit = !err?.code && !!err?.message; // our own thrown business errors — the txn aborted, nothing wrote
         const friendly = /has not been used|disabled/i.test(err?.message || '')
           ? 'Sale not saved — the database (Firestore) is not enabled for this project. Enable it, then retry.'
           : err?.code === 'permission-denied'
           ? 'Sale not saved — permission denied by security rules.'
-          : !err?.code && err?.message
+          : isDefiniteNoCommit
           ? err.message
           : 'Couldn’t confirm the sale saved. It may already be recorded — check Stock Out, or press Confirm Sale again (a repeat is safe).';
         toast.error(friendly);
+        // Phase 5b — a definite non-commit (our thrown business error) or a hard
+        // permission denial means this operation id can be retired. An AMBIGUOUS
+        // failure keeps it, so a reload + retry recovers the same id and de-dups.
+        if (isDefiniteNoCommit || err?.code === 'permission-denied' || /has not been used|disabled/i.test(err?.message || '')) {
+          clearOpId(`sell:${part.id}`);
+        }
         return;
       }
     } else {
@@ -12425,6 +12515,7 @@ export default function InventoryDashboard() {
     }
 
     if (alreadyApplied) {
+      clearOpId(`sell:${part.id}`); // confirmed — the sale is on the server
       setCheckoutPart(null);
       toast.success(`${part.name} — this sale is already recorded`);
       return;
@@ -12447,6 +12538,11 @@ export default function InventoryDashboard() {
       writeAudit('sell_part', { partId: part.id, name: part.name || '' }, { qty: sold, unitPrice: pricePerUnit, revenue: sold * pricePerUnit, opId });
     }
 
+    // Phase 5b — retire the op id only when the write was SERVER-CONFIRMED (the
+    // online transaction resolved). Offline the writes are still queued to
+    // `sales/{opId}`; keep the id so a reload + retry recovers it and re-targets
+    // the same doc instead of creating a second sale.
+    if (online) clearOpId(`sell:${part.id}`);
     setCheckoutPart(null);
     toast.success(`Sold ${sold} × ${part.name} — ${formatINR(sold * pricePerUnit)}${belowFloorOverride ? ' (below floor)' : ''}`);
   }
@@ -12536,7 +12632,7 @@ export default function InventoryDashboard() {
       alreadyApplied = res.alreadyApplied;
     } catch (err) {
       console.error('[TXN] Stock adjustment failed:', err);
-      return { ok: false };
+      return { ok: false, definiteNoCommit: !err?.code && !!err?.message };
     }
     if (!alreadyApplied) {
       setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: after } : p)));
@@ -12549,9 +12645,14 @@ export default function InventoryDashboard() {
     const part = adjustTarget;
     if (!part || qty <= 0) return;
     const result = await adjustStockLine({ part, qty, reason, notes, direction, correctsId, opId });
-    if (result.blocked) { notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('stockAdjustments'); return; } // modal stays open, unsaved input preserved
-    if (result.permissionDenied) return; // protectedDemoToast already shown; modal stays open
-    if (!result.ok) { toast.error('Couldn’t confirm the adjustment saved. It may already be recorded — check Movement History, or press Record adjustment again (a repeat is safe).'); return; } // modal stays open so the user can retry
+    if (result.duplicate) return; // a save for this part is already in flight (rapid double-click) — keep the op id
+    if (result.blocked) { clearOpId(`adjust:${part.id}`); notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('stockAdjustments'); return; } // modal stays open, unsaved input preserved
+    if (result.permissionDenied) { clearOpId(`adjust:${part.id}`); return; } // protectedDemoToast already shown; modal stays open
+    if (!result.ok) {
+      if (result.definiteNoCommit) clearOpId(`adjust:${part.id}`); // Phase 5b — nothing wrote
+      toast.error('Couldn’t confirm the adjustment saved. It may already be recorded — check Movement History, or press Record adjustment again (a repeat is safe).'); return; // modal stays open so the user can retry
+    }
+    clearOpId(`adjust:${part.id}`); // Phase 5b — server-confirmed (or alreadyApplied)
     setAdjustTarget(null);
     if (result.alreadyApplied) { toast.success(`${part.name} — this adjustment is already recorded`); return; }
     toast.success(result.isCorrection ? `Correction +${result.delta} × ${part.name}${demoMode ? ' (demo)' : ''}` : `Adjusted −${result.delta} × ${part.name} (${result.reason})${demoMode ? ' (demo)' : ''}`);
@@ -12573,6 +12674,7 @@ export default function InventoryDashboard() {
     if (blocked) { notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('stockAdjustments'); return; }
     const results = await Promise.all(valid.map((l) => adjustStockLine({ part: l.part, qty: l.qty, reason: l.reason, notes: l.notes || '', direction: 'reduce', opId: l.opId })));
     const okCount = results.filter((r) => r.ok).length;
+    valid.forEach((l, i) => { if (results[i]?.ok) clearOpId(`bulk-adjust:${l.part.id}`); }); // Phase 5b — retire confirmed rows
     setShowBulkAdjust(false);
     clearSelection();
     if (okCount === valid.length) toast.success(`Adjusted ${okCount} part${okCount === 1 ? '' : 's'}${demoMode ? ' (demo)' : ''}`);
@@ -12663,15 +12765,20 @@ export default function InventoryDashboard() {
     // "Create PO" intent; a retry after an ambiguous failure re-writes the SAME
     // document instead of creating a second PO.
     const poId = input.poId || `po_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    // Phase 5b — only the single-PO form (POCreateForm) supplies input.poId and
+    // owns the durable `create-po` op id; the bulk-reorder path does not.
+    const clearPoCreateOp = () => { if (input.poId) clearOpId('create-po'); };
     if (demoMode) {
-      if (purchaseOrders.some((p) => p.id === poId)) { toast.success(`${base.poNumber}: already created (demo)`); return base; }
+      if (purchaseOrders.some((p) => p.id === poId)) { clearPoCreateOp(); toast.success(`${base.poNumber}: already created (demo)`); return base; }
       setPurchaseOrders((prev) => [{ id: poId, ...base, createdAt: demoStamp() }, ...prev]);
       writeAudit('po_create', { poNumber: base.poNumber, supplier: base.supplierName }, { total, items: clean.length });
+      clearPoCreateOp();
       toast.success(`${base.poNumber} created (demo)`); return base;
     }
     try {
       await poCreateDoc(base, user?.email, poId);
       writeAudit('po_create', { poNumber: base.poNumber, supplier: base.supplierName }, { total, items: clean.length, poId });
+      clearPoCreateOp();
       toast.success(`${base.poNumber} created`); return { ...base, id: poId };
     } catch (e) { console.error(e); toast.error('Couldn’t confirm the purchase order saved. It may already exist — check Purchase Orders, or press Create PO again (a repeat is safe).'); return false; }
   }
@@ -12719,6 +12826,7 @@ export default function InventoryDashboard() {
     // applied (visible in state), don't even round-trip. The transaction repeats
     // this check server-side authoritatively.
     if (receiptId && Array.isArray(po.appliedReceiptIds) && po.appliedReceiptIds.includes(receiptId)) {
+      clearOpId(`receive:${po.id}`); // Phase 5b — confirmed already on the server
       toast.success(`${po.poNumber}: already received`);
       return;
     }
@@ -12758,6 +12866,7 @@ export default function InventoryDashboard() {
         });
         setRestocks((prev) => newRestocks.concat(prev));
         writeAudit('po_receive', { poNumber: po.poNumber }, { status, lines: receivedLines.length });
+        clearOpId(`receive:${po.id}`);
         toast.success(fullyReceived ? `${po.poNumber}: received (demo)` : `${po.poNumber}: partially received (demo)`);
         return;
       }
@@ -12773,10 +12882,13 @@ export default function InventoryDashboard() {
         if (!res?.alreadyApplied) {
           writeAudit('po_receive', { poNumber: po.poNumber }, { status: serverStatus, lines: receivedLines.length });
         }
+        clearOpId(`receive:${po.id}`); // Phase 5b — server-confirmed (or alreadyApplied); a later delivery is a new intent
         toast.success(serverStatus === 'received' ? `${po.poNumber}: received` : `${po.poNumber}: partially received`);
       } catch (e) {
         console.error(e);
-        if (e?.code === 'po/over-receipt' || e?.code === 'po/deleted') toast.error(e.message);
+        // Phase 5b — po/deleted and po/over-receipt are definite non-commits; the op
+        // id can be retired. An unknown/ambiguous error keeps it for a safe retry.
+        if (e?.code === 'po/over-receipt' || e?.code === 'po/deleted') { clearOpId(`receive:${po.id}`); toast.error(e.message); }
         else toast.error('Couldn’t confirm the receipt saved. It may already be recorded — check the PO, or press Confirm Receipt again (a repeat is safe).');
         return false; // keep the receive form open (ReceivePOForm's onSubmit checks `ok !== false`)
       }
@@ -12883,7 +12995,9 @@ export default function InventoryDashboard() {
       alreadyApplied = res.alreadyApplied;
     } catch (err) {
       console.error('[TXN] Receive stock failed:', err);
-      return { ok: false };
+      // Phase 5b — a business error we threw ("part no longer exists") is a
+      // definite non-commit; anything else is ambiguous and keeps the op id.
+      return { ok: false, definiteNoCommit: !err?.code && !!err?.message };
     }
     if (alreadyApplied) return { ok: true, alreadyApplied: true };
     if (updateDefaultPrice || updateDefaultSupplier) {
@@ -12900,9 +13014,14 @@ export default function InventoryDashboard() {
     const part = restockTarget;
     if (!part || payload.qty <= 0) return;
     const result = await receiveStockLine({ part, ...payload });
-    if (result.blocked) { notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('restocks'); return; } // modal stays open, unsaved input preserved
-    if (result.permissionDenied) return; // protectedDemoToast already shown; modal stays open
-    if (!result.ok) { toast.error('Couldn’t confirm the receipt saved. It may already be recorded — check Stock In, or press Receive again (a repeat is safe).'); return; } // modal stays open so the user can retry
+    if (result.duplicate) return; // a receipt for this part is already in flight (rapid double-click) — keep the op id
+    if (result.blocked) { clearOpId(`restock:${part.id}`); notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('restocks'); return; } // modal stays open, unsaved input preserved
+    if (result.permissionDenied) { clearOpId(`restock:${part.id}`); return; } // protectedDemoToast already shown; modal stays open
+    if (!result.ok) {
+      if (result.definiteNoCommit) clearOpId(`restock:${part.id}`); // Phase 5b — nothing wrote; a retry is a new intent
+      toast.error('Couldn’t confirm the receipt saved. It may already be recorded — check Stock In, or press Receive again (a repeat is safe).'); return; // modal stays open so the user can retry
+    }
+    clearOpId(`restock:${part.id}`); // Phase 5b — server-confirmed (or alreadyApplied); a later receipt is a new intent
     setRestockTarget(null);
     toast.success(result.alreadyApplied ? `${part.name} — this receipt is already recorded` : `Received ${payload.qty} × ${part.name}${demoMode ? ' (demo)' : ''}`);
   }
@@ -12926,6 +13045,7 @@ export default function InventoryDashboard() {
       updateDefaultPrice: false, updateDefaultSupplier: false, opId: l.opId,
     })));
     const okCount = results.filter((r) => r.ok).length;
+    valid.forEach((l, i) => { if (results[i]?.ok) clearOpId(`bulk-restock:${l.part.id}`); }); // Phase 5b — retire confirmed rows
     setShowBulkReceive(false);
     if (okCount === valid.length) toast.success(`Received ${okCount} item${okCount === 1 ? '' : 's'} from ${supplierName || 'supplier'}${demoMode ? ' (demo)' : ''}`);
     else if (okCount > 0) toast.error(`${okCount} of ${valid.length} items received — check your connection and retry the rest.`);

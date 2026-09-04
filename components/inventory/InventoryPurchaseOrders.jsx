@@ -4,6 +4,8 @@
 // `purchaseOrders` collection and, on "received", increments stock. Test on a
 // staging Firebase before trusting production writes.
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { useDurableOpId } from '../../hooks/useDurableOpId';
+import { clearOpId } from '../../lib/durableOpId';
 import { createPortal } from 'react-dom';
 import DropdownPanel, { ModalBoundaryContext } from '../common/DropdownPanel';
 import MiniSelect from '../common/MiniSelect';
@@ -370,14 +372,16 @@ function POCreateForm({ suppliers, inventory, formatINR, onClose, onSubmit }) {
   const [partPick, setPartPick] = useState('');
   // Issue 7 (concurrency review) — onSubmit's caller awaits the actual PO write
   // before closing this modal; guard against a double-click creating two POs.
-  // Phase 4b (PH4-06) — stable PO id for the life of this form; a retry after an
-  // ambiguous failure re-writes the same document, not a second PO.
-  const poIdRef = useRef(`po_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  // Phase 4b (PH4-06) + Phase 5b (PH5-03) — stable PO id kept in sessionStorage so
+  // it SURVIVES A BROWSER REFRESH: a reload + retry re-writes the same
+  // `purchaseOrders/<id>` document (setDoc merge) with the same PO number, never a
+  // second PO. Cleared by the parent once the create is confirmed.
+  const { opId: poId, hadPending: poPending } = useDurableOpId('create-po', 'po');
   const [saving, setSaving] = useState(false);
   const submit = async (status) => {
     if (saving || lines.length === 0) return;
     setSaving(true);
-    await onSubmit?.({ poId: poIdRef.current, supplierId: supplierId || null, supplierName: supplier?.name || '—', items: lines, notes, expectedDate, priority, ...(status ? { status } : {}) });
+    await onSubmit?.({ poId, supplierId: supplierId || null, supplierName: supplier?.name || '—', items: lines, notes, expectedDate, priority, ...(status ? { status } : {}) });
     setSaving(false);
   };
   const inr = (n) => (typeof formatINR === 'function' ? formatINR(n) : `₹${Math.round(num(n)).toLocaleString('en-IN')}`);
@@ -432,6 +436,12 @@ function POCreateForm({ suppliers, inventory, formatINR, onClose, onSubmit }) {
           <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-4">
+          {poPending && (
+            <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+              <span aria-hidden>⚠️</span>
+              <span>A purchase order may not have finished saving before the page reloaded. <b>Check Purchase Orders first.</b> Creating it again is safe — it will not make a duplicate PO or use a second PO number.</span>
+            </div>
+          )}
           <div>
             <label className="block text-[11px] uppercase tracking-wider text-white/45 mb-1.5">Supplier</label>
             <DarkSelect
@@ -557,12 +567,13 @@ function ReceivePOForm({ po, inventory, formatINR, onClose, onSubmit }) {
   // write (updates the PO's receivedQty/status AND increments stock) before
   // closing this modal; guard against a double-click receiving the same
   // delivery twice.
-  // Phase 4b (PH4-02) — ONE stable receipt id for the life of this form. Every
-  // press of "Confirm Receipt" (including a retry after an ambiguous failure)
-  // reuses it, so poReceiveDoc's transaction rejects a duplicate delivery. A
-  // genuinely separate second receive (a later partial delivery) gets a new form
-  // instance and a new id.
-  const receiptIdRef = useRef(`rcpt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  // Phase 4b (PH4-02) + Phase 5b (PH5-02) — ONE durable receipt id for this
+  // "receive against this PO" intent, kept in sessionStorage so it SURVIVES A
+  // BROWSER REFRESH: poReceiveDoc records it in `purchaseOrders.appliedReceiptIds`,
+  // so a reload + retry of the same receipt is a no-op (no second receivedQty
+  // bump, stock increment or restock row). A genuinely separate later delivery
+  // opens a fresh form and gets a new id once this one is cleared on success.
+  const { opId: receiptId, hadPending: receivePending } = useDurableOpId(`receive:${po?.id || 'po'}`, 'rcpt');
   const [saving, setSaving] = useState(false);
   const submit = async () => {
     if (saving) return;
@@ -575,7 +586,7 @@ function ReceivePOForm({ po, inventory, formatINR, onClose, onSubmit }) {
         updateDefaultPrice: diffLines.some((d) => d.partId === l.partId) ? confirmPriceUpdate : false,
       }));
     setSaving(true);
-    await onSubmit?.(receivedLines, receiptIdRef.current);
+    await onSubmit?.(receivedLines, receiptId);
     setSaving(false);
   };
 
@@ -593,6 +604,12 @@ function ReceivePOForm({ po, inventory, formatINR, onClose, onSubmit }) {
           <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-3">
+          {receivePending && (
+            <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+              <span aria-hidden>⚠️</span>
+              <span>A receipt against this PO may not have finished before the page reloaded. <b>Check the PO’s received quantities first.</b> Pressing Confirm Receipt again is safe — a repeat of the same receipt is ignored.</span>
+            </div>
+          )}
           {lines.length === 0 ? (
             <p className="text-sm text-white/45 text-center py-6">Nothing left to receive on this PO.</p>
           ) : (

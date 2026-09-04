@@ -53,9 +53,13 @@ ok('editor header keys the "Edit" label on isPersisted, not inv.invNo',
   /isPersisted \? `Edit \$\{inv\.invNo\}` : \(inv\.invNo \? `New Invoice · \$\{inv\.invNo\}` : 'New Invoice'\)/.test(src) &&
   !/\{inv\.invNo \? `Edit \$\{inv\.invNo\}` : 'New Invoice'\}/.test(src));
 
-// ---- draft restore only fires for a non-persisted, exactly-matching id ---
-ok('autosaved-draft restore is gated on !isPersisted', /if \(!isPersisted\) \{[\s\S]{0,200}localStorage\.getItem\(DRAFT_KEY\)/.test(src));
-ok('restored draft id must equal the current invoice id', /if \(d && d\.id === initial\.id\)/.test(src));
+// ---- draft restore (Phase 5b: static key, adopts the draft's own id) ----
+ok('autosaved-draft restore is skipped when editing a persisted invoice', /if \(isPersisted\) return;\s*\n\s*try \{\s*\n\s*const d = JSON\.parse\(localStorage\.getItem\(DRAFT_KEY\)/.test(src));
+ok('a drafted invoice that already committed is cleared, not re-restored',
+  /if \(invoices\.some\(\(x\) => x\.id === d\.id\)\) \{ clearInvDraft\(\); return; \}/.test(src));
+ok('the invoice draft key is static (survives a browser refresh) — Phase 5b PH5-01',
+  /const DRAFT_KEY = `maruti_invoice_draft_v2_/.test(src)
+  && !/const DRAFT_KEY = `maruti_invoice_draft_\$\{initial\.id\}`/.test(src));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

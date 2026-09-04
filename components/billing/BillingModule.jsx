@@ -20,6 +20,8 @@ import PageHeader from '../common/PageHeader';
 import { useEditLease } from '../../hooks/useEditLease';
 import { useRecordSync } from '../../hooks/useRecordSync';
 import { useLeaseReleaseToast } from '../../hooks/useLeaseReleaseToast';
+import { useDurableOpId } from '../../hooks/useDurableOpId';
+import { clearOpId } from '../../lib/durableOpId';
 import { revOf } from '../../lib/concurrency';
 import EditLeaseBanner from '../common/EditLeaseBanner';
 import EditAvailableBar from '../common/EditAvailableBar';
@@ -557,8 +559,15 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   // scope" pattern already used for defaultGst just above.
   const defaultLabourRate = billingCfg.labourRate !== undefined && billingCfg.labourRate !== '' ? Number(billingCfg.labourRate) : 0;
   const defaultDiscountPct = billingCfg.defaultDiscount !== undefined && billingCfg.defaultDiscount !== '' ? Number(billingCfg.defaultDiscount) : 0;
-  const DRAFT_KEY = `maruti_invoice_draft_${initial.id}`;
-  const restoredRef = useRef(false);
+  // Phase 5b (PH5-01) — ONE static draft key for the in-progress NEW invoice, not
+  // `maruti_invoice_draft_${initial.id}`: `initial.id` was re-minted on every "New
+  // Invoice" click, so a browser refresh (which closes the modal) orphaned the
+  // draft under its old id and it was never restored or cleaned. A workshop bills
+  // one invoice at a time, so a single "current draft" slot is right; it carries
+  // its own client id, and the modal ADOPTS that id on restore so a reload + retry
+  // re-writes the SAME `invoices/<id>` doc (no duplicate invoice, no second
+  // number). Cleared only on a CONFIRMED save (not on the Save click).
+  const DRAFT_KEY = `maruti_invoice_draft_v2_${demoMode ? 'demo' : 'prod'}`;
   // Issue 1 (Add Vehicle popup architecture review) — this full-screen editor's own
   // root, for consistency with every other modal shell (see ModalBoundaryContext in
   // components/common/DropdownPanel.jsx). Lower practical impact here since the
@@ -572,20 +581,34 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   // whether it exists in the persisted `invoices` list — a DRF-/INV- string can be
   // present on an invoice nobody has saved yet, and absent on a brand-new one.
   const isPersisted = invoices.some((x) => x.id === initial.id);
-  const [inv, setInvRaw] = useState(() => {
-    // Restore an autosaved draft for any invoice not yet actually persisted.
-    // localStorage (not session) so the draft survives a browser crash, tab close
-    // or machine restart — real workshops get interrupted constantly and shouldn't
-    // lose a half-built bill.
-    if (!isPersisted) {
-      try {
-        const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-        if (d && d.id === initial.id) { restoredRef.current = true; return d; }
-      } catch {}
-    }
-    return initial;
-  });
-  useEffect(() => { if (restoredRef.current) notify.info('Unsaved draft restored.'); }, []);
+  // A genuinely blank "New Invoice" (vs a duplicate / job-card prefill that carries
+  // its own content and must not be overwritten by a stale draft).
+  const initialIsBlank = !isPersisted
+    && !initial.customerId && !(initial.customer || '').trim()
+    && !(initial.lines || []).some((l) => l && (l.partId || (l.desc || '').trim() || num(l.qty) > 0 || num(l.rate) > 0));
+  const [inv, setInvRaw] = useState(initial);
+  // Phase 5b (PH5-01) — offer to restore the last unsaved new-invoice draft
+  // (static key, survives a browser refresh). Same Restore/Discard banner every
+  // other create form uses. Auto-restore only over a blank form; a duplicate /
+  // job-card prefill keeps its own content. `ts` is draft-only — strip it so it
+  // never reaches the live invoice doc.
+  const stripDraftMeta = (d) => { if (!d) return d; const { ts, ...rest } = d; return rest; };
+  const [invDraftMeta, setInvDraftMeta] = useState(null);
+  const clearInvDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch {} setInvDraftMeta(null); };
+  useEffect(() => {
+    if (isPersisted) return;
+    try {
+      const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+      if (!d || !d.id) return;
+      if (invoices.some((x) => x.id === d.id)) { clearInvDraft(); return; } // the drafted invoice already committed (retry-after-refresh)
+      const hasContent = (d.customer || '').trim() || d.customerId || (d.lines || []).some((l) => l && (l.partId || (l.desc || '').trim() || num(l.qty) > 0));
+      if (!hasContent) return;
+      if (initialIsBlank) { setInvRaw(stripDraftMeta(d)); notify.info('Unsaved draft restored.'); }
+      else setInvDraftMeta({ ts: d.ts, form: stripDraftMeta(d) });
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const restoreInvDraft = () => { if (invDraftMeta?.form) { setInvRaw(invDraftMeta.form); notify.info('Unsaved draft restored.'); } setInvDraftMeta(null); };
   const undoStack = useRef([]);
   const redoStack = useRef([]);
   const [, force] = useState(0);
@@ -972,7 +995,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     });
     if (ok) save(false);
   };
-  const save = (asEstimate = false, thenPay = false, asDraft = false) => {
+  const save = async (asEstimate = false, thenPay = false, asDraft = false) => {
     if (readOnly) return; // Phase 1c — view-only while another user holds the edit lease
     if (savingRef.current) return; // prevent double-submit
     // A DRAFT is deliberately permissive: a workshop parks a half-written bill all the
@@ -1096,6 +1119,35 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
         return toast.error(`Job card ${inv.jobNo} is already billed on ${clash.invNo}. Cancel that invoice first, or unlink the job card.`, { duration: 7000 });
       }
     }
+    // ---- 🔁 WALK-IN DUPLICATE (Phase 5b, PH5-07) -----------------------------
+    // A new walk-in invoice (no job card) with no clash check could be created
+    // twice after a browser refresh: the first save committed, its ack was lost,
+    // the user re-entered the bill and saved again -> a second official invoice,
+    // a second number, a second stock/revenue realization. The stable-id draft
+    // (above) normally makes the retry re-write the SAME invoice; this is the
+    // safety net for when the user discarded that draft. Soft — confirm, don't
+    // block: a customer genuinely buying the same items twice is legitimate.
+    if (!asEstimate && !asDraft && !inv.jobNo && !isPersisted && billItems.length) {
+      const g = snap0.grand;
+      const nameKey = (inv.customer || '').trim().toLowerCase();
+      const near = invoices.find((x) => x.id !== inv.id
+        && !x.isEstimate && x.status !== 'Draft'
+        && !['Cancelled', 'Refunded', 'Returned'].includes(x.status)
+        && (inv.customerId ? x.customerId === inv.customerId : (x.customer || '').trim().toLowerCase() === nameKey)
+        && Math.abs(num(x.grandTotal) - g) < 0.5
+        && (x.lines || []).filter((l) => (l.desc || '').trim()).length === billItems.length
+        && (Date.now() - (tsToDate(x.createdAt)?.getTime() || Date.parse(x.date) || 0)) < 20 * 60 * 1000);
+      if (near) {
+        const ok = await confirmDialog({
+          title: 'Possible duplicate invoice',
+          message: `${near.invNo} for ${near.customer || 'this customer'} — same items, same total (${inr(g)}) — was created a few minutes ago.\n\nIf the page reloaded while you were billing, that invoice is probably this one and you don't need to create it again.\n\nCreate another invoice anyway?`,
+          confirmText: 'Yes, create another',
+          cancelText: 'Cancel',
+          danger: true,
+        });
+        if (!ok) { savingRef.current = false; return; }
+      }
+    }
     // `paid` is only ever a MIRROR of the payment rows — never an independent value.
     // Saving an invoice with no payment rows therefore always persists paid = 0, so
     // editing/duplicating/printing can never make an invoice look settled.
@@ -1145,21 +1197,29 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     clean.grandTotal = snap.grand; clean.balance = snap.balance; clean.gstAmount = snap.gst; clean.profitAmount = snap.profit;
     clean.status = asDraft ? 'Draft' : asEstimate ? 'Estimate' : deriveStatus(clean);
     clean.history = [...(inv.history || []), { at: Date.now(), action: asDraft ? 'Draft Saved' : inv.invNo ? 'Invoice Edited' : (asEstimate ? 'Estimate Created' : 'Invoice Created'), by: demoMode ? 'Demo User' : 'Staff' }];
-    try { localStorage.removeItem(DRAFT_KEY); } catch {}
+    // Phase 5b (PH5-01) — clear the draft ONLY on a CONFIRMED save. Removing it on
+    // the Save click (as before) meant a refresh mid-save lost the draft AND the
+    // form, so a retry could not recover the same invoice id.
+    setInvDraftMeta(null);
     // C-1: the double-submit guard used to release on a blind 1500ms timer, which assumed
     // onSave finished (near-)instantly. Now that onSave genuinely awaits the Firestore
     // write, release it when that real round-trip settles instead — otherwise a slow
     // save could re-enable the button and let a second click double-submit mid-save.
-    Promise.resolve(onSave(clean, thenPay && !asEstimate && snap.balance > 0)).finally(() => { savingRef.current = false; });
+    Promise.resolve(onSave(clean, thenPay && !asEstimate && snap.balance > 0))
+      .then((res) => { if (res !== false) { try { localStorage.removeItem(DRAFT_KEY); } catch {} } })
+      .finally(() => { savingRef.current = false; });
   };
   // autosave draft for new invoices (debounced) so an accidental close doesn't lose work.
   // Same fix as the restore check above: gate on actual persistence, not on whether
   // a number has been allocated (see the Issue 5.3 comment above `isPersisted`).
   useEffect(() => {
-    if (invoices.some((x) => x.id === inv.id)) return;
-    const id = setTimeout(() => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(inv)); } catch {} }, 600);
+    if (isPersisted || invoices.some((x) => x.id === inv.id)) return;
+    // don't autosave a still-empty form (nothing to lose; keeps the slot clean)
+    const hasContent = (inv.customer || '').trim() || inv.customerId || (inv.lines || []).some((l) => l && (l.partId || (l.desc || '').trim() || num(l.qty) > 0));
+    if (!hasContent) return;
+    const id = setTimeout(() => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...stripDraftMeta(inv), ts: Date.now() })); } catch {} }, 600);
     return () => clearTimeout(id);
-  }, [inv, DRAFT_KEY, invoices]);
+  }, [inv, DRAFT_KEY, invoices, isPersisted]);
   useEffect(() => {
     const onKey = (e) => {
       // Issue 1.5 (Customer & Vehicle review) — root cause of "the date field doesn't
@@ -1272,6 +1332,13 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
             this stretched parent. */}
         <div className={`mx-auto w-full ${SHELL_WIDTH_CLS} p-4 sm:p-6 pb-32 sm:pb-28 lg:flex lg:gap-6 lg:items-stretch`} style={(locked || readOnly) ? { pointerEvents: 'none', opacity: 0.85 } : undefined}>
           <div className="lg:flex-1 lg:min-w-0 space-y-4">
+            {invDraftMeta && (
+              <div className="rounded-xl p-3 flex items-center gap-3 flex-wrap" style={{ background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.3)' }}>
+                <span className="text-xs text-white/75 flex-1 min-w-[140px]">Unsaved invoice draft{invDraftMeta.ts ? ` from ${new Date(invDraftMeta.ts).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : ''} found.</span>
+                <button type="button" onClick={restoreInvDraft} className="h-8 px-3 rounded-lg text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-95">Restore</button>
+                <button type="button" onClick={clearInvDraft} className="h-8 px-3 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white/70 active:scale-95">Discard</button>
+              </div>
+            )}
             {/* Customer & Vehicle */}
             {/* Mobile QA fix: inv.phone can genuinely be unset (walk-in edited before a
                 phone was entered) — interpolating it directly rendered the literal
@@ -1774,12 +1841,15 @@ function PaymentModal({ invoice, onCollect, onClose }) {
   const [saving, setSaving] = useState(false);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
-  // Phase 4b (PH4-01) — ONE stable payment id for the life of this modal. Every
-  // press of "Record Payment" (including a retry after an ambiguous failure) reuses
-  // it, so `collectInvoicePayment`'s transaction can recognise a duplicate delivery
-  // and not append a second payment. It is regenerated only when the modal remounts
-  // for a NEW "collect payment" intent (a genuinely separate payment gets a new id).
-  const payOpIdRef = useRef(`p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
+  // Phase 4b (PH4-01) + Phase 5b (PH5-02) — ONE durable payment id for this
+  // "collect payment on invoice X" intent, kept in sessionStorage so it SURVIVES
+  // A BROWSER REFRESH: `collectInvoicePayment`'s transaction checks
+  // `payments.some(p => p.id === pay.id)`, so a reload + retry of the same payment
+  // appends NOTHING (no second row, no _rev bump, no history entry, no
+  // realization). The container clears it on a confirmed result. `paymentPending`
+  // = a prior collect attempt on this invoice did not confirm before the page
+  // went away — warn the user to check the invoice first.
+  const { opId: payOpId, hadPending: paymentPending } = useDurableOpId(`payment:${invoice.id}`, 'p');
   const confirm = async () => {
     if (savingRef.current) return;
     if (num(amount) <= 0) { toast.error('Enter the amount received.'); return; }
@@ -1787,7 +1857,7 @@ function PaymentModal({ invoice, onCollect, onClose }) {
     savingRef.current = true;
     setSaving(true);
     try {
-      await onCollect(invoice, mode, amount, ref, { notes, paidOn, opId: payOpIdRef.current });
+      await onCollect(invoice, mode, amount, ref, { notes, paidOn, opId: payOpId });
     } finally {
       savingRef.current = false;
       if (mountedRef.current) setSaving(false);
@@ -1802,6 +1872,12 @@ function PaymentModal({ invoice, onCollect, onClose }) {
           <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button>
         </div>
         <div className="p-5 space-y-3 overflow-y-auto overscroll-contain dark-scroll flex-1 min-h-0" onKeyDown={(e) => { if (e.key === 'Enter') confirm(); }}>
+          {paymentPending && (
+            <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+              <span aria-hidden>⚠️</span>
+              <span>A payment for this invoice may not have finished before the page reloaded. <b>Check the invoice’s payments first.</b> Pressing Record Payment again is safe — a repeat of the same payment is ignored.</span>
+            </div>
+          )}
           <div className="rounded-xl p-3 text-sm" style={{ background: 'rgba(var(--fg-rgb),0.03)' }}>
             <div className="flex justify-between text-white/60"><span>{invoice.invNo} · {invoice.customer}</span></div>
             <div className="flex justify-between mt-1"><span className="text-white/50">Grand Total</span><span className="text-white/85 font-bold">{inr(t.grand)}</span></div>
@@ -2195,9 +2271,11 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
       try {
         await onCollectPayment(iv.id, pay);
       } catch (e) {
-        // Phase 4b — the payment carries a stable id, so pressing "Record Payment"
-        // again is now safe: the transaction recognises the retry and will not add a
-        // second payment. Word the error so it doesn't falsely promise nothing changed.
+        // Phase 4b/5b — the payment carries a DURABLE id (survives a refresh), so
+        // pressing "Record Payment" again — even after a reload — is safe: the
+        // transaction recognises the retry and will not add a second payment.
+        // conc/deleted and conc/estimate are definite non-commits -> retire the id.
+        if (e?.code === 'conc/deleted' || e?.code === 'conc/estimate') clearOpId(`payment:${iv.id}`);
         toast.error(
           e?.code === 'conc/deleted'
             ? 'This invoice was changed or deleted by another user. Reload and try again.'
@@ -2207,6 +2285,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
         );
         return;
       }
+      clearOpId(`payment:${iv.id}`); // Phase 5b — server-confirmed; a later payment on this invoice is a new intent
       setPayFor(null);
       toast.success(`Payment of ${inr(amount)} recorded`);
       return;
@@ -2231,6 +2310,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     // owner sees why and can retry, rather than a false "recorded" they'd have to
     // notice was wrong.
     try { await onPersist?.(next); } catch (e) { return; }
+    clearOpId(`payment:${iv.id}`);
     setPayFor(null);
     toast.success(`Payment of ${inr(amount)} recorded`);
   };
@@ -3023,7 +3103,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           the real outcome and only closes/toasts on confirmed success; on failure the modal
           stays open (so nothing typed is lost) and the shared persistence layer's own toast
           already told the user what happened. */}
-      {edit && <InvoiceModal key={`inv:${edit.id || 'new'}:${revOf(edit)}`} initial={edit} readOnly={invoiceViewOnly} banner={isPersistedEdit ? invoiceBanner : null} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { let saved; try { saved = await onPersist?.(iv); } catch (e) { return; } const finalIv = saved || iv; invoiceLease.release(); setEdit(null); toast.success(`${finalIv.isEstimate ? 'Estimate' : 'Invoice'} ${finalIv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(finalIv), 120); }} onClose={closeInvoiceEditor} />}
+      {edit && <InvoiceModal key={`inv:${edit.id || 'new'}:${revOf(edit)}`} initial={edit} readOnly={invoiceViewOnly} banner={isPersistedEdit ? invoiceBanner : null} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { let saved; try { saved = await onPersist?.(iv); } catch (e) { return false; } const finalIv = saved || iv; invoiceLease.release(); setEdit(null); toast.success(`${finalIv.isEstimate ? 'Estimate' : 'Invoice'} ${finalIv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(finalIv), 120); return finalIv; }} onClose={closeInvoiceEditor} />}
       {invoiceReviewOpen && isPersistedEdit && invoiceSync.latest && (
         <ConflictReviewDialog
           mode="review"
