@@ -1282,6 +1282,13 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
   // other dropdown/menu in Add Part and Job Cards, instead of patching the old ad-hoc
   // positioning a third time.
   const [menuFor, setMenuFor] = useState(null);
+  // Mobile card's own "more actions" menu — deliberately a SEPARATE state (not
+  // reusing `menuFor`) because the desktop table and the mobile card list are both
+  // always in the DOM at once (the desktop wrapper is `hidden md:block`, not
+  // conditionally rendered), so a shared open-state would try to render two
+  // ActionMenus for the same customer at once — one anchored to a `display:none`
+  // button. Same reasoning for the separate `m:` prefixed anchor-ref key below.
+  const [mobileMenuFor, setMobileMenuFor] = useState(null);
   const menuAnchorRefs = useRef(new Map()); // customer id -> stable {current: el} ref
   const menuAnchorRef = (id) => {
     if (!menuAnchorRefs.current.has(id)) menuAnchorRefs.current.set(id, { current: null });
@@ -1916,8 +1923,41 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
                     {canManage && <button onClick={() => openCustomerEditor(c)} disabled={c.id === selId && lease.status === 'held'} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-40 disabled:cursor-not-allowed">{c.id === selId && lease.status === 'held' ? <Lock size={13} /> : <Edit3 size={13} />}</button>}
                     {canManage && <button onClick={() => onCreateInvoice?.(c)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><Receipt size={13} /></button>}
                     {c.phone && <button onClick={() => window.open(`https://wa.me/91${c.phone}`, '_blank')} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-emerald-400/70"><MessageCircle size={13} /></button>}
+                    {/* Archive/Delete (and the other secondary actions) were only ever
+                        reachable from the desktop table's "⋮" menu — the mobile card had
+                        no equivalent, so on a phone there was no way to archive or delete
+                        a customer at all. Same trigger pattern as the desktop row, its own
+                        state/anchor-ref key (see mobileMenuFor above) so the two menus
+                        never collide, same handlers, no new logic. */}
+                    <button ref={menuAnchorRef(`m:${c.id}`)} onClick={() => setMobileMenuFor(mobileMenuFor === c.id ? null : c.id)} aria-label="More actions" aria-haspopup="menu" aria-expanded={mobileMenuFor === c.id} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><MoreVertical size={13} /></button>
                   </div>
                 </div>
+                {mobileMenuFor === c.id && (
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <ActionMenu anchorRef={menuAnchorRef(`m:${c.id}`)} open onClose={() => setMobileMenuFor(null)} items={[
+                      // Edit / Create Invoice / Send WhatsApp already have their own
+                      // always-visible buttons on this card (above) — not duplicated here,
+                      // same principle the desktop menu already follows.
+                      canManage && { type: 'item', label: t('customers.action.addVehicle', 'Add Vehicle'), icon: Plus, onClick: () => { setSelId(c.id); setEditVeh(emptyVehicle()); } },
+                      canManage && { type: 'item', label: t('common.createJobCard', 'Create Job Card'), icon: ClipboardList, onClick: () => onCreateJobCard?.(c) },
+                      { type: 'item', label: t('customers.action.viewHistory', 'View History'), icon: History, onClick: () => { setSelId(c.id); setDetailTab('Timeline'); } },
+                      c.phone && { type: 'item', label: t('customers.action.callCustomer', 'Call Customer'), icon: PhoneCall, onClick: () => { window.location.href = `tel:+91${c.phone}`; } },
+                      canManage && {
+                        type: 'item', label: c.archived ? t('common.reactivate', 'Reactivate') : t('customers.action.archiveCustomer', 'Archive Customer'), icon: Archive, onClick: () => {
+                          setCustomers((prev) => prev.map((x) => {
+                            if (x.id !== c.id) return x;
+                            const willArchive = !x.archived;
+                            const hist = [...(x.history || []), histEntry(willArchive ? 'Customer Archived' : 'Customer Reactivated', '')];
+                            return willArchive
+                              ? { ...x, archived: true, archivedAt: Date.now(), archivedBy: demoMode ? 'Demo User' : 'Admin', history: hist }
+                              : { ...x, archived: false, archivedAt: null, archivedBy: null, history: hist };
+                          }));
+                        },
+                      },
+                      canManage && { type: 'item', label: t('customers.action.deleteCustomer', 'Delete Customer'), icon: Trash2, danger: true, onClick: () => removeCustomer(c) },
+                    ]} />
+                  </div>
+                )}
               </div>
             ))}
             {paged.length === 0 && <div className="py-10 text-center text-white/45 text-xs">{t('customers.empty.noMatch', 'No customers match.')} {canManage && t('customers.empty.tapToAdd', 'Tap "New Customer" to add your first.')}</div>}

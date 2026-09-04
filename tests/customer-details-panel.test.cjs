@@ -57,7 +57,10 @@ console.log('\nCustomers — Details panel width balance + independent scroll\n'
 const start = src.indexOf('xl:flex xl:gap-4 xl:items-start');
 // widened from 24000: the Phase 1b edit-lease Lock icon + disabled state on the
 // two row Edit buttons sit between this anchor and the panel's bodyRef.
-const block = src.slice(start, start + 27000);
+// widened again (27000 -> 29000): the mobile card gained its own "more actions"
+// menu (Archive/Delete parity with the desktop row), adding real characters
+// before the panel's bodyRef further down in the same block.
+const block = src.slice(start, start + 29000);
 
 // --- Width balance (Task: table compression) ---
 ok('table column has a real minimum width (was xl:min-w-0 — no floor at all)',
