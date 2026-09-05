@@ -13442,6 +13442,11 @@ export default function InventoryDashboard() {
       toast.success(`${po.poNumber}: already received`);
       return;
     }
+    // PHASE 17 — a cancelled PO is terminal; it can never be received against.
+    // The UI hides the Receive button, poReceiveDoc's transaction re-checks
+    // server-side (the authoritative guard), and this covers the demo path
+    // (no transaction) plus a client that still holds a pre-cancel snapshot.
+    if (po.status === 'cancelled') { toast.error('This purchase order was cancelled — it can’t be received against.'); clearOpId(`receive:${po.id}`); return; }
     poAdvancing.current.add(po.id);
     try {
       const items = po.items || [];
@@ -13501,9 +13506,10 @@ export default function InventoryDashboard() {
         toast.success(serverStatus === 'received' ? `${po.poNumber}: received` : `${po.poNumber}: partially received`);
       } catch (e) {
         console.error(e);
-        // Phase 5b — po/deleted and po/over-receipt are definite non-commits; the op
-        // id can be retired. An unknown/ambiguous error keeps it for a safe retry.
-        if (e?.code === 'po/over-receipt' || e?.code === 'po/deleted') { clearOpId(`receive:${po.id}`); toast.error(e.message); }
+        // Phase 5b / Phase 17 — po/deleted, po/over-receipt and po/cancelled are
+        // definite non-commits; the op id can be retired. An unknown/ambiguous
+        // error keeps it for a safe retry.
+        if (e?.code === 'po/over-receipt' || e?.code === 'po/deleted' || e?.code === 'po/cancelled') { clearOpId(`receive:${po.id}`); toast.error(e.message); }
         else toast.error(isTxTimeout(e)
           ? timeoutMessage('The receipt')
           : 'Couldn’t confirm the receipt saved. It may already be recorded — check the PO, or press Confirm Receipt again (a repeat is safe).');

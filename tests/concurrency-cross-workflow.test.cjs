@@ -175,8 +175,8 @@ ok('poReceiveDoc aborts the whole transaction on over-receipt (no partial stock 
 ok('stock increment + restock row are written INSIDE the transaction (atomic with the PO update)',
   /tx\.update\(doc\(db, 'parts', line\.partId\), partUpdate\)/.test(po_src)
   && /tx\.set\(doc\(collection\(db, 'restocks'\)\), \{/.test(po_src));
-ok('the receivePO caller surfaces the over-receipt / deleted message and keeps the form open',
-  /if \(e\?\.code === 'po\/over-receipt' \|\| e\?\.code === 'po\/deleted'\) \{[\s\S]{0,80}toast\.error\(e\.message\); \}/.test(dash)
+ok('the receivePO caller surfaces the over-receipt / deleted / cancelled message and keeps the form open',
+  /if \(e\?\.code === 'po\/over-receipt' \|\| e\?\.code === 'po\/deleted' \|\| e\?\.code === 'po\/cancelled'\) \{[\s\S]{0,80}toast\.error\(e\.message\); \}/.test(dash)
   && /const serverStatus = res\?\.status \|\| status;/.test(dash));
 
 // =====================================================================

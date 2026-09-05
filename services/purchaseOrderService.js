@@ -126,8 +126,13 @@ export function poReceiveDoc(po, receivedLines, userEmail, receiptId) {
     if (receiptId && applied.includes(receiptId)) {
       return { status: server.status, items: server.items || [], alreadyApplied: true };
     }
-    const { items: nextItems, status, fullyReceived, over } =
+    const { items: nextItems, status, fullyReceived, over, blocked } =
       applyPoReceive(server.items || [], receivedLines, server.status);
+    if (blocked === 'cancelled') {
+      const e = new Error('This purchase order was cancelled. Reload — a cancelled order can\'t be received against.');
+      e.code = 'po/cancelled';
+      throw e;
+    }
     if (over) {
       const e = new Error(
         `Can't receive ${over.delta} of "${over.name}" — only ${Math.max(0, over.ordered - over.already)} ` +
