@@ -450,6 +450,36 @@ current release.
   Production code: +39/−13 lines across 4 components; `firestore.rules`
   +10/−1 (requires a manual publish to the live project — pushing to
   `main` alone does not change live rule enforcement).
+- ~~**Search / filter / sort / pagination consistency audit.**~~ **DONE —
+  PHASE 16, shipped and verified.** Do records stay correctly represented
+  when the dataset changes (edit / delete / archive / restore / a
+  concurrent client's write) while search/filter/sort/pagination state is
+  active? Search, filter, sort and combined-filter behaviour were already
+  sound — every result set is a pure `useMemo` derivation of the single
+  listener-fed source array (`lib/useSearch.js`'s shared engine), keyed by
+  stable document ids, self-healing on any live data change (verified with
+  the real `searchAndRank` against the mandatory ABC→XYZ→ABC concurrent-
+  rename scenario). One MEDIUM defect found and fixed:
+  - **PH16-01.** The pagination page *index* was left stale when a list
+    shrank via a live change **without** a filter change (a delete, an
+    archive/restore, a status change moving a record out of the current
+    filter tab, or a concurrent client's write). The row `.slice()` then
+    sliced past the end and rendered an empty page while the shared
+    `<Pagination>` showed `"3 / 2"` and `"41–25 of 25"`, or the custom
+    pagers (Suppliers ×2, Alerts) hid entirely — leaving no visible
+    control back to the remaining records. Authoritative data was never
+    wrong; only the paginated view of it. Fixed by consolidating the clamp
+    into the shared `<Pagination>` component (one effect + a clamped
+    display) plus three one-line `if (page > pageCount) setPage(pageCount)`
+    effects for the custom pagers — reusing the exact pattern the main
+    Parts list already used. Customers row-ordinal column: `page` →
+    `safePage` (cosmetic). `LedgerPage` left unchanged (append-only data;
+    its `setPage(1)` effect covers every real shrink vector).
+  Gates: `npm test` 138/138 (+1 new dedicated
+  `tests/search-filter-pagination-integrity.test.cjs`, 48 assertions —
+  independent oracle + the real `<Pagination>` rendered + the real search
+  engine), `npm run test:rules` 138/138 (unchanged), lint 0, build ✓.
+  Production code: +30/−7 lines across 4 files (≈19 comment).
 
 ## Scale — before large datasets
 

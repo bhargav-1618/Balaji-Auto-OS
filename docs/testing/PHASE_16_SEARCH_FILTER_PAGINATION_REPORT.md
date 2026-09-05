@@ -318,11 +318,27 @@ filter/sort/pagination functions under test.
 ## 21. Production validation
 
 Verified by source tracing, the independent-oracle / real-component tests
-above, and a read-only production smoke test (§ deployment record below).
-No production business record was created, edited, deleted, archived, or
-restored to test filtering — the live project holds only QA data (Phase 15
-baseline §12) and the pagination-shrink behaviour is fully covered by the
+above, and a read-only production smoke test. No production business
+record was created, edited, deleted, archived, or restored to test
+filtering — the live project holds only QA data (Phase 15 baseline §12)
+and the pagination-shrink behaviour is fully covered by the
 component-render and oracle tests.
+
+**Deployment record:**
+- **Commit:** `cbb06a6` (`fix(ui): harden search filter pagination
+  consistency`), pushed to `main`, deployed by Vercel.
+- **Build verification:** `window.__NEXT_DATA__.buildId` read
+  `sbDi7i0D4OimJ08TNmAG3`, distinct from the baseline
+  (`Rl3aFHPBosq4k-7c1GODo`), confirming the new commit is live.
+- **Console check:** zero console messages across Dashboard, Inventory →
+  Purchase Orders (5 POs, `<Pagination>` correctly renders nothing for a
+  single page), Suppliers (0 records — clamp effects no-op on an empty
+  set), Alerts (0 records — the new alerts clamp effect no-ops).
+- **Render check:** every paginated view this phase touched renders
+  correctly with the live (small) dataset; the stale-page-shrink path is
+  covered by the real-`<Pagination>`-render tests (§19) since reproducing
+  it live would require creating 20+ disposable records.
+- No production record was created, edited, or moved.
 
 ## 22. QA cleanup
 

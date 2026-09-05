@@ -491,6 +491,31 @@ forged `performedBy`.)*
   audit-helper defect — fixing it is Phase-10-scale work, out of this
   phase's scope).
 
+- **A paginated list can no longer strand you on an empty page when its
+  data shrinks live** (PHASE 16 — search/filter/sort/pagination
+  consistency audit, shipped and verified; see
+  `docs/testing/PHASE_16_SEARCH_FILTER_PAGINATION_REPORT.md`). Search,
+  filter, sort and combined-filter behaviour were already correct — every
+  list is a pure derivation of the single listener-fed source array, keyed
+  by document id, self-healing on any live create/edit/delete/concurrent
+  change. One defect (PH16-01, MEDIUM): the pagination *page index* was not
+  clamped when a list shrank without a filter change (a delete, an
+  archive/restore, a status change moving a record off the current filter
+  tab, or a concurrent client's write), so the row slice went out of range
+  and showed an empty page while the pager read `"3 / 2"` — or the custom
+  pagers hid entirely. Fixed in the shared `<Pagination>` component (one
+  clamp effect, covers Purchase Orders / Archive / Reports / Stock
+  timeline) plus one-line effects for the Suppliers and Alerts custom
+  pagers. `LedgerPage`'s pager still uses `page === pages` boundary guards
+  and a raw-`page` slice — **left unchanged, not a live bug**: its data
+  (Sales / Services / Stock In / Stock Out) is append-only and its
+  `setPage(1)` effect fires on every real shrink vector (date range, type,
+  sort, per-page, custom dates), so a shrink without a filter change is
+  unreachable there. View-state persistence differs by module (in-memory
+  cache for Customers/Vehicles/Suppliers, reset-on-mount for
+  Billing/POs/Archive/Alerts) — deliberate and internally consistent, not
+  unified.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made
