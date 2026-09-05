@@ -431,3 +431,101 @@ gates (tests, rules, lint, build) are green.
 - **Commit:** `067f901` — `fix(financial): harden money integrity`, pushed to `main`.
 - **Vercel deployment:** succeeded — production build id `rDJpsUaUXDNERHJrkDxuD` (confirmed live at https://balaji-auto-os.vercel.app, distinct from the prior Phase 10 build `sHTue-DlEflDSEyORK_K9`).
 - **Production smoke test** (safe, non-destructive — no invoice, payment, or status change made): no application console errors on load (only unrelated network noise — a blocked-by-client resource and a QUIC transport error from the browsing environment, not app JS errors); Billing dashboard rendered its existing KPIs correctly (Revenue (Month) ₹1,680, GST Collected ₹180, Parts Revenue ₹1,000, Labour Revenue ₹500 — the pre-existing `QA Production Smoke Test` invoice `INV-0001`, unchanged from Phase 10); opened `INV-0001` read-only via **View** — the editor rendered correctly as **Paid · Locked**, including the **Credit Note** button (gated on `savedStatus === 'Paid'`, adjacent to but unmodified by this phase's fixes) — then closed without any edit or save. No Refund/Return/Cancel action was performed against real data, per this phase's own production-safety reasoning (§25).
+
+## 30. Code growth review
+
+Measured from `git diff --numstat` across both commits (`067f901`, `f96d97f`)
+against the pre-phase baseline (`985db11`), split by what each file actually
+is — production logic vs. test infrastructure vs. required deliverables.
+
+**Production code** (`components/InventoryDashboard.js`,
+`components/billing/BillingModule.jsx`):
+
+```
+lines added:    46   (29 + 17)
+lines removed:  12   (5 + 7)
+net lines:      +34
+files added:    0
+```
+
+Of those 46 added lines, **~34 are comments** explaining *why* (matching this
+codebase's own established documentation style, unchanged from Phases 1–10)
+and **~9 are real logic**:
+
+- `invStatus`: **+1 line** — the overpayment condition, copied VERBATIM from
+  `deriveStatus` (reuse, zero new logic authored).
+- `collectInvoicePayment`: **+5 lines** — one `if`/throw block, reusing the
+  exact `Error` + `.code` pattern already used twice earlier in the same
+  function for `conc/deleted`/`conc/estimate` (extend, not a new mechanism).
+- `BillingModule.collectPayment`'s catch block: **+1 line** (extended an
+  existing `||` condition) and **+2 lines** (extended an existing ternary
+  chain by one branch) — both existing structures, not new ones.
+
+Removed: the `onRestoreStock` prop declaration, its JSX wiring (one full
+callback — `(iv) => { const restore = invoicePartQtys(iv); ... }`), and its
+call site inside `changeStatus` — **the single largest item in this diff by
+functional weight**, even though it is only ~3 line-level changes: it deleted
+an entire redundant, harmful, non-transactional stock-mutation code path in
+favor of the transaction that already did the same job correctly (Phase 8B).
+
+**No new function, no new file, no new abstraction was added to production
+code.** Every logic line added extends or duplicates-verbatim a condition
+that already existed one function away.
+
+**Test infrastructure** (`tests/setup.cjs`): **+8/−2 (net +6)** — extended
+the existing `EXTRA_EXPORTS` test-shim map (already used for `Sidebar`,
+`InvoiceModal`, `deriveStatus`, etc. since Phase 7/9) with two more names
+(`invTotals`, `invStatus`). No new test mechanism. One redundant addition
+(`totalsOf`, already natively exported by `BillingModule.jsx` — see §23) was
+caught and reverted **during this same phase, before commit** — direct
+evidence the reuse-first check was actually applied while writing the code,
+not just claimed afterward.
+
+**Required deliverables** (new files):
+
+```
+tests/financial-integrity.test.cjs                    +402 lines
+docs/testing/PHASE_11_FINANCIAL_INTEGRITY_REPORT.md   +433 lines
+```
+
+files added: 2 (both explicitly mandated by this phase's own spec —
+"Add automated tests..." and "Create docs/testing/PHASE_11_...md" — neither
+is incidental growth).
+
+**Reusable existing mechanisms used** (this phase added no new ones):
+1. `deriveStatus`'s overpayment condition, reused verbatim in `invStatus`.
+2. The `conc/deleted`/`conc/estimate` coded-`Error`-and-throw pattern inside
+   `collectInvoicePayment`, extended with a third code (`conc/overpaid`).
+3. The `clearOpId` + ternary-toast pattern in `BillingModule.collectPayment`'s
+   catch block, extended by one more branch.
+4. `tests/setup.cjs`'s `EXTRA_EXPORTS` test-shim (Phase 7/9 origin), extended
+   rather than a new harness invented.
+5. The Phase 8B/9/10 "MANDATORY INJECTION MATRIX" pure-model-proof
+   convention, reused for both fixes' concurrency/race proofs instead of
+   standing up a live two-client Firestore emulator scenario.
+6. The already-atomic `editInvoiceTransactional`/`planInvoiceRealization`
+   transaction (Phase 8B) — PH11-01's fix IS this reuse: deleting the
+   redundant path and trusting the transaction that already existed.
+7. Inside the new test file: a `checkAgainstBoth()` helper and `line()`/
+   `inv()` object builders consolidate what would otherwise be ~75 repeated
+   lines of assertion/fixture boilerplate across ~25 scenarios into shared,
+   named helpers (Phase-appropriate consolidation, not a new abstraction
+   layer over the app itself).
+
+**Unnecessary code removed:** the `onRestoreStock` prop, its JSX callback,
+and its call site (§18/§22) — a full redundant/harmful code path deleted,
+not merely disabled or guarded. The redundant `totalsOf` test-export was
+caught and removed within this same phase before it ever reached a commit.
+
+**Explanation for the net increase:** the ~880 lines added across the two
+new files are overwhelmingly the phase's own explicitly required test suite
+(independent-oracle assertions covering 15 scenario categories, as PH11W
+mandates) and audit report (PH11's own 28-section deliverable list) — not
+production code. Production code itself shrank in complexity (one entire
+redundant code path removed) while growing by only ~9 real logic lines to
+close two CRITICAL defects, each reusing an existing pattern rather than
+inventing one. No further reduction was identified on review — every
+remaining line either (a) is a comment carrying the "why" a future reader
+needs to not reintroduce the deleted bug, (b) is logic copied verbatim from
+an already-correct sibling, or (c) is required test/report content this
+phase's own spec explicitly mandates.
