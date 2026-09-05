@@ -455,6 +455,37 @@ rules published.)*
   everywhere else); `reorderRequests` has a narrow double-click gap with no
   durable opId (non-authoritative, non-financial, LOW/INFO).
 
+- **Customer/Vehicle/Invoice history entries no longer misattribute every
+  production action to a hardcoded placeholder actor** (PHASE 15 —
+  audit-log integrity audit, shipped and verified; see
+  `docs/testing/PHASE_15_AUDIT_LOG_INTEGRITY_REPORT.md`). The shared,
+  authoritative `auditLog` (via `pushAudit`/`writeAudit`) always correctly
+  recorded the real signed-in user. A separate, user-visible mechanism —
+  each record's own embedded `history[]`/`noteEntries[]`/`notesLog[]`,
+  shown in its own detail view — did not: it hardcoded `'Admin'`, `'You'`,
+  or `'Staff'` for every production entry regardless of who actually
+  performed the action, at 8 call sites across
+  `CustomersModule.jsx`/`VehiclesModule.jsx`/`BillingModule.jsx`. Fixed by
+  reusing `capacityActorEmail`/`actorEmail` — already computed and already
+  passed into 6+ other components for this exact purpose — at all 8 sites.
+  Also fixed: a partial/non-final payment was audited as the generic
+  "Invoice Updated" instead of its own "Payment Received" action; and
+  `auditLog`'s Firestore `create` rule did not enforce that a written
+  entry's `performedBy` actually matched the writer's own uid, so a
+  malicious or buggy client could in principle forge an entry attributed
+  to a different user (tightened to require self-attribution, mirroring
+  `pendingSales`' existing rule — **this rules change still needs a
+  manual `firebase deploy --only firestore:rules` / Console publish to
+  take effect in production**, the same as this program's earlier
+  concurrency-phase rules changes). Documented, not changed: Job Card's
+  own `statusLog`/`notesLog` attribute `by` to the case's assigned advisor
+  rather than the logged-in user — a genuine business-domain field, not a
+  bare placeholder, left alone absent evidence it's unintentional; Job
+  Card's `jobNo`-as-document-id could in principle be reissued to a
+  different card after a hard delete (a numbering characteristic, not an
+  audit-helper defect — fixing it is Phase-10-scale work, out of this
+  phase's scope).
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

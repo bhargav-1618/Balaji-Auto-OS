@@ -417,6 +417,39 @@ current release.
   133/133 (unchanged), lint 0, build ✓. No `firestore.rules` change.
   Production code: +24/−23 lines (net +1; the real substance is ~15 lines
   of dead Firestore-write code deleted, offset by explanatory comments).
+- ~~**Audit-log integrity audit.**~~ **DONE — PHASE 15, shipped and
+  verified.** Does the audit trail accurately record WHO/WHAT/WHEN/WHICH
+  RECORD for important business actions? Confirmed both `pushAudit`/
+  `writeAudit` always correctly captured the real actor and never fire
+  before their authoritative write's confirmed success (no audit entry
+  anywhere claims a failed operation succeeded). Three defects found and
+  fixed:
+  - **PH15-01 (HIGH).** Customer/Vehicle/Invoice's own embedded
+    history/notes (shown directly in each record's detail view, separate
+    from the shared `auditLog`) hardcoded a static actor placeholder
+    (`'Admin'`, `'You'`, `'Staff'`) for every production entry, regardless
+    of who was actually signed in — while the shared `auditLog`'s own
+    entry for the same action was always correctly attributed. Fixed by
+    reusing `capacityActorEmail`/`actorEmail`, a value already computed
+    and already passed into 6+ other components for this exact purpose,
+    at all 8 hardcoded call sites.
+  - **PH15-02 (MEDIUM).** A payment that didn't fully realize an invoice
+    (partial, or any after the first) was audited as the generic "Invoice
+    Updated" — the exact "payment recorded as generic invoice edit"
+    failure mode. Fixed with a `payments[].length` diff (data
+    `collectInvoicePayment` already produces) driving a new "Payment
+    Received" action + amount/mode-specific detail.
+  - **PH15-03 (MEDIUM).** `auditLog`'s Firestore `create` rule allowed any
+    signed-in user to write an entry with a forged `performedBy` —
+    impersonating a different user. Fixed by requiring
+    `performedBy == request.auth.uid`, reusing `pendingSales`' existing
+    self-attribution pattern.
+  Gates: `npm test` 137/137 (+1 new dedicated
+  `tests/audit-log-integrity.test.cjs`, 33 assertions), `npm run
+  test:rules` 138/138 (133 previous + 5 new), lint 0, build ✓.
+  Production code: +39/−13 lines across 4 components; `firestore.rules`
+  +10/−1 (requires a manual publish to the live project — pushing to
+  `main` alone does not change live rule enforcement).
 
 ## Scale — before large datasets
 
