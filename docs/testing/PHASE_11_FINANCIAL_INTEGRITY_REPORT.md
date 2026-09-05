@@ -434,98 +434,51 @@ gates (tests, rules, lint, build) are green.
 
 ## 30. Code growth review
 
-Measured from `git diff --numstat` across both commits (`067f901`, `f96d97f`)
-against the pre-phase baseline (`985db11`), split by what each file actually
-is — production logic vs. test infrastructure vs. required deliverables.
-
-**Production code** (`components/InventoryDashboard.js`,
-`components/billing/BillingModule.jsx`):
+Figures are `git diff --numstat` against the pre-phase baseline (`985db11`).
 
 ```
-lines added:    46   (29 + 17)
-lines removed:  12   (5 + 7)
-net lines:      +34
-files added:    0
+production lines added:      46   (InventoryDashboard.js 29, BillingModule.jsx 17)
+production lines removed:    12   (5, 7)
+net production change:       +34   (~9 real logic, ~25 comment; see below)
+test lines added:            410   (financial-integrity.test.cjs 402, new;
+                                     setup.cjs +8/-2 extending an existing map)
+documentation lines added:   ~589  (ROADMAP.md 29, KNOWN_LIMITATIONS.md 29,
+                                     this report; both explicitly PH11 deliverables)
+files added:                 2     (tests/financial-integrity.test.cjs,
+                                     this report — both mandated by the phase spec)
 ```
 
-Of those 46 added lines, **~34 are comments** explaining *why* (matching this
-codebase's own established documentation style, unchanged from Phases 1–10)
-and **~9 are real logic**:
+**Production logic breakdown** (the ~9 real lines inside the +34 net):
+`invStatus` +1 (the overpayment condition, copied verbatim from `deriveStatus`);
+`collectInvoicePayment` +5 (one `if`/throw block, reusing the `Error`+`.code`
+pattern already used twice above it for `conc/deleted`/`conc/estimate`);
+`BillingModule.collectPayment`'s catch block +1 (extended an existing `||`
+condition) and +2 (extended an existing ternary chain by one branch). The
+remaining ~25 added lines are comments explaining why, in this codebase's
+established style. Zero new functions, zero new abstractions.
 
-- `invStatus`: **+1 line** — the overpayment condition, copied VERBATIM from
-  `deriveStatus` (reuse, zero new logic authored).
-- `collectInvoicePayment`: **+5 lines** — one `if`/throw block, reusing the
-  exact `Error` + `.code` pattern already used twice earlier in the same
-  function for `conc/deleted`/`conc/estimate` (extend, not a new mechanism).
-- `BillingModule.collectPayment`'s catch block: **+1 line** (extended an
-  existing `||` condition) and **+2 lines** (extended an existing ternary
-  chain by one branch) — both existing structures, not new ones.
-
-Removed: the `onRestoreStock` prop declaration, its JSX wiring (one full
-callback — `(iv) => { const restore = invoicePartQtys(iv); ... }`), and its
-call site inside `changeStatus` — **the single largest item in this diff by
-functional weight**, even though it is only ~3 line-level changes: it deleted
-an entire redundant, harmful, non-transactional stock-mutation code path in
-favor of the transaction that already did the same job correctly (Phase 8B).
-
-**No new function, no new file, no new abstraction was added to production
-code.** Every logic line added extends or duplicates-verbatim a condition
-that already existed one function away.
-
-**Test infrastructure** (`tests/setup.cjs`): **+8/−2 (net +6)** — extended
-the existing `EXTRA_EXPORTS` test-shim map (already used for `Sidebar`,
-`InvoiceModal`, `deriveStatus`, etc. since Phase 7/9) with two more names
-(`invTotals`, `invStatus`). No new test mechanism. One redundant addition
-(`totalsOf`, already natively exported by `BillingModule.jsx` — see §23) was
-caught and reverted **during this same phase, before commit** — direct
-evidence the reuse-first check was actually applied while writing the code,
-not just claimed afterward.
-
-**Required deliverables** (new files):
-
-```
-tests/financial-integrity.test.cjs                    +402 lines
-docs/testing/PHASE_11_FINANCIAL_INTEGRITY_REPORT.md   +433 lines
-```
-
-files added: 2 (both explicitly mandated by this phase's own spec —
-"Add automated tests..." and "Create docs/testing/PHASE_11_...md" — neither
-is incidental growth).
-
-**Reusable existing mechanisms used** (this phase added no new ones):
-1. `deriveStatus`'s overpayment condition, reused verbatim in `invStatus`.
-2. The `conc/deleted`/`conc/estimate` coded-`Error`-and-throw pattern inside
-   `collectInvoicePayment`, extended with a third code (`conc/overpaid`).
-3. The `clearOpId` + ternary-toast pattern in `BillingModule.collectPayment`'s
-   catch block, extended by one more branch.
-4. `tests/setup.cjs`'s `EXTRA_EXPORTS` test-shim (Phase 7/9 origin), extended
-   rather than a new harness invented.
-5. The Phase 8B/9/10 "MANDATORY INJECTION MATRIX" pure-model-proof
-   convention, reused for both fixes' concurrency/race proofs instead of
-   standing up a live two-client Firestore emulator scenario.
-6. The already-atomic `editInvoiceTransactional`/`planInvoiceRealization`
-   transaction (Phase 8B) — PH11-01's fix IS this reuse: deleting the
-   redundant path and trusting the transaction that already existed.
-7. Inside the new test file: a `checkAgainstBoth()` helper and `line()`/
-   `inv()` object builders consolidate what would otherwise be ~75 repeated
-   lines of assertion/fixture boilerplate across ~25 scenarios into shared,
-   named helpers (Phase-appropriate consolidation, not a new abstraction
-   layer over the app itself).
+**Existing mechanisms reused:** `deriveStatus`'s overpayment condition;
+the `conc/*` coded-error-and-throw pattern in `collectInvoicePayment`; the
+`clearOpId` + ternary-toast pattern in `collectPayment`; `setup.cjs`'s
+`EXTRA_EXPORTS` test-shim (Phase 7/9 origin); the Phase 8B/9/10 MANDATORY
+INJECTION MATRIX pure-model convention (used instead of standing up a live
+two-client Firestore scenario); the already-atomic
+`editInvoiceTransactional`/`planInvoiceRealization` transaction (PH11-01's
+fix *is* trusting this instead of a parallel path).
 
 **Unnecessary code removed:** the `onRestoreStock` prop, its JSX callback,
-and its call site (§18/§22) — a full redundant/harmful code path deleted,
-not merely disabled or guarded. The redundant `totalsOf` test-export was
-caught and removed within this same phase before it ever reached a commit.
+and its call site — a full redundant, harmful stock-mutation path deleted
+outright (§18/§22), not guarded. A redundant `totalsOf` test-export was
+caught and reverted mid-phase, before commit (`BillingModule.jsx` already
+carries its own `export { totalsOf };`).
 
-**Explanation for the net increase:** the ~880 lines added across the two
-new files are overwhelmingly the phase's own explicitly required test suite
-(independent-oracle assertions covering 15 scenario categories, as PH11W
-mandates) and audit report (PH11's own 28-section deliverable list) — not
-production code. Production code itself shrank in complexity (one entire
-redundant code path removed) while growing by only ~9 real logic lines to
-close two CRITICAL defects, each reusing an existing pattern rather than
-inventing one. No further reduction was identified on review — every
-remaining line either (a) is a comment carrying the "why" a future reader
-needs to not reintroduce the deleted bug, (b) is logic copied verbatim from
-an already-correct sibling, or (c) is required test/report content this
-phase's own spec explicitly mandates.
+**Significant new logic and why it was unavoidable:** the 5-line
+`collectInvoicePayment` overpayment guard is the only genuinely new
+validation added. It could not be satisfied by an existing guard because
+every existing overpayment check (`PaymentModal`, `BillingModule.save()`)
+validates against **client-held** totals; none re-checks against the
+transaction's own fresh server read, which is exactly what the concurrent
+edit+payment race (§16) requires to close. No deletion or reuse of existing
+logic alone could close that race — a new check against fresh state was the
+smallest sufficient fix, and it reuses the surrounding error-handling
+pattern rather than introducing a new one.
