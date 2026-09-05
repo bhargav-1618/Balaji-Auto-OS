@@ -423,3 +423,55 @@ atomic ledger entry alongside its stock change, with no duplicate-movement
 or missing-movement gap found. Negative stock remains intentionally
 supported and fully explainable wherever it is allowed to occur. All
 regression gates are green.
+
+## 30. Deployment record addendum
+
+- **Commit:** `5fe8370` (`fix(inventory): harden inventory accounting
+  integrity`), pushed to `main`, deployed by Vercel.
+- **Build verification:** `window.__NEXT_DATA__.buildId` on
+  https://balaji-auto-os.vercel.app read **`KsltSrytglH01fCm7wz0e`**,
+  distinct from the prior known build id (`rDJpsUaUXDNERHJrkDxuD`),
+  confirming the new commit is live.
+- **Console check:** no application JS errors. Only the same benign
+  browser/network noise observed consistently in Phases 10–11
+  (`ERR_QUIC_PROTOCOL_ERROR.QUIC_PACKET_WRITE_ERROR`, `ERR_BLOCKED_BY_CLIENT`,
+  one bare 400 status) — none are app-code exceptions.
+- **Dashboard render:** loaded normally (Inventory Health 100% Excellent,
+  Workshop Score 70/100, Insights panel populated from ledger history).
+- **Inventory → Parts list:** rendered its empty state ("No parts yet. Click
+  'Add Part' to get started.") under both the **Active** and **Archived**
+  filters — **0 of 0** products either way. This was investigated rather
+  than accepted at face value, since it directly affects this smoke test's
+  main purpose:
+  - Confirmed via `git diff 067f901 5fe8370 -- components/InventoryDashboard.js`
+    that this phase's changes touch only the `handleSaveInner` payload object
+    (PH12-01) and never the Parts listener/query.
+  - Confirmed via `git log -S"PARTS_LIVE"` that the bounded, live
+    `orderBy('createdAt','desc')` Parts listener is unchanged since the
+    v1.0.0 initial commit — not touched by Phases 10, 11, or 12.
+  - Cross-checked Inventory → Stock: "Movements · 30D" shows **16** ledger
+    rows, all of them QA/test parts from this program's own earlier phases
+    (e.g. `PH9-ORPHAN-PART`, `ZZ-QA-PH5B-PART`, `ZZ-QA-PH4B-PART`,
+    `ZZ-QA-PH4-PART`) — consistent with the QA residue already tracked as
+    unresolved in this program's memory notes, not with a regression caused
+    by this phase.
+  - Conclusion: the Parts collection currently holds **zero live documents**
+    for this account (neither active nor archived). This is a pre-existing
+    data-state fact, not caused by commit `5fe8370` — confirmed independent
+    of the fix by the two checks above. It is called out here because it
+    blocked the literal "open an existing part's Edit Part form" smoke-test
+    step (§ below) and because it is a fact worth the business owner's
+    attention outside the scope of this report.
+  - **Not fixed as part of Phase 12**: this is a data-state / listener-scope
+    observation, not an inventory-accounting-integrity defect, and is
+    outside this phase's mandate.
+- **Edit Part form (read-only) check:** could not be performed against an
+  *existing* part as originally instructed, because no part document
+  currently exists in this account (see above — confirmed same result
+  under both Active and Archived filters, so this is not a filter
+  artifact). In its place, the fix's correctness on the Edit path is
+  already covered by this phase's own independent-oracle unit tests and
+  source-pattern proofs (§19, §23), which exercise the exact `payload`
+  object and `handleSaveInner` code path a real Edit Part save would use.
+- **Production data safety:** no part was created, edited, saved, adjusted,
+  sold, or restocked against real data during this check.
