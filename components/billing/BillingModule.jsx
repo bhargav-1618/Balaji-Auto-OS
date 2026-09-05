@@ -35,7 +35,7 @@ import CapacityCleanupModal from '../common/CapacityCleanupModal';
 import { checkCapacityGuard } from '../../lib/useCapacity';
 import notify from '../common/notify';
 import { writeSheet, asDate, stamp } from '../../lib/exportSheet';
-import { useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed, regKey } from '../../lib/useSearch';
+import { useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed, regKey, phoneKey } from '../../lib/useSearch';
 import { resolveSelectedRecords, countHiddenSelections } from '../../lib/selectionScope';
 import { statusColor, SHELL_WIDTH_CLS, SEMANTIC } from '../../constants/ui';
 import { BILLABLE_JOB_CARD_STATUSES } from '../../constants';
@@ -940,6 +940,17 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     if (newCust.email && !isValidEmail(newCust.email)) return toast.error(EMAIL_ERROR);
     if (newCust.gst && !isValidGstin(newCust.gst)) return toast.error(GSTIN_ERROR);
     if (!onQuickCustomer) return toast.error('Cannot create customer here.');
+    // The full Customers wizard (`dupPhone`/`dupGst`) refuses to save a customer
+    // whose mobile or GST already exists — both are real-world unique identifiers for
+    // a person/business. This inline quick-add (reachable mid-invoice, without ever
+    // visiting that wizard) had no equivalent check, so it could silently create a
+    // SECOND customer record for the same person, splitting their history / outstanding
+    // balance across two unrelated records. Mirrors the identical fix already made for
+    // the inline Add-Vehicle shortcut in PHASE 10 (PH10-03).
+    const dupPhone = newCust.phone && customers.find((c) => c.phone && phoneKey(c.phone) === phoneKey(newCust.phone));
+    if (dupPhone) return toast.error(`${dupPhone.name} already has this mobile number — search for them above, or use Customers to review.`, { duration: 6000 });
+    const dupGst = newCust.gst && customers.find((c) => (c.gst || '').toUpperCase().trim() === newCust.gst.toUpperCase().trim());
+    if (dupGst) return toast.error(`${dupGst.name} already has this GST number — search for them above, or use Customers to review.`, { duration: 6000 });
     const c = onQuickCustomer({ name: newCust.name.trim(), phone: newCust.phone || '', email: newCust.email || '', gst: newCust.gst || '' });
     if (c) { set({ customerId: c.id, customer: c.name, phone: c.phone, email: c.email || '', gstNo: c.gst || '' }); setNewCust(null); toast.success(`Added ${c.name}`); }
   };

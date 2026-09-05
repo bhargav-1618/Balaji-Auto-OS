@@ -43,7 +43,7 @@ console.log('\nUniversal Search Boxes — cross-app identifier isolation + ranki
 {
   const src = R('components/billing/BillingModule.jsx');
   ok('Billing imports useSearchIndex/searchAndRank/rankIndexed alongside the existing matchIndexed/normId',
-    /import \{ useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed, regKey \} from '\.\.\/\.\.\/lib\/useSearch';/.test(src));
+    /import \{ useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed, regKey(, phoneKey)? \} from '\.\.\/\.\.\/lib\/useSearch';/.test(src));
   ok('New Invoice Customer picker: code/GST/vehicle reg-VIN go through searchIds, not the free-text searchText',
     /searchIds=\{\(c\) => \[c\.code, c\.gst,\s*\.\.\.\(c\.vehicles \|\| \[\]\)\.flatMap\(\(v\) => \[v\.regNo, v\.reg, v\.vin\]\)\]\}/.test(src));
   ok('New Invoice Vehicle picker: reg/VIN/engine/chassis/RC go through searchIds',

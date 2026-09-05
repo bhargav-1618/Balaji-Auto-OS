@@ -145,7 +145,7 @@ ok('[fact, baseline] the PRIMARY Vehicles module wizard already refuses to save 
 ok('PH10-03 FIXED [fact]: Billing\'s inline "Add Vehicle" shortcut (saveNewVehicle) now checks the SAME global invariant before creating the vehicle — a reg no. already on ANY customer\'s file blocks the quick-add with a clear message naming the true owner',
   /const dupOwner = customers\.find\(\(c\) => \(c\.vehicles \|\| \[\]\)\.some\(\(v\) => v\.regNo && regKey\(v\.regNo\) === regKey\(newVeh\.regNo\)\)\);/.test(billing)
   && /if \(dupOwner\) return toast\.error\(`\$\{newVeh\.regNo\.toUpperCase\(\)\.trim\(\)\} is already registered to \$\{dupOwner\.name\}/.test(billing)
-  && /import \{ useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed, regKey \} from '\.\.\/\.\.\/lib\/useSearch';/.test(billing));
+  && /import \{ useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed, regKey(, phoneKey)? \} from '\.\.\/\.\.\/lib\/useSearch';/.test(billing));
 
 ok('PH10-03 FIXED [fact]: Job Card\'s inline "Register this vehicle to X" shortcut now checks every OTHER customer\'s vehicles too (not just the matched customer\'s own file) before offering to register — surfaces the true owner instead of silently creating a second ownership record',
   /const elsewhere = customers\.find\(\(c\) => c\.id !== matched\.id && \(c\.vehicles \|\| \[\]\)\.some\(\(v\) => \(v\.regNo \|\| ''\)\.toUpperCase\(\) === card\.regNo\.toUpperCase\(\)\)\);/.test(jobcards)

@@ -544,6 +544,28 @@ forged `performedBy`.)*
   is the permanent record). Business-state transitions are enforced in
   the transaction layer, not Firestore rules — deliberate.
 
+- **Validation is enforced where the data is written, with two accepted
+  exceptions** (PHASE 18 — audited, one MEDIUM defect fixed; see
+  `docs/testing/PHASE_18_VALIDATION_BYPASS_INTEGRITY_REPORT.md`). Business
+  rules (phone/GST/SKU/reg uniqueness, price/qty non-negativity, invoice
+  overpayment, PO cancelled-receive, forged invoice status) are enforced at
+  the layer this client-only architecture allows — pure clamps/derived
+  functions run by both demo and production, transactions for money/stock/
+  numbering, Firestore rules for the security subset — and every creation
+  path was checked for consistency. PH18-01 (MEDIUM, fixed): the inline
+  "+ New Customer" on an invoice skipped the phone/GST uniqueness the
+  Customers wizard enforces, so a walk-in could be saved as a duplicate
+  customer record (same bug class as PH10-03). **Documented, not fixed:**
+  (1) `billingService.invoiceStatus` reads an *overpaid* invoice as "Paid"
+  because `balance` floors to 0 — reachable only if the three write-path
+  overpayment guards are all bypassed, and realizing an overpaid sale is
+  arguably correct anyway; (2) customer-phone and vehicle-registration
+  uniqueness are client-list scans, not transactional — a sub-second
+  two-terminal race creating the *same* new record on both can still slip a
+  duplicate through (single-shop, the duplicate is visible and deletable,
+  no money/stock/ledger invariant is touched; contrast invoice numbering
+  and PO receive, which *are* closed at the transaction layer).
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

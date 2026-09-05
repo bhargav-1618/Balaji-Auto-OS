@@ -514,6 +514,34 @@ current release.
   status/transition oracles + the real applyPoReceive/reserveDelta),
   `npm run test:rules` 138/138 (unchanged), lint 0, build ✓.
   Production code: +31/−5 lines across 3 files (≈17 comment).
+- ~~**Validation bypass / mutation-boundary integrity audit.**~~ **DONE —
+  PHASE 18, shipped and verified.** For every important business rule: is it
+  enforced where the data is *written*, or only by the UI it happens to be
+  typed into? Established the architecture (client-only, single-shop trust,
+  Firestore rules are the *security* boundary — append-only ledgers, actor
+  attribution, privilege/delete authorization, monotonic numbering — never
+  business field validation; money/stock/numbering re-checked in
+  transactions; derived state as un-forgeable pure functions; format /
+  uniqueness / relationship in the component every path funnels through).
+  50 rules inventoried, all classified. One MEDIUM defect found and fixed:
+  - **PH18-01.** The inline "+ New Customer" reachable mid-invoice
+    (`BillingModule.saveNewCustomer`) validated phone/GST *format* but not
+    *uniqueness* — so a walk-in could be saved with a mobile or GST that
+    already belongs to another customer, splitting their history and
+    outstanding balance. The full Customers wizard and the Vehicles-module
+    quick-create both block this. **Same bug class as PH10-03** (the inline
+    Add-Vehicle shortcut, one file over). Fixed with an 11-line in-component
+    guard mirroring the adjacent `saveNewVehicle`/`dupOwner` check and
+    reusing the wizard's own `phoneKey` normalizer — no new function, file,
+    or abstraction. Reproduced live before, verified blocked after.
+  Non-defects surfaced and documented (all INFO/LOW): `billingService.invoiceStatus`
+  reads an overpaid invoice as "Paid" (reachable only past 3 write-path
+  guards); client-scan uniqueness is not race-proof; received-PO label-flip
+  to cancelled (Phase 17); `+91`-paste quirk in one phone field.
+  Gates: `npm test` 140/140 (+1 new `tests/validation-bypass-integrity.test.cjs`,
+  58 assertions — independent clamp/status oracles + real InvoiceModal
+  drive), `npm run test:rules` 138/138 (unchanged), lint 0, build ✓. No
+  `firestore.rules` change. Production code: +12/−1 lines in 1 file (≈7 comment).
 
 ## Scale — before large datasets
 
