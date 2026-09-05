@@ -364,6 +364,35 @@ rules published.)*
     card's invoice (`existingInv`/`onOpenInvoice`) never re-resolves an
     owner at all, so it carries none of PH10-02's risk.
 
+- **Refund/Return no longer double-restores stock, and a concurrent
+  invoice-edit + payment race can no longer commit an overpaid, mislabeled
+  invoice** (PHASE 11 — financial integrity audit, shipped and verified; see
+  `docs/testing/PHASE_11_FINANCIAL_INTEGRITY_REPORT.md`). `changeStatus`'s
+  Refund/Return path called a second, non-transactional `onRestoreStock`
+  callback that unconditionally re-added an invoice's line quantities to
+  stock — redundant (and double-counting) whenever the atomic
+  `editInvoiceTransactional` realization diff had already correctly reversed
+  a Paid invoice, and outright wrong (inventing stock) when returning an
+  invoice that was never realized in the first place. Removed entirely — the
+  atomic transaction was already the correct, sufficient reversal. Separately,
+  `invStatus` (the function that determines the `status` field
+  `collectInvoicePayment` actually persists) was missing the overpayment
+  guard `deriveStatus` already had, and the payment transaction never
+  re-validated a payment against its own fresh read — so a client editing an
+  invoice's total down while another client pays against the old (higher)
+  balance could interleave into a genuinely overpaid, "Paid"-mislabeled
+  Firestore document. Both closed: `invStatus` gained the same guard as
+  `deriveStatus`, and the payment transaction now rejects
+  (`conc/overpaid`, before any write) whenever the incoming payment would
+  overpay the invoice's own freshly-read total.
+  Residual, by design (not a defect):
+  - `deriveStatus`'s "nothing paid yet" label is `"Unpaid"`; `invStatus`'s
+    equivalent branch is `"Pending"` — a display-string-only difference
+    (every underlying money value is identical on both paths). A Sales/
+    Billing/GST report export can show "Pending" for an invoice Billing's
+    own screen calls "Unpaid". Documented, LOW severity, left unchanged — a
+    wording choice, not a money-correctness defect.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

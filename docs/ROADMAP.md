@@ -302,6 +302,35 @@ current release.
   already correct by construction. Gates: `npm test` 132/132 (+1 new
   dedicated `tests/referential-integrity.test.cjs`), `npm run test:rules`
   133/133 (unchanged), lint 0, build ✓. No `firestore.rules` change.
+- ~~**Financial integrity / money consistency audit.**~~ **DONE — PHASE 11,
+  shipped and verified.** Is `grandTotal` mathematically correct, `paid` truly
+  traced from payment records, `balance = grandTotal - paid`, and `status`
+  correctly derived — checked with a freshly-written independent oracle
+  against BOTH of the app's money-calculation paths (`totalsOf`/`deriveStatus`
+  in BillingModule, `invTotals`/`invStatus` in InventoryDashboard) across
+  zero/decimal/rounding-boundary/large-value/discount/GST scenarios. Two
+  CRITICAL defects found and fixed, both minimal (one a deletion, one a
+  reused guard pattern):
+  - **PH11-01.** Refund/Return on a Paid invoice restored inventory TWICE:
+    once correctly inside the atomic `editInvoiceTransactional` realization
+    diff (Phase 8B), and once more via a leftover, non-transactional
+    `onRestoreStock` callback that unconditionally re-added the same
+    quantities — or, on a never-realized invoice, invented stock that was
+    never deducted. Fixed by deleting the redundant callback entirely — the
+    atomic transaction was already the correct, sufficient reversal.
+  - **PH11-02.** `invStatus` (the function `collectInvoicePayment` actually
+    persists as the invoice's `status` field) was missing the overpayment
+    guard `deriveStatus` already had (BUG-LIVE-002) — an overpaid invoice
+    could be authoritatively stored and reported as a clean "Paid". Worse,
+    `collectInvoicePayment` never re-validated a payment against its own
+    fresh read, so a concurrent "edit total down" + "pay against the old
+    balance" race could commit `paid > grandTotal`. Both closed: `invStatus`
+    gained the same one-line guard as `deriveStatus`, and the payment
+    transaction now rejects (`conc/overpaid`, before any write) whenever the
+    incoming payment would overpay its OWN freshly-read total.
+  Gates: `npm test` 133/133 (+1 new dedicated `tests/financial-integrity.test.cjs`,
+  147 assertions), `npm run test:rules` 133/133 (unchanged), lint 0, build ✓.
+  No `firestore.rules` change.
 
 ## Scale — before large datasets
 

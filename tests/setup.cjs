@@ -108,7 +108,9 @@ Module._load = function (request, ...rest) {
 
 const EXTRA_EXPORTS = {
   // InvoiceModal is a private function in BillingModule; expose it for testing
-  // WITHOUT editing the shipped file.
+  // WITHOUT editing the shipped file. (totalsOf, BillingModule's own money-
+  // calculation function, needs no entry here — the shipped file already ends
+  // with its own `export { totalsOf };`.)
   [path.resolve(__dirname, '../components/billing/BillingModule.jsx')]:
     '\nexport { InvoiceModal, deriveStatus, nextInvNo, emptyInvoice };\n',
   // CustomerWizard is a private function in CustomersModule; expose it for testing
@@ -117,8 +119,12 @@ const EXTRA_EXPORTS = {
     '\nexport { CustomerWizard, emptyCustomer };\n',
   // Sidebar is a private function in InventoryDashboard; expose it so the brand →
   // home navigation can be asserted behaviourally WITHOUT editing the shipped file.
+  // invTotals/invStatus (Phase 11) are the SECOND, independent money-calculation
+  // path (the transaction engine's own gate for stock/sales/rollup realization) —
+  // exposed so they can be checked against the same independent oracle as
+  // BillingModule's totalsOf/deriveStatus, to prove the two never disagree.
   [path.resolve(__dirname, '../components/InventoryDashboard.js')]:
-    '\nexport { Sidebar };\n',
+    '\nexport { Sidebar, invTotals, invStatus };\n',
 };
 
 const origJs = require.extensions['.js'];

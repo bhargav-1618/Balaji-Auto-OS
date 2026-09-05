@@ -7014,6 +7014,15 @@ const invStatus = (iv) => {
   if (iv.status === 'Cancelled' || iv.status === 'Refunded' || iv.status === 'Returned') return iv.status;
   if (iv.isEstimate) return 'Estimate';
   const t = invTotals(iv);
+  // PHASE 11 (PH11-02) — mirrors deriveStatus's BUG-LIVE-002 fix (BillingModule.jsx),
+  // missing here. Without it, an overpaid invoice (t.paid > t.grand) still satisfies
+  // `t.balance <= 0 && t.grand > 0` below (balance is floored to 0), so THIS function
+  // — the one collectInvoicePayment actually persists as the invoice's `status` field,
+  // and the one every Reports/Dashboard export reads — called it a clean "Paid" while
+  // deriveStatus (what the Billing screen itself shows) correctly flagged the exact
+  // same invoice as "Partially Paid" with an "Overpaid by ₹X" banner. Two functions
+  // computing the same invoice's status must never disagree.
+  if (t.grand > 0 && t.paid > t.grand + 0.5) return 'Partially Paid';
   if (t.balance <= 0 && t.grand > 0) return 'Paid';
   if (t.paid > 0) return 'Partially Paid';
   return iv.status === 'Draft' ? 'Draft' : 'Pending';
@@ -10082,10 +10091,10 @@ export default function InventoryDashboard() {
   };
 
   // Local optimistic stock mirror for whatever a realization plan just
-  // committed atomically — separate from applyStockDelta (still used
-  // unchanged by BillingModule's onRestoreStock credit-note path), this ONLY
-  // updates React state; the actual write already happened inside the
-  // transaction above.
+  // committed atomically — separate from applyStockDelta (used by quick
+  // restock / manual stock adjustment, not by any invoice-status path;
+  // see PH11-01), this ONLY updates React state; the actual write already
+  // happened inside the transaction above.
   const applyPlanToLocalInventory = (plan) => {
     const ids = Object.keys(plan.stockDeltas);
     if (!ids.length) return;
@@ -10394,6 +10403,21 @@ export default function InventoryDashboard() {
       const payments = [...priorPayments, pay];
       const merged = { ...data, id: invoiceId, payments };
       const t = invTotals(merged);
+      // PHASE 11 (PH11-02) — PaymentModal and BillingModule.save() both reject an
+      // overpayment, but only against CLIENT-HELD totals. Client A editing the
+      // invoice's total down and Client B paying against the OLD (higher) balance
+      // can each look valid on their own stale snapshot yet interleave into a real
+      // overpayment once both land — the exact concurrent edit+payment race this
+      // phase's audit requires closing. Re-checked here against `t`, computed from
+      // THIS transaction's own fresh `data` read, the same ₹1 rounding slack as
+      // BillingModule.save()'s guard: whichever operation reaches this transaction
+      // second sees the other's committed effect and is rejected, never silently
+      // merged into a mislabeled "Paid" invoice with paid > grandTotal.
+      if (t.grand > 0 && t.paid > t.grand + 1) {
+        const err = new Error(`This payment would make the invoice overpaid (₹${t.paid.toFixed(2)} against a total of ₹${t.grand.toFixed(2)}) — the total may have just changed. Reload before collecting payment.`);
+        err.code = 'conc/overpaid';
+        throw err;
+      }
       const status = invStatus(merged);
       // Phase 1a — a payment also bumps `_rev`, so an invoice editor that was open
       // when the payment landed is correctly rejected as stale on save (otherwise
@@ -15392,7 +15416,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'billing' && (
-          <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoice} onDelete={deleteInvoice} onCollectPayment={demoMode ? undefined : collectInvoicePayment} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onDirtyChange={handleModuleDirtyChange} onRestoreStock={(iv) => { const restore = invoicePartQtys(iv); if (Object.keys(restore).length) applyStockDelta(restore); }}
+          <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoice} onDelete={deleteInvoice} onCollectPayment={demoMode ? undefined : collectInvoicePayment} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onDirtyChange={handleModuleDirtyChange}
             onQuickCustomer={(data) => { if (data?.phone && !isIndianMobile(data.phone)) { toast.error(MOBILE_ERROR); return null; } if (data?.email && !isValidEmail(data.email)) { toast.error(EMAIL_ERROR); return null; } const id = `c_${Date.now()}`; const c = { id, createdAt: Date.now(), ...withCustomerDefaults({ ...data, phone: data?.phone ? mobileInput(data.phone) : '' }, customers) }; setCustomers((prev) => [...prev, c]).then(() => pushAudit({ action: 'Customer Created', entity: 'Customer', entityId: c.code || c.id, detail: `${c.code || ''} · ${c.name || ''}` })); return c; }}
             onQuickVehicle={(customerId, veh) => { const id = `v_${Date.now()}`; const v = { id, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === customerId ? { ...c, vehicles: [...(c.vehicles || []), v] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: v.regNo || v.id, detail: `${v.regNo || ''} ${v.model || ''}`.trim() })); return v; }}
             initialStatusFilter={pendingBillingStatusFilter}

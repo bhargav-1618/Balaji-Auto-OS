@@ -2003,7 +2003,7 @@ function BarPair({ parts, labour }) {
 const defaultBillView = () => ({ q: '', statusF: 'All', payModeF: 'All', dateF: 'All' });
 const billingViewState = defaultBillView();
 
-export default function BillingModule({ demoMode = false, demoCanDelete = false, demoCanEditPricing = true, demoCanExport = true, canManage = true, isAdmin = false, invoices, customers = [], inventory = [], jobCards = [], onPersist, onDelete, onCollectPayment, onRestoreStock, onQuickCustomer, onQuickVehicle, initialStatusFilter, onInitialStatusFilterHandled, actorEmail, onCapacityCleanup, onDirtyChange }) {
+export default function BillingModule({ demoMode = false, demoCanDelete = false, demoCanEditPricing = true, demoCanExport = true, canManage = true, isAdmin = false, invoices, customers = [], inventory = [], jobCards = [], onPersist, onDelete, onCollectPayment, onQuickCustomer, onQuickVehicle, initialStatusFilter, onInitialStatusFilterHandled, actorEmail, onCapacityCleanup, onDirtyChange }) {
   const { t } = useTranslation();
   const SETTINGS_KEY = demoMode ? 'maruti_settings_demo' : 'maruti_settings';
   const V = billingViewState;
@@ -2298,8 +2298,9 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
         // Phase 4b/5b — the payment carries a DURABLE id (survives a refresh), so
         // pressing "Record Payment" again — even after a reload — is safe: the
         // transaction recognises the retry and will not add a second payment.
-        // conc/deleted and conc/estimate are definite non-commits -> retire the id.
-        if (e?.code === 'conc/deleted' || e?.code === 'conc/estimate') clearOpId(`payment:${iv.id}`);
+        // conc/deleted, conc/estimate and conc/overpaid (PH11-02) are all definite
+        // non-commits -> retire the id so a corrected retry is treated as fresh.
+        if (e?.code === 'conc/deleted' || e?.code === 'conc/estimate' || e?.code === 'conc/overpaid') clearOpId(`payment:${iv.id}`);
         // Phase 6b (PH6-03) — a timeout is a distinct, genuinely-unknown outcome,
         // not the same as the pre-existing "ambiguous network failure" copy — say
         // so precisely, using the shared wording every other timeout site uses.
@@ -2308,6 +2309,10 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
             ? 'This invoice was changed or deleted by another user. Reload and try again.'
             : e?.code === 'conc/estimate'
             ? 'Convert this estimate to an invoice before collecting payment.'
+            // PH11-02 — the invoice's total just changed (e.g. another user edited it)
+            // and this amount no longer fits; nothing was recorded.
+            : e?.code === 'conc/overpaid'
+            ? 'The invoice total just changed, so this amount would overpay it. Reload to see the current balance before collecting payment.'
             : isTxTimeout(e)
             ? timeoutMessage('This payment')
             : 'Couldn’t confirm the payment went through. It may already be recorded — check the invoice, or press Record Payment again (a repeat is safe).',
@@ -2473,12 +2478,17 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     toast.success(`${iv.invNo} → ${(saved || next).invNo}`);
   };
   const changeStatus = async (iv, status, verb) => {
-    // Cancel/Refund/Return restore inventory stock via the parent's delete-style path
-    // is handled at persist; here we just flag the status + history. Stock restoration
-    // for returns happens through onDelete's stock-restore logic when appropriate.
+    // PHASE 11 (PH11-01) — Cancel/Refund/Return only ever flag status + history here.
+    // onPersist (persistInvoice -> editInvoiceTransactional) ALREADY reverses stock,
+    // the sales ledger, and salesRollups atomically whenever this status change moves
+    // the invoice from realized (Paid) to not-realized (isRealized checks status
+    // against exactly ['Cancelled','Refunded','Returned']) — see planInvoiceRealization/
+    // applyRealizationPlanInTx. A separate restoration call here would either DOUBLE
+    // the stock restored (Refund/Return from Paid) or INVENT stock that was never
+    // deducted (Return from an invoice that was never realized in the first place,
+    // e.g. Unpaid/Partially Paid) — removed for exactly that reason (was `onRestoreStock`).
     const next = { ...iv, status, history: [...(iv.history || []), { at: Date.now(), action: verb, by: demoMode ? 'Demo User' : 'Staff' }] };
     try { await onPersist?.(next); } catch (e) { return; }
-    if (status === 'Returned' || status === 'Refunded') onRestoreStock?.(iv);
     toast.success(`${iv.invNo}: ${verb}`);
   };
 
