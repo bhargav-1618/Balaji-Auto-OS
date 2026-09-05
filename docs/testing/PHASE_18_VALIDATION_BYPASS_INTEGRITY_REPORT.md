@@ -466,6 +466,15 @@ All Phase 1–17 tests green.
 - All other validation paths (invoice save, PO receive, job-card status, Paid-
   invoice lock) re-confirmed unchanged.
 
+**Deployment record.** Commit `c23f770` pushed to `main`; Vercel deployed build
+**`m1L4Wz4FKxtNcPgmvF1HD`**. Production smoke (demo-admin on the live site):
+the deployed bundle contains both guards (`phoneKey`-keyed mobile check + GST
+check, verified by text-searching the shipped JS); the inline New-Customer form
+**blocks** a duplicate of `SBBMC01`'s phone (modal stays open, 0 persisted) and
+**allows** a unique phone (`9123409876` → created + selected). Zero console
+errors. All QA artifacts were demo-mode only and removed; production Firestore
+never written.
+
 ## 24. QA cleanup
 
 All Phase 18 QA artifacts were demo-mode only (localStorage/sessionStorage,
