@@ -16,8 +16,13 @@ defect; each is a documented boundary.
    password on it is a full-data-takeover risk.
 
 These are configuration, cannot be fixed in the codebase, and must be verified for every
-deployment. *(The reference deployment — Firebase project `balaji-auto-os-7` — has the
-rules published.)*
+deployment. *(The reference deployment — Firebase project `balaji-auto-os-7` — had the
+repo ruleset published as of Phase 14. **Phase 15's `auditLog` create-rule change
+(PH15-03, commit `7b5520c`) still needs a manual `firebase deploy --only
+firestore:rules` / Console publish** — CI does not deploy rules; see the Phase 15
+entry below and `docs/testing/PHASE_15_AUDIT_LOG_INTEGRITY_REPORT.md` §14. Until then
+the live `auditLog` rule still allows a signed-in client to write an entry with a
+forged `performedBy`.)*
 
 ## 🟢 Concurrency (multi-terminal safe for the covered workflows)
 

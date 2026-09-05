@@ -46,6 +46,9 @@ Thumbs.db
 # vercel
 .vercel
 
+# local AI/editor tool config (per-developer, like .vscode)
+.claude/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
