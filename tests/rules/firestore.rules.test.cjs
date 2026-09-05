@@ -1115,6 +1115,58 @@ async function main() {
     }
 
     // =========================================================================
+    // PHASE 19 — authorization matrix (targeted gaps not covered above).
+    //   - the `staff` sub-object of appSettings/roles is as protected as `admins`
+    //     (a staffer cannot grant THEMSELVES a `deletes`/`costPrices` perm)
+    //   - salesRollups is a running aggregate: `update` is signedIn (unlike the
+    //     append-only ledgers) — documented, because it is fully derivable from
+    //     `sales` and there is no per-row financial record to protect
+    //   - a denied delete stays denied on a RETRY (an op id / second attempt is
+    //     not an authorization bypass)
+    //   - the OWNER (ownerEmail() in rules) can delete even when the roles doc
+    //     lists only OTHER admins — the hardcoded owner bypass is real
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      await seedAdmins(testEnv, [ADMIN_EMAIL]);
+      const staffDb = testEnv.authenticatedContext('staff-uid', { email: STAFF_EMAIL }).firestore();
+      const adminDb = testEnv.authenticatedContext('admin-uid', { email: ADMIN_EMAIL }).firestore();
+      const ownerDb = testEnv.authenticatedContext('owner-uid', { email: OWNER_EMAIL }).firestore();
+
+      // --- role escalation via the `staff` sub-object -------------------------
+      ok('PHASE 19 — authorization matrix: staff CANNOT grant themselves a perm by merge-writing appSettings/roles.staff',
+        await deny(setDoc(doc(staffDb, 'appSettings/roles'), { staff: { [STAFF_EMAIL]: { deletes: true, costPrices: true } } }, { merge: true })));
+      ok('PHASE 19: staff CANNOT add themselves to appSettings/roles.admins by merge either',
+        await deny(setDoc(doc(staffDb, 'appSettings/roles'), { admins: [ADMIN_EMAIL, STAFF_EMAIL] }, { merge: true })));
+      ok('PHASE 19: an existing ADMIN CAN set a staffer\'s perms (the legitimate path)',
+        await allow(setDoc(doc(adminDb, 'appSettings/roles'), { staff: { [STAFF_EMAIL]: { deletes: true } } }, { merge: true })));
+
+      // --- salesRollups: running aggregate, update is signedIn (by design) ----
+      await seedDoc(testEnv, 'salesRollups/2026-01', { revenue: 1000, count: 2 });
+      ok('PHASE 19: staff CAN update salesRollups (running aggregate, fully derivable from sales — not an append-only ledger)',
+        await allow(updateDoc(doc(staffDb, 'salesRollups/2026-01'), { revenue: 1500 })));
+      ok('PHASE 19: staff CANNOT delete salesRollups (admin-only, same as every other collection)',
+        await deny(deleteDoc(doc(staffDb, 'salesRollups/2026-01'))));
+
+      // --- a denied delete stays denied on retry -----------------------------
+      await seedDoc(testEnv, 'invoices/inv1', { invNo: 'INV-0001', grandTotal: 500 });
+      ok('PHASE 19: staff delete of an invoice denied', await deny(deleteDoc(doc(staffDb, 'invoices/inv1'))));
+      ok('PHASE 19: RETRY of the same staff delete is still denied (retrying is not an authorization bypass)',
+        await deny(deleteDoc(doc(staffDb, 'invoices/inv1'))));
+      ok('PHASE 19: the invoice still exists after the two denied deletes (admin can still read it)',
+        await allow(getDoc(doc(adminDb, 'invoices/inv1'))));
+
+      // --- owner bypass with a roles doc that lists only OTHER admins --------
+      ok('PHASE 19: the OWNER can delete a business record even when appSettings/roles lists only a DIFFERENT admin',
+        await allow(deleteDoc(doc(ownerDb, 'invoices/inv1'))));
+
+      // --- the single-shop shared-data model is the intended read/write ------
+      await seedDoc(testEnv, 'customers/cX', { name: 'Someone Else' });
+      ok('PHASE 19 (IDOR): a signed-in staffer CAN read+update ANY customer record — intentional single-shop shared data, NOT per-user isolation',
+        await allow(getDoc(doc(staffDb, 'customers/cX'))) && await allow(updateDoc(doc(staffDb, 'customers/cX'), { phone: '9000000000' })));
+    }
+
+    // =========================================================================
     // Deny-by-default fallback for any collection not explicitly listed.
     // =========================================================================
     await testEnv.clearFirestore();

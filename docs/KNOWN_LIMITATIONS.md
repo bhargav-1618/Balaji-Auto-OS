@@ -24,6 +24,19 @@ entry below and `docs/testing/PHASE_15_AUDIT_LOG_INTEGRITY_REPORT.md` §14. Unti
 the live `auditLog` rule still allows a signed-in client to write an entry with a
 forged `performedBy`.)*
 
+**Phase 19 confirmed** the base ruleset IS live and enforcing on `balaji-auto-os-7` — an
+unauthenticated Firestore REST read of `customers` returns `403 PERMISSION_DENIED`, so
+`read: if signedIn()`, `delete: if isAdmin()`, `appSettings … if isAdmin()`,
+`update: if false` on the ledgers, and the deny-by-default fallback are all published
+(they predate Phase 15). Only the `firestore.rules` delta since the last recorded deploy
+(`6bfb88d`) — i.e. the PH15-03 `auditLog` `performedBy == request.auth.uid` line at
+`7b5520c` — is unpublished. The client already writes `performedBy = user.uid`, so the
+deploy needs no code change:
+```bash
+npx firebase login
+npx firebase deploy --only firestore:rules --project balaji-auto-os-7
+```
+
 ## 🟢 Concurrency (multi-terminal safe for the covered workflows)
 
 - **Cross-workflow data integrity IS concurrency-safe** (CONCURRENCY PHASE 3b —
@@ -543,6 +556,32 @@ forged `performedBy`.)*
   reverse the stock-in — intentional (the goods arrived; the ledger row
   is the permanent record). Business-state transitions are enforced in
   the transaction layer, not Firestore rules — deliberate.
+
+- **Authorization is enforced at the Firestore-rules layer, not just the UI**
+  (PHASE 19 — audited, no code change; see
+  `docs/testing/PHASE_19_AUTHORIZATION_MATRIX_REPORT.md`). Full Owner / Admin /
+  Staff / Unauthenticated matrix (24 privileged actions) verified across UI,
+  mutation, and `firestore.rules`. Every destructive/privileged op (hard delete,
+  role management incl. the `staff` perms sub-object, ledger immutability,
+  recovery data, auditLog actor, counter monotonicity, edit-lease identity,
+  per-user pending sales, deny-by-default) is authoritative at Firestore —
+  **148 live emulator assertions**. No CRITICAL/HIGH, no direct-Firestore
+  bypass, no role-escalation path, no IDOR issue, no alternate-workflow bypass.
+  Accepted findings, all LOW/INFO — the security boundary is correct in every
+  case: (1) a Staff member's `perms.deletes` toggle grants only the *soft*
+  archive/restore UI — a **hard** delete still hits `delete: if isAdmin()` and
+  fails (the correct outcome; honouring the toggle would mean weakening the
+  rule); (2) the inline supplier quick-create on a Part is reachable by any
+  authenticated user while the Suppliers *module* is admin-only (non-destructive;
+  `suppliers create: if signedIn()` intentionally allows it); (3) dead
+  `demoGuard()` function (the real demo write-protection is elsewhere and
+  thorough); (4) `salesRollups` update is `signedIn` not `false` — it is a
+  derived running aggregate, recomputable from the immutable `sales` ledger;
+  (5) STAFF is read-only in the UI for customers/invoices/job-cards/billing/
+  suppliers (the safe direction — UI stricter than rules); (6) OWNER ≡ ADMIN at
+  runtime with no ownership-transfer mechanism (by design); (7) single-shop
+  shared data — every authenticated user reads/writes all shop records — is
+  intentional, not a hole.
 
 - **Validation is enforced where the data is written, with two accepted
   exceptions** (PHASE 18 — audited, one MEDIUM defect fixed; see

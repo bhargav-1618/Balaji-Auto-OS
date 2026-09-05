@@ -542,6 +542,42 @@ current release.
   58 assertions — independent clamp/status oracles + real InvoiceModal
   drive), `npm run test:rules` 138/138 (unchanged), lint 0, build ✓. No
   `firestore.rules` change. Production code: +12/−1 lines in 1 file (≈7 comment).
+- ~~**Authorization matrix / access-control integrity audit.**~~ **DONE —
+  PHASE 19, no production code change.** For every privileged action: is it
+  enforced at the DATA layer, or only by a hidden/disabled UI control? Built
+  the full Owner / Admin / Staff / Unauthenticated matrix (24 actions) and
+  verified all three layers — UI (`role`/`isAdmin`/`canManage`/`canDelete`),
+  mutation (`_rev`/txn guards), and `firestore.rules` (the authoritative
+  boundary). Findings:
+  - **Role model.** OWNER ≡ ADMIN at runtime (the hardcoded owner is a
+    lock-out safety net, not a tier); no ownership-transfer mechanism; STAFF
+    is read-only in the UI for customers/invoices/job-cards/billing/suppliers
+    and can view stock + record sales; per-staff `costPrices`/`exports` work,
+    `deletes` grants only the soft archive/restore UI. Demo = synthetic guest,
+    never writes Firestore.
+  - **Every destructive/privileged op is authoritative at Firestore, not the
+    UI:** hard deletes (`delete: if isAdmin()`), role management (`appSettings
+    create,update: if isAdmin()` — incl. the `staff` sub-object), ledger
+    immutability (`update: if false`, overrides admin), recovery data
+    (`isAdmin()`), auditLog actor (`performedBy == request.auth.uid`), counter
+    monotonicity, edit-lease identity, per-user `pendingSales`,
+    deny-by-default. **148 live emulator assertions** (+10 for Phase 19).
+  - **No CRITICAL/HIGH, no direct-Firestore bypass, no role-escalation path,
+    no IDOR issue, no alternate-workflow bypass.** 3 LOW / 4 INFO documented:
+    `perms.deletes` can't do a *hard* delete (Firestore admin-only — correct);
+    inline supplier quick-create is non-admin-reachable (non-destructive);
+    dead `demoGuard()`; `salesRollups` update is `signedIn` (derived
+    aggregate); single-shop shared data is intentional.
+  - **Rules deployment gap (pre-existing, unchanged):** the base ruleset IS
+    live on `balaji-auto-os-7` (confirmed — unauth Firestore read → 403), but
+    `firestore.rules` last changed at `7b5520c` (Phase 15 auditLog check) and
+    the last recorded deploy is `6bfb88d` (before it). **OWNER must run
+    `firebase deploy --only firestore:rules`** to publish the auditLog
+    actor-forgery protection. No Firebase credentials in this environment.
+  Gates: `npm test` 141/141 (+1 new
+  `tests/authorization-matrix-integrity.test.cjs`, 76 static assertions),
+  `npm run test:rules` 148/148 (+10), lint 0, build ✓. No `firestore.rules`
+  change. Production code: 0 lines.
 
 ## Scale — before large datasets
 
