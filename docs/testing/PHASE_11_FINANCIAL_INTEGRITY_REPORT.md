@@ -425,3 +425,9 @@ correct on BOTH of the app's independent money-calculation paths against a
 freshly-written, independent oracle. One LOW-severity, display-only label
 discrepancy is documented and intentionally left unchanged. All regression
 gates (tests, rules, lint, build) are green.
+
+## 29. Deployment record
+
+- **Commit:** `067f901` — `fix(financial): harden money integrity`, pushed to `main`.
+- **Vercel deployment:** succeeded — production build id `rDJpsUaUXDNERHJrkDxuD` (confirmed live at https://balaji-auto-os.vercel.app, distinct from the prior Phase 10 build `sHTue-DlEflDSEyORK_K9`).
+- **Production smoke test** (safe, non-destructive — no invoice, payment, or status change made): no application console errors on load (only unrelated network noise — a blocked-by-client resource and a QUIC transport error from the browsing environment, not app JS errors); Billing dashboard rendered its existing KPIs correctly (Revenue (Month) ₹1,680, GST Collected ₹180, Parts Revenue ₹1,000, Labour Revenue ₹500 — the pre-existing `QA Production Smoke Test` invoice `INV-0001`, unchanged from Phase 10); opened `INV-0001` read-only via **View** — the editor rendered correctly as **Paid · Locked**, including the **Credit Note** button (gated on `savedStatus === 'Paid'`, adjacent to but unmodified by this phase's fixes) — then closed without any edit or save. No Refund/Return/Cancel action was performed against real data, per this phase's own production-safety reasoning (§25).
