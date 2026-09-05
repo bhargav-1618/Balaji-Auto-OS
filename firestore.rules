@@ -140,8 +140,17 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if isAdmin();
     }
+    // PHASE 15 (audit-log integrity) — `create` used to allow any signed-in
+    // user to write an auditLog document with ANY `performedBy`, so a
+    // malicious or buggy client could forge an entry attributed to a
+    // DIFFERENT user, or fabricate an action that never happened. Requiring
+    // `performedBy == request.auth.uid` (the same self-attribution check
+    // `pendingSales` already uses below) makes the field the app's own
+    // pushAudit/writeAudit always set actually enforced, not just
+    // conventionally correct. Read/update/delete semantics are unchanged.
     match /auditLog/{logId} {
-      allow read, create: if signedIn();
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.performedBy == request.auth.uid;
       allow update: if false;
       allow delete: if isAdmin();
     }

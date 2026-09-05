@@ -132,6 +132,33 @@ async function main() {
     }
 
     // =========================================================================
+    // PHASE 15 (audit-log integrity) — auditLog's `create` rule must reject a
+    // forged `performedBy` (impersonating a DIFFERENT user), while still
+    // allowing a user to self-attribute their own entry and read the shared
+    // trail. This is stricter than the shared append-only pattern above
+    // (sales/restocks/stockAdjustments intentionally accept any signed-in
+    // writer — they carry no actor-identity field to forge in the first
+    // place), so it gets its own dedicated block rather than folding into it.
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      await seedAdmins(testEnv, [ADMIN_EMAIL]);
+      const staffDb = testEnv.authenticatedContext('staff-uid', { email: STAFF_EMAIL }).firestore();
+      const otherDb = testEnv.authenticatedContext('other-uid', { email: 'other@example.com' }).firestore();
+
+      ok('staff: create auditLog entry self-attributed to their own uid allowed',
+        await allow(setDoc(doc(staffDb, 'auditLog/a1'), { action: 'sell_part', performedBy: 'staff-uid' })));
+      ok('staff: create auditLog entry impersonating a DIFFERENT uid denied',
+        await deny(setDoc(doc(staffDb, 'auditLog/a2'), { action: 'sell_part', performedBy: 'other-uid' })));
+      ok('other user: create auditLog entry with no performedBy field at all denied (missing, so cannot equal request.auth.uid)',
+        await deny(setDoc(doc(otherDb, 'auditLog/a3'), { action: 'sell_part' })));
+      ok('other user: read the shared auditLog (written by a different uid) still allowed',
+        await allow(getDoc(doc(otherDb, 'auditLog/a1'))));
+      ok('staff: update an existing auditLog entry denied (append-only, unchanged by this phase)',
+        await deny(updateDoc(doc(staffDb, 'auditLog/a1'), { action: 'tampered' })));
+    }
+
+    // =========================================================================
     // appSettings — THE privilege-escalation fix under test. Staff must not
     // be able to write appSettings/roles (which is how admin status itself
     // is granted) even though they can read it and write everything else.

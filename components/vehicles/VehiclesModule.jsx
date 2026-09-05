@@ -601,7 +601,7 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
   );
 }
 
-export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, demoMode = false, demoCanDelete = false, demoCanExport = true, canManage = true, isAdmin = false, customers = [], jobCards = [], invoices = [], setCustomers, onCreateJobCard, onCreateInvoice, onOpenJobCard, onOpenInvoice, onOpenCustomer, onViewJobCards, onViewInvoices, onViewDocuments, onAudit }) {
+export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, demoMode = false, demoCanDelete = false, demoCanExport = true, canManage = true, isAdmin = false, customers = [], jobCards = [], invoices = [], setCustomers, onCreateJobCard, onCreateInvoice, onOpenJobCard, onOpenInvoice, onOpenCustomer, onViewJobCards, onViewInvoices, onViewDocuments, onAudit, actorEmail }) {
   const { t } = useTranslation();
   const VV = vehiclesViewState;
   const [q, setQ] = useState(VV.q);
@@ -973,7 +973,7 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
     const body = (text || '').trim();
     if (!body) { toast.error('Note cannot be empty'); return; }
     if (!setCustomers) { toast.error('Cannot save in read-only mode'); return; }
-    const entry = { at: Date.now(), text: body, by: 'You' };
+    const entry = { at: Date.now(), text: body, by: demoMode ? 'Demo User' : (actorEmail || 'Staff') };
     try {
       await setCustomers((prev) => prev.map((c) => (c.id === vehicle.ownerId
         ? { ...c, vehicles: (c.vehicles || []).map((x) => (x.id === vehicle.id ? { ...x, notesLog: [...(x.notesLog || []), entry] } : x)) }
@@ -1012,7 +1012,7 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
         }
         const exists = (c.vehicles || []).some((x) => x.id === v.id);
         const hist = [...(v.history || [])];
-        hist.push({ at: Date.now(), action: exists ? 'Vehicle Updated' : 'Vehicle Created', detail: v.regNo, by: demoMode ? 'Demo User' : 'Admin' });
+        hist.push({ at: Date.now(), action: exists ? 'Vehicle Updated' : 'Vehicle Created', detail: v.regNo, by: demoMode ? 'Demo User' : (actorEmail || 'Staff') });
         const vehicles = exists
           ? c.vehicles.map((x) => (x.id === v.id ? { ...vv, history: hist } : x))
           : [...(c.vehicles || []), { ...vv, history: hist }];

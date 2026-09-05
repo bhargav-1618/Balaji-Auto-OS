@@ -1220,7 +1220,14 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     const snap = totalsOf(clean);
     clean.grandTotal = snap.grand; clean.balance = snap.balance; clean.gstAmount = snap.gst; clean.profitAmount = snap.profit;
     clean.status = asDraft ? 'Draft' : asEstimate ? 'Estimate' : deriveStatus(clean);
-    clean.history = [...(inv.history || []), { at: Date.now(), action: asDraft ? 'Draft Saved' : inv.invNo ? 'Invoice Edited' : (asEstimate ? 'Estimate Created' : 'Invoice Created'), by: demoMode ? 'Demo User' : 'Staff' }];
+    // PHASE 15 (audit-log integrity) — `by` used to hardcode the literal
+    // string 'Staff' for every production entry, regardless of which actual
+    // user was signed in. `actorEmail` (already a prop of this component,
+    // already wired from InventoryDashboard's `capacityActorEmail` for the
+    // capacity-cleanup banner above) is the same real-actor value `pushAudit`
+    // uses for this invoice's OWN entry in the shared auditLog — reused here
+    // so this invoice's own embedded history timeline says the same thing.
+    clean.history = [...(inv.history || []), { at: Date.now(), action: asDraft ? 'Draft Saved' : inv.invNo ? 'Invoice Edited' : (asEstimate ? 'Estimate Created' : 'Invoice Created'), by: demoMode ? 'Demo User' : (actorEmail || 'Staff') }];
     // Phase 5b (PH5-01) — clear the draft ONLY on a CONFIRMED save. Removing it on
     // the Save click (as before) meant a refresh mid-save lost the draft AND the
     // form, so a retry could not recover the same invoice id.
@@ -2335,7 +2342,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     next.gstAmount = snap.gst;
     next.profitAmount = snap.profit;
     next.status = deriveStatus(next);
-    next.history = [...(iv.history || []), { at: Date.now(), action: `Payment ${inr(amount)} (${mode})`, by: demoMode ? 'Demo User' : 'Staff' }];
+    next.history = [...(iv.history || []), { at: Date.now(), action: `Payment ${inr(amount)} (${mode})`, by: demoMode ? 'Demo User' : (actorEmail || 'Staff') }];
     // Universal Notification Architecture review — this used to close the modal and
     // toast "recorded" the instant onPersist was CALLED, not after the Firestore write
     // behind it actually resolved (same class of bug as Job Cards' delete flows).
@@ -2470,7 +2477,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     const next = {
       ...iv, isEstimate: false, invNo: '', status: 'Unpaid',
       __allocSeq: 'invoices', __allocPrefix: 'INV', __allocSeed: invSeqMax(invoices, 'INV') + 1,
-      history: [...(iv.history || []), { at: Date.now(), action: `Converted from estimate ${iv.invNo}`, by: demoMode ? 'Demo User' : 'Staff' }],
+      history: [...(iv.history || []), { at: Date.now(), action: `Converted from estimate ${iv.invNo}`, by: demoMode ? 'Demo User' : (actorEmail || 'Staff') }],
     };
     next.status = deriveStatus(next);
     let saved;
@@ -2487,7 +2494,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     // the stock restored (Refund/Return from Paid) or INVENT stock that was never
     // deducted (Return from an invoice that was never realized in the first place,
     // e.g. Unpaid/Partially Paid) — removed for exactly that reason (was `onRestoreStock`).
-    const next = { ...iv, status, history: [...(iv.history || []), { at: Date.now(), action: verb, by: demoMode ? 'Demo User' : 'Staff' }] };
+    const next = { ...iv, status, history: [...(iv.history || []), { at: Date.now(), action: verb, by: demoMode ? 'Demo User' : (actorEmail || 'Staff') }] };
     try { await onPersist?.(next); } catch (e) { return; }
     toast.success(`${iv.invNo}: ${verb}`);
   };

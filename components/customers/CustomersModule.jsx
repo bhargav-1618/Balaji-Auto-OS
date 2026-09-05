@@ -1083,7 +1083,7 @@ function VehicleModal({ initial, onSave, onClose }) {
 const defaultView = () => ({ q: '', typeF: 'All', statusF: 'All', page: 1, perPage: 10, selId: null, scrollY: 0, detailTab: 'Vehicles', drawerScrollY: 0 });
 const customersViewState = defaultView();
 
-export default function CustomersModule({ demoMode = false, demoCanDelete = false, demoCanExport = true, canManage = true, jobCards = [], invoices = [], customers, setCustomers, onSaveCustomerEdit, onCreateJobCard, onCreateInvoice, onOpenJobCard, onOpenInvoice, onAudit, onDirtyChange }) {
+export default function CustomersModule({ demoMode = false, demoCanDelete = false, demoCanExport = true, canManage = true, jobCards = [], invoices = [], customers, setCustomers, onSaveCustomerEdit, onCreateJobCard, onCreateInvoice, onOpenJobCard, onOpenInvoice, onAudit, actorEmail, onDirtyChange }) {
   const { t } = useTranslation();
   const V = customersViewState; // module-scoped cache; survives unmount on tab switch
   const [q, setQ] = useState(V.q);
@@ -1397,7 +1397,13 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
     };
   }, [customers, jobCards]);
 
-  const histEntry = (action, detail) => ({ at: Date.now(), action, detail, by: demoMode ? 'Demo User' : 'Admin' });
+  // PHASE 15 (audit-log integrity) — `by` used to hardcode the literal
+  // string 'Admin' for every production entry, regardless of which actual
+  // user was signed in — the real actor's identity (`actorEmail`, the same
+  // value the shared auditLog's `onAudit` entry for this exact action
+  // already carries) was available one level up (InventoryDashboard's
+  // `capacityActorEmail`) but never wired into this component. Reused here.
+  const histEntry = (action, detail) => ({ at: Date.now(), action, detail, by: demoMode ? 'Demo User' : (actorEmail || 'Staff') });
   // C-1 fix: all three used to close the modal / show success / clear selection the
   // instant setCustomers was CALLED, not after the Firestore write it triggers actually
   // finished — a rejected write looked identical to a successful one. setCustomers now
@@ -1622,7 +1628,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
   const addNote = async () => {
     const text = noteDraft.trim();
     if (!text || !selId) return;
-    await setCustomers((prev) => prev.map((c) => (c.id === selId ? { ...c, noteEntries: [...(c.noteEntries || []), { id: `n_${Date.now()}`, text, by: demoMode ? 'Demo User' : 'Admin', at: Date.now() }] } : c)));
+    await setCustomers((prev) => prev.map((c) => (c.id === selId ? { ...c, noteEntries: [...(c.noteEntries || []), { id: `n_${Date.now()}`, text, by: demoMode ? 'Demo User' : (actorEmail || 'Staff'), at: Date.now() }] } : c)));
     setNoteDraft('');
   };
   const removeNote = async (id) => {

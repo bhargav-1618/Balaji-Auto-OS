@@ -10136,8 +10136,19 @@ export default function InventoryDashboard() {
     if (!target) return;
     const becamePaid = !isRealized(prior) && isRealized(next);
     const unPaid = isRealized(prior) && !isRealized(next);
+    // PHASE 15 (audit-log integrity) — a payment that does NOT fully realize
+    // the invoice (a partial payment, or any payment after the first) used
+    // to fall all the way through to the generic 'Invoice Updated' label —
+    // exactly the "payment recorded as generic invoice edit" failure mode
+    // this phase's own brief calls out. `next.payments[]` already carries
+    // this information (it's the array collectInvoicePayment itself just
+    // appended to); diffing its length against `prior` is enough to detect
+    // "a payment was added this call" without a new field or mechanism.
+    const newPayment = (next?.payments?.length || 0) > (prior?.payments?.length || 0)
+      ? next.payments[next.payments.length - 1] : null;
     const auditAction = action === 'delete' ? 'Invoice Deleted'
       : becamePaid ? 'Invoice Paid'
+      : (newPayment && !unPaid) ? 'Payment Received'
       : unPaid ? `Invoice ${next?.status || 'Reversed'}`
       : !prior ? 'Invoice Created'
       : 'Invoice Updated';
@@ -10145,7 +10156,9 @@ export default function InventoryDashboard() {
       action: auditAction,
       entity: 'Invoice',
       entityId: target.invNo || target.id,
-      detail: `${target.invNo || ''} · ${target.customer || ''}${target.vehicle ? ` · ${target.vehicle}` : ''} · ${formatINR(Number(target.grandTotal) || 0)}`,
+      detail: (newPayment && !unPaid)
+        ? `${target.invNo || ''} · ${target.customer || ''} · ${formatINR(Number(newPayment.amount) || 0)} (${newPayment.mode || ''})`
+        : `${target.invNo || ''} · ${target.customer || ''}${target.vehicle ? ` · ${target.vehicle}` : ''} · ${formatINR(Number(target.grandTotal) || 0)}`,
     });
     // touchVehicleHistory carries its own idempotency guard (skips a vehicle
     // whose lastInvoiceNo already matches this invoice — see its own comment);
@@ -15427,7 +15440,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'customers' && (
-          <CustomersModule demoMode={demoMode} demoCanDelete={demoCan('deleteCustomers')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} jobCards={jobCards} invoices={invoices} customers={customers} setCustomers={setCustomers} onSaveCustomerEdit={saveCustomerEdit} onAudit={pushAudit} onDirtyChange={handleModuleDirtyChange}
+          <CustomersModule demoMode={demoMode} demoCanDelete={demoCan('deleteCustomers')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} jobCards={jobCards} invoices={invoices} customers={customers} setCustomers={setCustomers} onSaveCustomerEdit={saveCustomerEdit} onAudit={pushAudit} actorEmail={capacityActorEmail} onDirtyChange={handleModuleDirtyChange}
             onOpenJobCard={(j) => { try { window.open(`/?open=jobcard:${encodeURIComponent(j.jobNo || '')}#jobcards`, '_blank'); } catch { setActiveTab('jobcards'); setSearch(j.jobNo || ''); } }}
             onOpenInvoice={(iv) => { try { window.open(`/?open=invoice:${encodeURIComponent(iv.invNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(iv.invNo || ''); } }}
             onCreateJobCard={(c) => { const tok = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`; writeJobCardDraft(c, tok); try { const w = window.open(`/?open=newjobcard:${tok}#jobcards`, '_blank'); if (!w) { writeJobCardDraft(c); setActiveTab('jobcards'); } toast.success(`Job card for ${c.name} opened in a new tab`); } catch { writeJobCardDraft(c); setActiveTab('jobcards'); } }}
@@ -15435,7 +15448,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'vehicles' && (
-          <VehiclesModule demoMode={demoMode} demoCanDelete={demoCan('deleteVehicles')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} customers={customers} jobCards={jobCards} invoices={invoices} setCustomers={setCustomers} onAudit={pushAudit}
+          <VehiclesModule demoMode={demoMode} demoCanDelete={demoCan('deleteVehicles')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} customers={customers} jobCards={jobCards} invoices={invoices} setCustomers={setCustomers} onAudit={pushAudit} actorEmail={capacityActorEmail}
             onOpenJobCard={(j) => { try { window.open(`/?open=jobcard:${encodeURIComponent(j.jobNo || '')}#jobcards`, '_blank'); } catch { setActiveTab('jobcards'); setSearch(j.jobNo || ''); } }}
             onOpenInvoice={(iv) => { try { window.open(`/?open=invoice:${encodeURIComponent(iv.invNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(iv.invNo || ''); } }}
             onOpenCustomer={(c) => { try { window.open(`/?open=customer:${encodeURIComponent(c.code || c.id || '')}#customers`, '_blank'); } catch { setActiveTab('customers'); } }}
