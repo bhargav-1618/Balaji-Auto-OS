@@ -417,6 +417,23 @@ rules published.)*
     are internally consistent with their own real-world purpose — this is
     not a contradiction to resolve.
 
+- **Editing a Supplier's other details can no longer silently revert a
+  name/phone correction made from the Part modal** (PHASE 13 —
+  authoritative-field stale-snapshot audit, shipped and verified; see
+  `docs/testing/PHASE_13_AUTHORITATIVE_FIELD_INTEGRITY_REPORT.md`).
+  `persistSupplierEdit` (a quick name/phone fix reachable from inside the
+  Part modal) wrote those fields via a plain `updateDoc` that never bumped
+  `_rev`, so the full Supplier edit wizard's own `_rev` guard had no way to
+  detect that quick edit — a wizard left open across it would silently
+  overwrite the correction with its own stale snapshot on save. Fixed by
+  adding `_rev: increment(1)` to that `updateDoc` call, the same protection
+  `collectInvoicePayment` already uses for Invoice's payment fields. A
+  systematic sweep of every other multi-writer authoritative field in the
+  app (Customer's derived totals/notes/documents and `vehicles[]`,
+  Invoice's payments/paid/balance/status, Part's stock/salesCount/reserved,
+  Job Card's fields) found each one already correctly protected — no
+  further fix required.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

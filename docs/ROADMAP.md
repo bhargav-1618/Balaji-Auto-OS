@@ -361,6 +361,30 @@ current release.
   `npm run test:rules` 133/133 (unchanged), lint 0, build ✓. No
   `firestore.rules` change. Production code: +21/−2 lines (19 comment, 2
   logic — see the report's own code-growth review).
+- ~~**Authoritative-field stale-snapshot audit.**~~ **DONE — PHASE 13,
+  shipped and verified.** For every field writable by more than one
+  workflow across Customer/Vehicle/Job Card/Invoice/Supplier/Part: does a
+  stale whole-document editor's blind merge ever overwrite a newer
+  authoritative value some other workflow wrote in the meantime? Confirmed
+  Customer's engine-derived fields and `vehicles[]`, Invoice's
+  `payments`/`paid`/`balance`/`status`, Part's `stock`/`salesCount`/
+  `reserved`, and Job Card's fields are all already correctly protected
+  (exclusion from the wizard payload, `_rev` participation on both writers,
+  or `replayIdArray` reconciliation). One MEDIUM defect found and fixed:
+  - **PH13-01.** The Supplier edit wizard's payload carries
+    `name`/`phoneNumbers`/`primaryPhone`/`phones`/`phone` as loaded when it
+    opened. `persistSupplierEdit` — a quick fix for the same fields,
+    reachable from inside the Part modal — wrote them via a plain
+    `updateDoc` that never bumped `_rev`, so the wizard's own `_rev` guard
+    had no way to detect the quick edit and would silently revert it on
+    save. Fixed by adding `_rev: increment(1)` to that `updateDoc` call —
+    reusing Phase 1a's existing revision protocol (the same shape
+    `collectInvoicePayment` already uses to protect Invoice's payment
+    fields), not a new synchronization mechanism.
+  Gates: `npm test` 135/135 (+1 new dedicated
+  `tests/authoritative-field-integrity.test.cjs`, 10 assertions), `npm run
+  test:rules` 133/133 (unchanged), lint 0, build ✓. No `firestore.rules`
+  change. Production code: +14/−0 lines (13 comment, 1 logic).
 
 ## Scale — before large datasets
 

@@ -11657,6 +11657,19 @@ export default function InventoryDashboard() {
   // failures are reported by count instead of being silently absorbed — a stale
   // part-level display is recoverable (it self-corrects the next time that part or
   // supplier is edited), unlike a failed primary write, which is not.
+  //
+  // STALE-SNAPSHOT AUDIT — this writes the SAME fields (name/phone) the full
+  // Supplier edit wizard also owns, unlike the customer/part "secondary merge"
+  // writers this pattern is normally compared to (those touch fields the wizard
+  // never carries at all). The wizard's own guardedSet blind-merges its ENTIRE
+  // `payload`, including a stale name/phone snapshot from whenever it was opened
+  // — so without this, a wizard open across this quick edit would silently
+  // revert it on save, and `_rev` would not catch it, because this write never
+  // used to bump `_rev` (a plain `updateDoc`, correctly non-guarded for the
+  // fields it does NOT share with the wizard). `_rev: increment(1)` makes this
+  // write participate in the same revision protocol the wizard already checks,
+  // so that save is now correctly rejected as stale instead of clobbering —
+  // reusing Phase 1a's existing mechanism, not adding a new one.
   async function persistSupplierEdit(id, { name, phoneNumbers }) {
     const cleanName = (name || '').trim();
     const seen = new Set();
@@ -11672,6 +11685,7 @@ export default function InventoryDashboard() {
         primaryPhone,
         phones: phones.map((c) => c.number),
         phone: primaryPhone,
+        _rev: increment(1),
         updatedAt: serverTimestamp(),
       });
     } catch (e) {
