@@ -385,6 +385,38 @@ current release.
   `tests/authoritative-field-integrity.test.cjs`, 10 assertions), `npm run
   test:rules` 133/133 (unchanged), lint 0, build ✓. No `firestore.rules`
   change. Production code: +14/−0 lines (13 comment, 1 logic).
+- ~~**Ledger / business-event integrity audit.**~~ **DONE — PHASE 14,
+  shipped and verified.** Does every business action create exactly the
+  ledger/event records it's supposed to — no more, no fewer, correct
+  content? Derived the real cardinality rule from source rather than
+  assuming it: an invoice's sales-ledger rows key Part lines by `partId`
+  (repeats of the same part merge into one row) and every other line by its
+  own line id (never merges, even with identical text) — verified this
+  against `invoiceRevenueLines` directly. Confirmed every authoritative
+  money/stock ledger write (invoice realization, payment, Quick Sell, PO
+  receive, Stock Adjustment, manual restock, Job Card reservation) already
+  commits atomically with its state change and is correctly keyed for
+  idempotency (opId-keyed docs, `_rev`-guarded invoice realization,
+  `appliedReceiptIds`/`appliedReserveIds` marker arrays, or diff-based
+  reversal — no separate "reversal" code path to duplicate or omit). No
+  CRITICAL/HIGH/MEDIUM defect found. One INFO-level dead-code hazard
+  removed as hardening:
+  - `recordInvoiceSalesDelta` (the pre-Phase-8B invoice ledger writer, now
+    reached only from the demo-only `runInvoiceRealizationDemo`) still
+    carried its own internal production-mode branches from before that
+    split: a dead `else addDoc(collection(db, COLLECTIONS.SALES), record)`
+    and a dead, unreachable `salesRollups` `setDoc` block. Neither had ever
+    executed — but either would become a live SECOND, non-transactional,
+    non-idempotent writer for the same invoice event
+    createInvoiceTransactional/editInvoiceTransactional already commit
+    atomically, if a future refactor ever called this function outside
+    demo mode. Removed as preventative hardening, not as a fix for a live
+    defect (it never wrote incorrect data).
+  Gates: `npm test` 136/136 (+1 new dedicated
+  `tests/ledger-integrity.test.cjs`, 48 assertions), `npm run test:rules`
+  133/133 (unchanged), lint 0, build ✓. No `firestore.rules` change.
+  Production code: +24/−23 lines (net +1; the real substance is ~15 lines
+  of dead Firestore-write code deleted, offset by explanatory comments).
 
 ## Scale — before large datasets
 

@@ -9721,12 +9721,22 @@ export default function InventoryDashboard() {
         outstanding: Math.max(0, (Number(ctx.grandTotal) || 0) - paidTotal),
         createdAt: demoMode ? new Date().toISOString() : serverTimestamp(),
       };
-      // Same record, different store. Demo keeps everything in local state so the
-      // Sales / Services / Stock Out / Reports / Analytics screens all light up
-      // exactly as they would in production — and Reset Demo Data clears it.
+      // PHASE 14 (ledger integrity audit) — this whole function is reached ONLY
+      // from runInvoiceRealizationDemo, which is itself only ever called with
+      // demoMode true (see its own header comment: "Never called for
+      // production — see createInvoiceTransactional / editInvoiceTransactional
+      // ... for that path"). The `else` branch that used to sit here —
+      // `addDoc(collection(db, COLLECTIONS.SALES), record)` — was therefore
+      // dead: unreachable today, but a live hazard if a future refactor ever
+      // called this function outside demo mode, since it would write a SECOND,
+      // non-transactional, non-idempotent sales row alongside whatever
+      // createInvoiceTransactional/editInvoiceTransactional's own atomic
+      // realization plan already wrote for the same invoice — exactly the
+      // "1 invoice -> 2 sales rows" duplicate this audit exists to prevent.
+      // Removed rather than left as unreachable code (see the matching removal
+      // a few lines below, for the same reason, on this function's rollup write).
       txn(record.isService ? 7 : 6, record.isService ? 'Services record' : 'Sales record', { name: record.name, qty: record.qty, revenue: record.revenue, category: record.category });
       if (demoMode) pendingDemoSales.push({ id: `dsale_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, ...record });
-      else addDoc(collection(db, COLLECTIONS.SALES), record).catch((e) => console.error('Invoice-sale ledger write will retry when online:', e));
       const now = new Date();
       const mk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const m = monthAgg[mk] || { revenue: 0, cost: 0, profit: 0, units: 0, partsRev: 0, labourRev: 0, serviceRev: 0, outsideRev: 0 };
@@ -9740,25 +9750,16 @@ export default function InventoryDashboard() {
     });
     // Demo: push the new ledger rows into state (newest first, so the latest
     // transaction always appears at the top of Sales/Services/Stock Out).
-    if (demoMode) {
-      txn(12, 'DEMO flush -> setSales()', { newRows: pendingDemoSales.length });
-      if (pendingDemoSales.length) setSales((prev) => { const nx = [...pendingDemoSales.reverse(), ...prev]; txn(12, 'sales store size', { before: prev.length, after: nx.length }); return nx; });
-      return; // rollups are a Firestore aggregate; demo derives its figures from `sales`
-    }
-    Object.entries(monthAgg).forEach(([mk, m]) => {
-      setDoc(doc(db, 'salesRollups', mk), {
-        month: mk,
-        revenue: increment(m.revenue),
-        cost: increment(m.cost),
-        profit: increment(m.profit),
-        units: increment(m.units),
-        partsRevenue: increment(m.partsRev),
-        labourRevenue: increment(m.labourRev),
-        serviceRevenue: increment(m.serviceRev),
-        outsideRevenue: increment(m.outsideRev),
-        updatedAt: serverTimestamp(),
-      }, { merge: true }).catch((e) => console.error('Invoice rollup write will retry when online:', e));
-    });
+    // PHASE 14 (ledger integrity audit) — this function is reached only in
+    // demo mode (see the comment on the sales-row write above), so the
+    // production `salesRollups` write that used to sit below this block was
+    // unreachable dead code — and, like the sales-row write above, a hazard
+    // if ever mistakenly reactivated: a SECOND, non-transactional rollup
+    // increment alongside createInvoiceTransactional/editInvoiceTransactional's
+    // own atomic rollup write for the same invoice. Removed.
+    txn(12, 'DEMO flush -> setSales()', { newRows: pendingDemoSales.length });
+    if (pendingDemoSales.length) setSales((prev) => { const nx = [...pendingDemoSales.reverse(), ...prev]; txn(12, 'sales store size', { before: prev.length, after: nx.length }); return nx; });
+    // rollups are a Firestore aggregate; demo derives its figures from `sales`
   };
   // C-2 fix: was `setInventory((prev) => { ...; ids.forEach(id => { try { updateDoc(...) }
   // catch {} }); return next; })` — updateDoc was never awaited inside a SYNCHRONOUS

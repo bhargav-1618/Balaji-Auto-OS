@@ -434,6 +434,27 @@ rules published.)*
   Job Card's fields) found each one already correctly protected — no
   further fix required.
 
+- **A dead, latent duplicate-ledger-write hazard was removed** (PHASE 14 —
+  ledger / business-event integrity audit, shipped and verified; see
+  `docs/testing/PHASE_14_LEDGER_INTEGRITY_REPORT.md`). No active defect was
+  found: every authoritative money/stock ledger write (invoice realization,
+  payment, Quick Sell, PO receive, Stock Adjustment, manual restock, Job
+  Card reservation) already commits atomically with its state change and
+  is correctly keyed for idempotency. `recordInvoiceSalesDelta` — the
+  pre-Phase-8B invoice ledger writer, reached today only from the
+  demo-only `runInvoiceRealizationDemo` — still carried unreachable
+  production-mode branches from before that split (a dead `addDoc` to
+  `sales`, a dead `setDoc` to `salesRollups`). Neither had ever executed,
+  but either would have become a live second, non-transactional,
+  non-idempotent writer for the same invoice event
+  createInvoiceTransactional/editInvoiceTransactional already commit
+  atomically, had a future refactor ever called this function outside demo
+  mode. Removed as preventative hardening. Documented, not fixed: an
+  offline Quick Sell's audit-log entry can predate its sale actually
+  committing (advisory-only, consistent with this app's audit design
+  everywhere else); `reorderRequests` has a narrow double-click gap with no
+  durable opId (non-authoritative, non-financial, LOW/INFO).
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made
