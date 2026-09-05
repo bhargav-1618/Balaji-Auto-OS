@@ -158,6 +158,10 @@ export default function SupplierDirectory({
   const listPaged = useMemo(() => listShown.slice((listPage - 1) * LIST_PER, listPage * LIST_PER), [listShown, listPage]);
   const listPageCount = Math.max(1, Math.ceil(listShown.length / LIST_PER));
   useEffect(() => { setListPage(1); if (listScrollRef.current) listScrollRef.current.scrollTop = 0; }, [listDq, statusF, sortBy]);
+  // PHASE 16 — the effect above resets to page 1 on a FILTER change; this pulls
+  // the page back into range when the list shrinks WITHOUT one (a supplier
+  // archived/deleted here or by a concurrent client while a later page is open).
+  useEffect(() => { if (listPage > listPageCount) setListPage(listPageCount); }, [listPage, listPageCount]);
 
   // Reads from the full `suppliers` list (not `active`) so an archived supplier stays
   // selectable/viewable via the Archived filter — this was the second half of the
@@ -223,6 +227,10 @@ export default function SupplierDirectory({
   const card = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
   const partsPaged = selParts.slice((partsPage - 1) * PARTS_PER, partsPage * PARTS_PER);
   const partsPageCount = Math.max(1, Math.ceil(selParts.length / PARTS_PER));
+  // PHASE 16 — same clamp as the supplier list above: keep partsPage in range
+  // when this supplier's linked-parts list shrinks (a part unlinked/deleted)
+  // while a later page is open. setPartsPage(1) fires only on supplier switch.
+  useEffect(() => { if (partsPage > partsPageCount) setPartsPage(partsPageCount); }, [partsPage, partsPageCount]);
 
   const PartsTable = ({ rows }) => (
     <div className="overflow-x-auto -mx-1">

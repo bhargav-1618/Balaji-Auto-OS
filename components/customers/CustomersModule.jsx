@@ -1862,7 +1862,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
                         className="w-3.5 h-3.5 accent-[#d4af37]"
                       />
                     </td>
-                    <td className="py-2.5 px-3 text-white/45">{(page - 1) * perPage + i + 1}</td>
+                    <td className="py-2.5 px-3 text-white/45">{(safePage - 1) * perPage + i + 1}</td>
                     <td className="py-2.5 px-3"><span className="text-[11px] font-bold" style={{ color: '#d4af37' }}>{c.code}</span></td>
                     <td className="py-2.5 px-3"><div className="flex items-center gap-2.5"><Avatar name={c.name} /><p className="text-white/90 font-medium">{c.name}</p></div></td>
                     <td className="py-2.5 px-3"><p className="text-white/80">{c.phone}</p><p className="text-[10px] text-white/45 truncate max-w-[150px]">{c.email}</p></td>

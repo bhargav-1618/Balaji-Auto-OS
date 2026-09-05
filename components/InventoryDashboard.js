@@ -7640,6 +7640,10 @@ function AlertsView({ alerts, readIds, archivedIds, onMarkRead, onMarkAllRead, o
   }, [visible, dq, cat, readIds]);
   useEffect(() => { setPage(1); }, [dq, cat]);
   const pages = Math.max(1, Math.ceil(filtered.length / PER));
+  // PHASE 16 — the effect above resets on a FILTER change; this keeps `page` in
+  // range when the alerts list shrinks without one (an alert resolved/dismissed,
+  // here or by a concurrent client, while a later page is open).
+  useEffect(() => { if (page > pages) setPage(pages); }, [page, pages]);
   const shown = filtered.slice((page - 1) * PER, page * PER);
   // COLOR SYSTEM REVIEW: 'Warning' rendered GOLD here but AMBER in the KPI filter tile
   // just below (the brief's own worked example of a design-system failure — the same
