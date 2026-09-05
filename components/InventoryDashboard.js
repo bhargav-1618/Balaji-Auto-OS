@@ -12506,7 +12506,14 @@ export default function InventoryDashboard() {
       };
       // Register any brand-new suppliers into the demo directory too.
       setSuppliers((prev) => { const ids = new Set(prev.map((s) => s.id)); const add = sup.filter((s) => !ids.has(s.id) && String(s.id).startsWith('demo-sup-new')); return add.length ? [...prev, ...add.map((s) => ({ id: s.id, name: s.name, phone: s.phone }))] : prev; });
-      setInventory((prev) => (formData.id ? prev.map((p) => (p.id === formData.id ? { ...p, ...built } : p)) : [built, ...prev]));
+      // PHASE 12 (PH12-01) — same fix as the production payload above: `built`
+      // carries whatever stock/salesCount the form loaded WHEN THE EDITOR
+      // OPENED, which a Quick Sell/adjustment/restock made while it stayed
+      // open would already have moved past. Re-pinning both to the part's
+      // CURRENT live value for an edit (never for a create, where `built`'s
+      // own values ARE the legitimate opening stock) keeps this consistent
+      // with production instead of silently reverting a real movement.
+      setInventory((prev) => (formData.id ? prev.map((p) => (p.id === formData.id ? { ...p, ...built, stock: p.stock, salesCount: p.salesCount } : p)) : [built, ...prev]));
       setShowModal(false); setEditPart(null); setSaving(false);
       smartSaveToast(built.name, { isEdit: !!formData.id, hasSupplier: sup.length > 0 });
       writeAudit(formData.id ? 'update_part' : 'create_part', { partId: built.id, name: built.name });
@@ -12645,7 +12652,19 @@ export default function InventoryDashboard() {
       // Optional per-vehicle fitment note (year/variant free text), keyed by model
       // name. PartModal already pruned it to models still selected + non-blank.
       vehicleNotes: (formData.vehicleNotes && typeof formData.vehicleNotes === 'object') ? formData.vehicleNotes : {},
-      stock: nonNegInt(formData.stock),
+      // PHASE 12 (PH12-01) — `stock` (like `salesCount`, correctly never here)
+      // MUST NOT be in the shared edit/create payload: this same object is
+      // merge-written by an EDIT's guardedSet (_rev-guarded, but Sell/Restock/
+      // Adjustment/PO-receive/Invoice-realization NEVER bump a part's `_rev` —
+      // they're atomic stock-only transactions, not whole-document edits) — so
+      // an Edit Part save re-reads the value the form loaded WHEN IT OPENED
+      // and silently overwrites whatever stock ledgered operations moved to in
+      // the meantime, with no stockAdjustments/restocks/sales record explaining
+      // the jump. The comment 2 lines below this object ("stock & salesCount
+      // are not in `payload`") documents this as the intended invariant; `stock`
+      // had regressed back in. The CREATE branch below sets its own `stock`
+      // explicitly (that IS the part's legitimate opening value) and needs
+      // nothing here.
       minStock: nonNegInt(formData.minStock) || 5,
       purchasePrice: nonNegNum(formData.purchasePrice),
       sellingPrice: nonNegNum(formData.sellingPrice),

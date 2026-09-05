@@ -331,6 +331,36 @@ current release.
   Gates: `npm test` 133/133 (+1 new dedicated `tests/financial-integrity.test.cjs`,
   147 assertions), `npm run test:rules` 133/133 (unchanged), lint 0, build ✓.
   No `firestore.rules` change.
+- ~~**Inventory accounting integrity audit.**~~ **DONE — PHASE 12, shipped
+  and verified.** Can every Part's current Firestore `stock` be
+  mathematically explained by its complete movement history (opening + IN −
+  OUT)? Confirmed `reserved` (Job Card claims) and `stock` (physical
+  quantity) are genuinely separate fields — reservation never touches
+  `stock`. One HIGH-severity defect found and fixed with a one-line deletion:
+  - **PH12-01.** `handleSaveInner`'s shared Part create/edit payload included
+    a bare `stock` field. Editing a part's unrelated fields (name, category,
+    price...) therefore merge-wrote whatever stock value the Edit Part form
+    loaded WHEN IT OPENED back onto the document — and since Quick Sell,
+    Restock, Stock Adjustment, PO receiving, and invoice realization are all
+    atomic stock-only transactions that never bump a Part's `_rev`, the
+    Phase 1a guarded-edit conflict check had no way to detect that stock had
+    moved underneath the open editor. A real, already-ledgered sale's effect
+    on `stock` could be silently reverted with zero `stockAdjustments`/
+    `restocks`/`sales` record explaining the jump. Fixed by removing the one
+    regressed line — the object's own adjacent comment already documented
+    "stock & salesCount are not in `payload`" as the intended invariant;
+    `salesCount` correctly honored it, `stock` had drifted back in. The
+    CREATE branch needed no change (it already sets `stock` explicitly,
+    independently — that IS a new part's legitimate opening value).
+  Every other movement source (PO receive, manual restock, quick-restock
+  stepper, Stock Adjustment, Quick Sell, invoice realization, return/
+  reversal, Job Card reservation) was confirmed to already write a complete,
+  atomic, attributable ledger entry — no duplicate-movement or
+  missing-movement gap was found. Gates: `npm test` 134/134 (+1 new
+  dedicated `tests/inventory-accounting-integrity.test.cjs`, 36 assertions),
+  `npm run test:rules` 133/133 (unchanged), lint 0, build ✓. No
+  `firestore.rules` change. Production code: +21/−2 lines (19 comment, 2
+  logic — see the report's own code-growth review).
 
 ## Scale — before large datasets
 

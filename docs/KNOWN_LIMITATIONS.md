@@ -393,6 +393,30 @@ rules published.)*
     own screen calls "Unpaid". Documented, LOW severity, left unchanged — a
     wording choice, not a money-correctness defect.
 
+- **Editing a Part's unrelated fields can no longer silently revert its
+  stock to a stale value** (PHASE 12 — inventory accounting integrity audit,
+  shipped and verified; see `docs/testing/PHASE_12_INVENTORY_ACCOUNTING_REPORT.md`).
+  The shared Part create/edit payload included a bare `stock` field, so
+  saving an Edit Part change (name, category, price...) merge-wrote whatever
+  stock value the form loaded when the editor was OPENED back onto the
+  document — silently undoing any real Quick Sell/Restock/Adjustment/PO
+  receipt/invoice realization that landed while the editor stayed open,
+  since none of those atomic stock-only transactions bump a Part's `_rev`
+  (the Phase 1a guarded-edit conflict check therefore never saw a conflict).
+  Fixed by removing the one regressed line from the shared payload — the
+  object's own adjacent comment already documented "stock & salesCount are
+  not in `payload`" as the intended invariant; `salesCount` correctly
+  honored it the whole time, only `stock` had drifted back in. The CREATE
+  path is unaffected (it already sets `stock` explicitly and independently
+  — a new part's legitimate opening value).
+  Residual, by design (not a defect):
+  - Quick Sell/invoice realization intentionally allow negative stock (a
+    sale already happened; clamping would invent inventory on reversal).
+    Stock Adjustment's "reduce" direction intentionally clamps at 0 (a
+    physical-count correction can't remove more than is on record). Both
+    are internally consistent with their own real-world purpose — this is
+    not a contradiction to resolve.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made
