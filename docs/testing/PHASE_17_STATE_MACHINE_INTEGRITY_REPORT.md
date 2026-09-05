@@ -435,10 +435,25 @@ security/integrity bypass is demonstrated"):
 
 No production business record was transitioned to test this — the
 concurrent-cancel race is covered by the `applyPoReceive` transition-matrix
-tests and the transactional source proof. A read-only production smoke
-test confirmed the deployment (§ deployment record). The live project holds
-only QA data (Phase 15 baseline §12), and its 5 QA POs are all "Partially
+tests and the transactional source proof. The live project holds only QA
+data (Phase 15 baseline §12), and its 5 QA POs are all "Partially
 Received" — none was touched.
+
+**Deployment record:**
+- **Commit:** `75c93b2` (`fix(integrity): harden business state
+  transitions`), pushed to `main`, deployed by Vercel.
+- **Build verification:** `window.__NEXT_DATA__.buildId` read
+  `Nsul_A3BJz8Kivvb_lExI`, distinct from the Phase 16 baseline
+  (`sbDi7i0D4OimJ08TNmAG3`), confirming the new commit is live.
+- **Console check:** zero console messages across Dashboard and Purchase
+  Orders (every filter tab, including the empty "Cancelled" state).
+- **Render check:** the Purchase Orders module (the one this phase
+  touched) renders correctly with the live dataset — 5 "Partially
+  Received" QA POs, "Receive stock" shown only for their non-terminal
+  status, "Cancelled 0" empty state clean. The cancelled-receive block is
+  covered by the transaction-matrix tests since reproducing the race live
+  would require a second authenticated client.
+- No production record was created, edited, or transitioned.
 
 ## 24. QA cleanup
 

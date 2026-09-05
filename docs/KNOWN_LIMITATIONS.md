@@ -516,6 +516,34 @@ forged `performedBy`.)*
   Billing/POs/Archive/Alerts) — deliberate and internally consistent, not
   unified.
 
+- **A cancelled purchase order can no longer be received against**
+  (PHASE 17 — state-machine / lifecycle integrity audit, shipped and
+  verified; see `docs/testing/PHASE_17_STATE_MACHINE_INTEGRITY_REPORT.md`).
+  The invoice state machine (derived status that can't be forged + three
+  explicit terminal overrides that stick + one diff-based
+  realization/reversal engine + `conc/deleted` guards against
+  resurrection) and the Job Card lifecycle (soft UI stage ordering,
+  order-independent idempotent reservation math) are sound. One HIGH
+  defect (PH17-01): a **cancelled** PO — a terminal state — could be
+  received against through a concurrent-cancel race (Client A opens the
+  Receive form on a `sent` PO, Client B cancels it, Client A submits),
+  because the receive path had no cancelled-status check at any layer —
+  the transaction would un-cancel the PO, add phantom stock, and write a
+  `restocks` ledger row for an order that was called off. Fixed at the
+  mutation boundary (`applyPoReceive` → `blocked:'cancelled'`,
+  `poReceiveDoc` throws `po/cancelled` on the re-read status, plus a
+  client guard for the demo path). **Documented, not fixed** (narrow
+  races, no stock/money side effect — only a misleading PO status label):
+  `poAdvanceDoc` is a blind `updateDoc` so a concurrent cancel could be
+  reverted by an advance-workflow click; `cancelPO`'s
+  received-quantity guard reads the client snapshot, not a fresh server
+  read, so a concurrent receive-then-cancel could label a PO `cancelled`
+  while it holds received stock (the stock and the `restocks` row remain
+  correct and immutable). PO `received → delete` (admin-only) does not
+  reverse the stock-in — intentional (the goods arrived; the ledger row
+  is the permanent record). Business-state transitions are enforced in
+  the transaction layer, not Firestore rules — deliberate.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

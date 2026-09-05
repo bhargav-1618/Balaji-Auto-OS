@@ -480,6 +480,40 @@ current release.
   independent oracle + the real `<Pagination>` rendered + the real search
   engine), `npm run test:rules` 138/138 (unchanged), lint 0, build ✓.
   Production code: +30/−7 lines across 4 files (≈19 comment).
+- ~~**State-machine / lifecycle integrity audit.**~~ **DONE — PHASE 17,
+  shipped and verified.** Can a transition forbidden by business
+  semantics be performed by bypassing a UI restriction? Derived the real
+  state machines from source: Invoice status is a pure computation over
+  payments/grandTotal/isEstimate (can't be forged), with three explicit
+  terminal overrides (Cancelled/Refunded/Returned) that stick verbatim and
+  drive the single diff-based realization/reversal engine (Phase 8B/11);
+  deleted invoices can't be resurrected (Phase 1a); Job Card stage
+  ordering is a deliberate soft UI guardrail with order-independent,
+  idempotent reservation math underneath; terminal states gate archival
+  (`capacityService`, Phase 9/10 unregressed). One HIGH defect found and
+  fixed:
+  - **PH17-01.** A **cancelled** purchase order (a terminal state) could
+    be **received against** through a concurrent-cancel race — Client A
+    opens the Receive form on a `sent` PO, Client B cancels it, Client A
+    submits. The receive path had no cancelled-status check at any layer;
+    the transaction would un-cancel the PO, increment part stock, and
+    write a `restocks` ledger row for an order the business had called
+    off. Fixed in `applyPoReceive` (the one pure decision function every
+    receive path goes through) → `blocked:'cancelled'`, `poReceiveDoc`
+    throws `po/cancelled` inside its transaction on the re-read server
+    status, and `receivePO` adds a client guard for the demo path.
+    Reused the existing `over`/error-code pattern — no new function,
+    file, or abstraction.
+  Two narrow, label-only PO races (`poAdvanceDoc` blind write, `cancelPO`
+  client-snapshot guard) documented, not fixed (no stock/money side
+  effect). No `firestore.rules` change (business-state integrity lives in
+  the transaction layer by design; the append-only ledger rules are
+  already the security boundary).
+  Gates: `npm test` 139/139 (+1 new dedicated
+  `tests/state-machine-integrity.test.cjs`, 34 assertions — independent
+  status/transition oracles + the real applyPoReceive/reserveDelta),
+  `npm run test:rules` 138/138 (unchanged), lint 0, build ✓.
+  Production code: +31/−5 lines across 3 files (≈17 comment).
 
 ## Scale — before large datasets
 
