@@ -386,8 +386,20 @@ targeted change.
 No customer, vehicle, invoice, part, supplier, or PO record was created,
 edited, or moved against real data to verify these fixes — every finding
 was established by source-code tracing and the emulator/pure-model tests
-in §18, per this phase's explicit production-safety mandate. Live
-deployment verification (buildId, console check) recorded once pushed.
+in §18, per this phase's explicit production-safety mandate.
+
+**Deployment record:**
+- **Commit:** `7b5520c` (`fix(audit): harden audit-log integrity`), pushed
+  to `main`, deployed by Vercel.
+- **Build verification:** `window.__NEXT_DATA__.buildId` read
+  `rrbvmI8DBW3GBXkFLZqL6`, distinct from the prior known build id
+  (`WZKw23TFpvholBJ5v8sLj`), confirming the new commit is live.
+- **Console check:** zero console messages of any kind on load or after
+  navigating to Customers.
+- **Render check:** navigated to the Customers module (one of the four
+  components this phase edited) — renders correctly with the new
+  `actorEmail` prop wired in; existing customer data displays normally.
+  No record was created, edited, or moved.
 
 ## 21. QA cleanup
 
