@@ -270,6 +270,38 @@ current release.
   `tests/orphan-record-integrity.test.cjs`), `npm run test:rules` 133/133
   (unchanged — no rules change), lint 0, build ✓. No `firestore.rules`
   change.
+- ~~**Referential-integrity audit.**~~ **DONE — PHASE 10, shipped and
+  production-verified.** Independent of deletion (Phase 9's question), does
+  every relationship get created/edited/looked-up against the entity the
+  user actually intended? Three defects found, all the same shape — a
+  relationship resolved by a mutable/reusable/ambiguous field instead of a
+  stable id, with the id-based path already established elsewhere in the
+  same file but not used here:
+  - **PH10-01 (HIGH).** `jobNo` is both the Job Card document id and the
+    only field an Invoice uses to find "its" job card (a string match, not
+    a doc-id reference). Deleting the highest-numbered job card let
+    `nextJobCardNumber` hand that number to a brand-new, unrelated job
+    card — an old invoice's "View Job Card" would then silently resolve to
+    it. Fixed by folding `invoices` into the same max-scan everywhere a new
+    number is generated or a manual one is validated, so a number is never
+    reissued while any invoice still carries it.
+  - **PH10-02 (HIGH).** Linking an existing Job Card onto a job-card-first
+    invoice (`linkJobCard`) resolved the owning customer by phone-then-name,
+    never trying the job card's own `customerId` first — a shared name or a
+    changed phone number could silently attach the invoice to the wrong
+    customer. Fixed to try `customerId` first, matching `custVehicles`'s and
+    JobCardModule's own `matchedCust` precedence elsewhere in the codebase.
+  - **PH10-03 (MEDIUM).** Two "quick add a vehicle" shortcuts (mid-invoice,
+    mid-job-card) had no equivalent of the Vehicles module's own global
+    registration-number uniqueness check (`dupReg`), risking a second
+    ownership record for a vehicle already on file under a different
+    customer. Both now check every customer's vehicles first.
+  Every other relationship boundary tested (customer/vehicle selection
+  atomicity, duplicate part/line prevention, Supplier/Part id-based
+  grouping, Job-Card double-billing, walk-in near-duplicate detection) was
+  already correct by construction. Gates: `npm test` 132/132 (+1 new
+  dedicated `tests/referential-integrity.test.cjs`), `npm run test:rules`
+  133/133 (unchanged), lint 0, build ✓. No `firestore.rules` change.
 
 ## Scale — before large datasets
 

@@ -35,7 +35,7 @@ import CapacityCleanupModal from '../common/CapacityCleanupModal';
 import { checkCapacityGuard } from '../../lib/useCapacity';
 import notify from '../common/notify';
 import { writeSheet, asDate, stamp } from '../../lib/exportSheet';
-import { useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed } from '../../lib/useSearch';
+import { useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed, regKey } from '../../lib/useSearch';
 import { resolveSelectedRecords, countHiddenSelections } from '../../lib/selectionScope';
 import { statusColor, SHELL_WIDTH_CLS, SEMANTIC } from '../../constants/ui';
 import { BILLABLE_JOB_CARD_STATUSES } from '../../constants';
@@ -944,10 +944,19 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     if (c) { set({ customerId: c.id, customer: c.name, phone: c.phone, email: c.email || '', gstNo: c.gst || '' }); setNewCust(null); toast.success(`Added ${c.name}`); }
   };
   // Inline "Add Vehicle": create under the selected customer, auto-select onto invoice.
+  // PHASE 10 (PH10-03) — the full Vehicles module (VehicleWizard's `dupReg`) already
+  // refuses to save a registration number that exists anywhere in the fleet, under any
+  // customer — a reg no. is a real-world unique identifier. This quick-add shortcut
+  // (reachable mid-invoice, without ever visiting that wizard) had no equivalent check,
+  // so it could silently create a SECOND vehicle record for the same physical vehicle —
+  // possibly under a different customer than the one who already owns it, splitting its
+  // service history across two records with no relationship between them.
   const saveNewVehicle = () => {
     if (!inv.customerId) return toast.error('Select a customer first.');
     if (!newVeh?.regNo?.trim()) return toast.error('Registration number required.');
     if (!onQuickVehicle) return toast.error('Cannot add vehicle here.');
+    const dupOwner = customers.find((c) => (c.vehicles || []).some((v) => v.regNo && regKey(v.regNo) === regKey(newVeh.regNo)));
+    if (dupOwner) return toast.error(`${newVeh.regNo.toUpperCase().trim()} is already registered to ${dupOwner.name}. Use Vehicles to review or reassign it.`, { duration: 6000 });
     const v = onQuickVehicle(inv.customerId, { regNo: newVeh.regNo.toUpperCase().trim(), make: newVeh.make || '', model: newVeh.model || '', vehicle: [newVeh.make, newVeh.model].filter(Boolean).join(' '), fuel: newVeh.fuel || '' });
     if (v) { pickVehicle(v); setNewVeh(null); toast.success(`Added ${v.regNo}`); }
   };
@@ -956,7 +965,14 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     const jcLines = buildJobCardImportLines(j, inventory);
     // If the advisor found the card by its number before choosing a customer, adopt the
     // card's customer rather than leaving the invoice with a job card but no customer.
-    const owner = customers.find((c) => (c.phone || '').replace(/\D/g, '').slice(-10) === (j.phone || '').replace(/\D/g, '').slice(-10))
+    // PHASE 10 (PH10-02) — the id match MUST be tried first, same as custVehicles above
+    // and JobCardModule's own matchedCust: two customers can legitimately share a name
+    // ("Ramesh Kumar") or the same last-10-digit phone (a shared household line), and
+    // falling straight to a name/phone match risked silently attaching this invoice —
+    // and its customerId, so its totals/outstanding too — to the WRONG customer even
+    // though the job card's own customerId already named the right one.
+    const owner = customers.find((c) => j.customerId && c.id === j.customerId)
+      || customers.find((c) => (c.phone || '').replace(/\D/g, '').slice(-10) === (j.phone || '').replace(/\D/g, '').slice(-10))
       || customers.find((c) => (c.name || '').trim().toLowerCase() === (j.customer || '').trim().toLowerCase());
     const adoptsCustomer = !inv.customer && (j.customer || owner);
     const adopt = adoptsCustomer

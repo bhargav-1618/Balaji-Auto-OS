@@ -338,6 +338,32 @@ rules published.)*
     catalog stock left to check a quantity against, so no availability error
     is meaningful for that line.
 
+- **Job Card numbers and job-card-first invoicing no longer risk pointing at
+  the wrong entity** (PHASE 10 — referential-integrity audit, shipped and
+  production-verified; see `docs/testing/PHASE_10_REFERENTIAL_INTEGRITY_REPORT.md`).
+  `jobNo` is both the Job Card's own document id and the only field an
+  Invoice uses to find its source job card (a string match, not a doc-id
+  reference) — deleting the highest-numbered job card used to free that
+  number for reuse by an unrelated new one, silently redirecting an old
+  invoice's "View Job Card" link. Fixed by folding `invoices` into every
+  number-generation and manual-entry-validation call so a number already
+  referenced by any invoice is never reissued. Separately, linking an
+  existing Job Card onto a job-card-first invoice now tries the job card's
+  own `customerId` before falling back to phone/name matching — a shared
+  name or a since-changed phone number could otherwise silently attach the
+  invoice to the wrong customer. Two vehicle "quick add" shortcuts
+  (mid-invoice, mid-job-card) now also check every customer's vehicles for a
+  registration-number collision first, matching the uniqueness check the
+  main Vehicles wizard already enforced.
+  Residual, by design (not defects):
+  - Job Cards store vehicle details as plain strings (`regNo`/`make`/`model`),
+    never a vehicle id — there is no vehicle *relationship* to validate for
+    Job Cards, only free-text fields a staff member can mistype (a
+    data-entry question, not a referential-integrity one).
+  - A customer-first invoice that separately opens an already-billed job
+    card's invoice (`existingInv`/`onOpenInvoice`) never re-resolves an
+    owner at all, so it carries none of PH10-02's risk.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

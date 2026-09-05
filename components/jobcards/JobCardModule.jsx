@@ -375,11 +375,25 @@ const readJcDefaults = (demoMode) => {
     };
   } catch { return { prefix: 'SBBMC', status: 'Received', template: 'Major Service', deliveryHours: null }; }
 };
-const emptyCard = (saved = [], jc = {}) => {
+// PHASE 10 (PH10-01) — nextJobCardNumber only sees CURRENTLY EXISTING job
+// cards. jobNo doubles as the Firestore document id (persistJobCard saves
+// with idField: 'jobNo'), so deleting the highest-numbered job card frees
+// its number for reuse — but an invoice created from that job card keeps
+// `jobNo` forever as its own denormalized link field (Invoice -> Job Card
+// is a jobNo string match, not a doc-id reference; see BillingModule's
+// `jobCards.find((j) => j.jobNo === iv.jobNo)`). Reusing the number would
+// make that OLD, unrelated invoice's "View Job Card" suddenly resolve to
+// a brand-new, unconnected job card (wrong customer/vehicle/complaint on
+// display) — the exact failure mode the delete-confirmation dialog's own
+// wording ("no longer able to open its source job card") promises does NOT
+// happen. Folding `invoices` into the same max-scan (their `jobNo` field
+// has the identical shape) means a number is never handed out again once
+// any invoice still refers to it, deleted job card or not.
+const emptyCard = (saved = [], jc = {}, invoices = []) => {
   const { prefix = 'SBBMC', status = 'Received', template = 'Major Service', deliveryHours = null } = jc;
   const dateIn = new Date();
   return {
-    jobNo: nextJobCardNumber(saved, prefix), jobNoMode: 'auto', dateIn: toLocalInput(dateIn),
+    jobNo: nextJobCardNumber([...saved, ...invoices], prefix), jobNoMode: 'auto', dateIn: toLocalInput(dateIn),
     // Promised Delivery stays required/user-set either way (min={card.dateIn}, no
     // silent auto-submit) — this only saves the advisor re-picking it from the
     // same "Today/Tomorrow/+2/+7" shortcuts every single card when the workshop
@@ -466,8 +480,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     return c;
   };
   const [card, setCard] = useState(() => {
-    try { const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); if (d && d.jobNo) return splitVehicle({ ...emptyCard(savedCards, readJcDefaults(demoMode)), ...d }); } catch {}
-    return emptyCard(savedCards, readJcDefaults(demoMode));
+    try { const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); if (d && d.jobNo) return splitVehicle({ ...emptyCard(savedCards, readJcDefaults(demoMode), invoices), ...d }); } catch {}
+    return emptyCard(savedCards, readJcDefaults(demoMode), invoices);
   });
   const [customVehicles, setCustomVehicles] = useState(() => { try { return JSON.parse(localStorage.getItem(CUSTOM_VEH_KEY) || '[]'); } catch { return []; } });
   // JC 1.2: snapshot-based undo for "Copy previous" (Section 4). Keyed by field
@@ -504,7 +518,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     if (!leasedJobNo) return;
     const r = await jcLease.acquire(leasedJobNo);
     if (!r.ok) { toast.error(`🔒 ${r.heldBy} is still editing this job card.`); return; }
-    if (jcSync.latest) applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jcSync.latest }));
+    if (jcSync.latest) applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode), invoices), ...jcSync.latest }));
     jcSync.markSynced();
     setDirty(false);
     setJcViewOnly(false);
@@ -649,10 +663,10 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
       setLeasedJobNo(null);
       setJcViewOnly(false);
     }
-    applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jc }));
+    applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode), invoices), ...jc }));
     setDirty(false); setCopyUndo({}); appScrollTo({ top: 0, behavior: 'smooth' });
   };
-  const duplicateCard = (jc) => { const copy = { ...jc, jobNo: nextJobCardNumber(savedRef.current, readJcDefaults(demoMode).prefix), status: 'Received', statusLog: [{ status: 'Received', at: Date.now() }], savedAt: undefined }; applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...copy })); setDirty(true); setCopyUndo({}); toast.success('Duplicated — review and save as a new card'); appScrollTo({ top: 0, behavior: 'smooth' }); };
+  const duplicateCard = (jc) => { const copy = { ...jc, jobNo: nextJobCardNumber([...savedRef.current, ...invoices], readJcDefaults(demoMode).prefix), status: 'Received', statusLog: [{ status: 'Received', at: Date.now() }], savedAt: undefined }; applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode), invoices), ...copy })); setDirty(true); setCopyUndo({}); toast.success('Duplicated — review and save as a new card'); appScrollTo({ top: 0, behavior: 'smooth' }); };
   // JC 1.2: copy a field from the most recent saved job card, snapshotting the current
   // (possibly hand-typed, unsaved) value first so it can be restored exactly.
   const copyPrevious = (key) => {
@@ -732,7 +746,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     const match = (savedCards || []).find((c) => String(c.jobNo || '') === String(jobNo));
     if (match) {
       jobOpenDone.current = true;
-      applyCard(splitVehicle({ ...emptyCard(savedCards, readJcDefaults(demoMode)), ...match }));
+      applyCard(splitVehicle({ ...emptyCard(savedCards, readJcDefaults(demoMode), invoices), ...match }));
       setDirty(false);
       try { localStorage.removeItem('maruti_jobcard_open'); } catch {}
     } else if ((savedCards || []).length) {
@@ -867,7 +881,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     // cardRef.current, not the `card` closure — always the latest value, even mid-render.
     const card = cardRef.current;
     if (!card.jobNo.trim()) return 'Job Card Number is required';
-    if (card.jobNoMode === 'manual' && savedRef.current.some((c) => c.jobNo === card.jobNo)) return 'Job Card Number already exists';
+    if (card.jobNoMode === 'manual' && (savedRef.current.some((c) => c.jobNo === card.jobNo) || invoices.some((iv) => iv.jobNo === card.jobNo))) return 'Job Card Number already exists';
     if (!card.customer.trim()) return 'Customer name is required';
     if (!isIndianMobile(card.phone)) return `Contact number: ${MOBILE_ERROR.toLowerCase()}`;
     if (card.altPhone && !isIndianMobile(card.altPhone)) return `Alternate number: ${MOBILE_ERROR.toLowerCase()}`;
@@ -889,7 +903,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
   const touch = (k) => setTouched((t) => (t[k] ? t : { ...t, [k]: true }));
   const fieldErrors = {
     jobNo: !card.jobNo.trim() ? 'Job Card Number is required'
-      : (card.jobNoMode === 'manual' && savedRef.current.some((c) => c.jobNo === card.jobNo)) ? 'Job Card Number already exists' : null,
+      : (card.jobNoMode === 'manual' && (savedRef.current.some((c) => c.jobNo === card.jobNo) || invoices.some((iv) => iv.jobNo === card.jobNo))) ? 'Job Card Number already exists' : null,
     customer: !card.customer.trim() ? 'Customer name is required' : null,
     regNo: !card.regNo.trim() ? 'Registration number is required' : null,
   };
@@ -937,7 +951,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
       setDirty(false);
       jcLease.release(); setLeasedJobNo(null); setJcViewOnly(false);   // Phase 1b — hand the lease back after a real save
       toast.success(asDraft ? `Draft saved — ${card.customer}` : `Job card ${card.jobNo} saved`);
-      applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode)));
+      applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode), invoices));
       setCopyUndo({});
     } catch (e) {
       // C-1: onPersist now genuinely rejects on a failed write (it used to resolve
@@ -1363,7 +1377,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                 is the reachable entry point below xl; see the matching exit toggle in the
                 preview column's own header, fixed the same way. */}
             <button onClick={() => setFullPreview(true)} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition xl:hidden flex items-center gap-1.5"><FileDown size={14} /> Preview PDF</button>
-            <button onClick={async () => { if (dirty.current && !await confirmDialog({ title: 'Discard the current draft?', confirmText: 'Discard', danger: true })) return; jcLease.release(); setLeasedJobNo(null); setJcViewOnly(false); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); setDirty(false); setCopyUndo({}); try { localStorage.removeItem(DRAFT_KEY); } catch {} }} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition">New / Clear</button>
+            <button onClick={async () => { if (dirty.current && !await confirmDialog({ title: 'Discard the current draft?', confirmText: 'Discard', danger: true })) return; jcLease.release(); setLeasedJobNo(null); setJcViewOnly(false); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode), invoices)); setDirty(false); setCopyUndo({}); try { localStorage.removeItem(DRAFT_KEY); } catch {} }} className="h-10 px-4 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition">New / Clear</button>
             {!jcViewOnly && <button onClick={() => saveCard(true)} disabled={saving || !card.customer?.trim()} title="Park this job card — nothing enters the workshop queue yet" className="h-10 px-4 rounded-xl text-xs font-bold bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 active:scale-95 transition disabled:opacity-40">Save Draft</button>}
             {/* NOTE: must be () => saveCard(false), NOT onClick={saveCard}. React passes the
                 click event as the first argument, which would land in `asDraft` as a truthy
@@ -1378,8 +1392,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             {jcViewOnly && jcLease.status === 'held' && <EditLeaseBanner status="held" heldByEmail={jcLease.heldByEmail} />}
             {jcViewOnly && jcLease.status !== 'held' && <EditAvailableBar onEdit={claimJobCardEdit} />}
             {jcViewOnly
-              ? <RecordUpdatedNotice status={jcSync.status} onAcknowledge={() => { if (jcSync.latest) applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...jcSync.latest })); jcSync.markSynced(); setDirty(false); }} />
-              : <RecordConflictBanner status={jcSync.status} onReview={() => setJcReviewOpen(true)} onClose={() => { jcLease.release(); setLeasedJobNo(null); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode))); setDirty(false); }} />}
+              ? <RecordUpdatedNotice status={jcSync.status} onAcknowledge={() => { if (jcSync.latest) applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode), invoices), ...jcSync.latest })); jcSync.markSynced(); setDirty(false); }} />
+              : <RecordConflictBanner status={jcSync.status} onReview={() => setJcReviewOpen(true)} onClose={() => { jcLease.release(); setLeasedJobNo(null); applyCard(emptyCard(savedRef.current, readJcDefaults(demoMode), invoices)); setDirty(false); }} />}
           </div>
         )}
         {jcReviewOpen && leasedJobNo && jcSync.latest && (
@@ -1389,7 +1403,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             fields={JOBCARD_CONFLICT_FIELDS}
             opened={card}
             latest={jcSync.latest}
-            onUseLatest={(latest) => { setJcReviewOpen(false); jcSync.markSynced(revOf(latest)); applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode)), ...latest })); setDirty(false); }}
+            onUseLatest={(latest) => { setJcReviewOpen(false); jcSync.markSynced(revOf(latest)); applyCard(splitVehicle({ ...emptyCard(savedRef.current, readJcDefaults(demoMode), invoices), ...latest })); setDirty(false); }}
             onClose={() => setJcReviewOpen(false)}
           />
         )}
@@ -1442,7 +1456,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                 <div className="flex flex-wrap items-center gap-3">
                   {[['auto', 'Auto Generate'], ['manual', 'Manual Entry']].map(([m, l]) => (
                     <label key={m} className="flex items-center gap-1.5 cursor-pointer text-[11px] text-white/70">
-                      <input type="radio" checked={(card.jobNoMode || 'auto') === m} onChange={() => set(m === 'auto' ? { jobNoMode: 'auto', jobNo: nextJobCardNumber(savedRef.current, readJcDefaults(demoMode).prefix) } : { jobNoMode: 'manual' })} className="accent-[#d4af37]" /> {l}
+                      <input type="radio" checked={(card.jobNoMode || 'auto') === m} onChange={() => set(m === 'auto' ? { jobNoMode: 'auto', jobNo: nextJobCardNumber([...savedRef.current, ...invoices], readJcDefaults(demoMode).prefix) } : { jobNoMode: 'manual' })} className="accent-[#d4af37]" /> {l}
                     </label>
                   ))}
                 </div>
@@ -1455,7 +1469,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                       // a second "AUTO" badge next to the value was a redundant indicator.
                       ? <input value={card.jobNo} readOnly className={`${inputCls} opacity-70`} />
                       : <input value={card.jobNo} onChange={(e) => set({ jobNo: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 14) })} onBlur={() => touch('jobNo')} aria-invalid={!!showErr('jobNo')} aria-describedby={showErr('jobNo') ? 'err-jobNo' : undefined} placeholder="e.g. SBBMC42" className={`${inputCls} ${showErr('jobNo') ? 'border-red-500/70' : ''}`} />}
-                    {(card.jobNoMode === 'manual') && savedRef.current.some((c) => c.jobNo === card.jobNo) && <p className="text-[10px] text-red-400 mt-1">Job Card Number already exists</p>}
+                    {(card.jobNoMode === 'manual') && (savedRef.current.some((c) => c.jobNo === card.jobNo) || invoices.some((iv) => iv.jobNo === card.jobNo)) && <p className="text-[10px] text-red-400 mt-1">Job Card Number already exists</p>}
                   </Field>
                   <Field label="Service Advisor" req sub={<div className="invisible" aria-hidden="true">{jobNoModeToggle}</div>}>
                     <input value={card.advisor} onChange={(e) => set({ advisor: e.target.value })} placeholder="e.g. Ramesh Kumar" className={inputCls} />
@@ -1512,6 +1526,14 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             if (!matched || !card.regNo.trim() || !card.vehicle.trim()) return null;
             const onFile = (matched.vehicles || []).some((v) => (v.regNo || '').toUpperCase() === card.regNo.toUpperCase());
             if (onFile) return <p className="text-[11px] text-emerald-400/80 mt-2">✓ This vehicle is on {matched.name}’s file.</p>;
+            // PHASE 10 (PH10-03) — `onFile` only looked at `matched`'s OWN vehicles, so a
+            // reg no. already registered to a DIFFERENT customer could be "registered"
+            // here too, creating a second ownership record for the same physical vehicle
+            // with no link between the two. A reg no. is a real-world unique identifier —
+            // check every customer, same invariant the Vehicles module's own wizard
+            // (`dupReg`) already enforces.
+            const elsewhere = customers.find((c) => c.id !== matched.id && (c.vehicles || []).some((v) => (v.regNo || '').toUpperCase() === card.regNo.toUpperCase()));
+            if (elsewhere) return <p className="text-[11px] text-amber-400/80 mt-2">{card.regNo.toUpperCase()} is already registered to {elsewhere.name} — not {matched.name}. Check the registration number, or use Vehicles to reassign it.</p>;
             return (
               <button type="button" onClick={() => { onRegisterVehicle?.(matched.id, { regNo: card.regNo.toUpperCase(), model: card.vehicle, vin: card.vin, engineNo: card.engineNo, fuel: card.fuel }); toast.success(`Vehicle saved to ${matched.name}`); }} className="mt-2 h-9 px-3 rounded-lg text-[11px] font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] inline-flex items-center gap-1.5"><Plus size={13} /> Register this vehicle to {matched.name}</button>
             );

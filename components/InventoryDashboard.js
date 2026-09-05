@@ -10499,7 +10499,10 @@ export default function InventoryDashboard() {
     // hardcoded to "SBBMC" the same way the service used to be.
     let jcPrefix = 'SBBMC';
     try { jcPrefix = JSON.parse(localStorage.getItem(demoMode ? 'maruti_settings_demo' : 'maruti_settings') || '{}').jcPrefix || 'SBBMC'; } catch {}
-    const draft = { jobNo: nextJobCardNumber(jobCards, jcPrefix), ...buildJobCardDraftFields(c, v) };
+    // PH10-01 — see JobCardModule.jsx's emptyCard comment: fold invoices'
+    // jobNo values into the max-scan so a deleted job card's number is never
+    // handed out again while an invoice still links to it by that number.
+    const draft = { jobNo: nextJobCardNumber([...jobCards, ...invoices], jcPrefix), ...buildJobCardDraftFields(c, v) };
     try { localStorage.setItem(token ? `maruti_jobcard_draft_v2::${token}` : 'maruti_jobcard_draft_v2', JSON.stringify(draft)); } catch {}
     return draft;
   };
