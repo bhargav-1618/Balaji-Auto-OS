@@ -291,9 +291,23 @@ above was established by direct source-code tracing (call-graph analysis
 confirming `recordInvoiceSalesDelta`'s single, demo-only caller) and the
 pure-model/source-pattern tests in §24, consistent with this phase's own
 explicit prohibition on manufacturing duplicate ledger records in real
-production to test for duplicate-ledger failure. Live deployment
-verification (buildId, console check) is recorded in §27 once the fix is
-live.
+production to test for duplicate-ledger failure.
+
+**Deployment record:**
+- **Commit:** `3b35f7e` (`fix(integrity): harden ledger event integrity`),
+  pushed to `main`, deployed by Vercel.
+- **Build verification:** `window.__NEXT_DATA__.buildId` read
+  `WZKw23TFpvholBJ5v8sLj`, distinct from the prior known build id
+  (`FUKT0xtznzhM3JqbeaFfZ`), confirming the new commit is live.
+- **Console check:** no application JS errors — only the same benign
+  browser/network noise observed consistently since Phase 10.
+- **Sales ledger render check:** navigated to Sales — existing historical
+  sales rows (invoice-linked and Quick-Sell rows alike) render correctly
+  with correct amounts/quantities, confirming the production read/display
+  path is unaffected by the demo-only dead-code removal (as expected,
+  since the removed code never executed in production).
+- No supplier, part, invoice, PO, or job card record was created, edited,
+  saved, or moved against real data during this check.
 
 ## 27. QA cleanup
 
