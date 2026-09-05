@@ -218,3 +218,9 @@ No QA records were created this phase requiring cleanup — verification relied 
 ## 21. Final PASS/FAIL assessment
 
 **PASS.** Three confirmed referential-integrity defects (PH10-01 HIGH, PH10-02 HIGH, PH10-03 MEDIUM) were found and fixed with minimal, targeted changes consistent with patterns already established elsewhere in the same codebase. No CRITICAL defect was found — no relationship fix in this phase touches an authoritative financial or inventory write path. Every other relationship boundary tested across create, edit, cross-parent, duplicate, and identity dimensions was confirmed already correct by construction. All regression gates (tests, rules, lint, build) are green.
+
+## 22. Deployment record
+
+- **Commit:** `b8cad8a` — `fix(integrity): harden referential integrity`, pushed to `main`.
+- **Vercel deployment:** succeeded — production build id `rvPOMIYrk0ewWa35FVc0q` (confirmed live at https://balaji-auto-os.vercel.app, distinct from the prior Phase 9 build `My7TlHzwhrb08gJAvyD2f`).
+- **Production smoke test** (non-destructive, no records created/modified/deleted): confirmed no console errors on load; navigated to Job Cards (auto-numbering rendered `SBBMC01` correctly against the current, empty job-card list — the fixed `emptyCard`/`nextJobCardNumber` call path executes normally with no invoices to merge in) and Billing (dashboard figures unchanged, confirming no accidental write); opened **New Invoice**, switched to "Search Existing" customer mode (`pickCustomer`/`custVehicles` path, unmodified but adjacent to the `regKey` import change), expanded the **Job Card** picker (`linkJobCard`'s render path, containing the PH10-02 fix) — rendered "No open job cards in the workshop" with no error; discarded the unsaved invoice via the app's own "Discard unsaved changes?" confirmation. No QA or production data was created, altered, or left behind.
