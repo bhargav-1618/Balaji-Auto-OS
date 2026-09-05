@@ -240,3 +240,20 @@ stock/salesCount/reserved, Invoice's payments/paid/balance/status, Job
 Card's fields) was already correctly protected by an existing mechanism —
 `_rev` exclusion, `_rev` participation, or `replayIdArray` reconciliation —
 and required no further change. All gates green.
+
+## 10. Deployment record
+
+- **Commit:** `fb46721` (`fix(concurrency): harden authoritative-field
+  revision protocol`), pushed to `main`, deployed by Vercel.
+- **Build verification:** `window.__NEXT_DATA__.buildId` read
+  `FUKT0xtznzhM3JqbeaFfZ`, distinct from the prior known build id
+  (`KsltSrytglH01fCm7wz0e`), confirming the new commit is live.
+- **Console check:** no application JS errors — only the same benign
+  browser/network noise observed consistently since Phase 10
+  (`ERR_QUIC_PROTOCOL_ERROR.QUIC_PACKET_WRITE_ERROR`, `ERR_BLOCKED_BY_CLIENT`,
+  one bare 400 status).
+- No supplier, part, or invoice record was created, edited, saved, or
+  moved against real data to perform this check — the fix's correctness is
+  established by the real-`revState()` proof and source-pattern proof in
+  `tests/authoritative-field-integrity.test.cjs` (§6), not by a live
+  reproduction.
