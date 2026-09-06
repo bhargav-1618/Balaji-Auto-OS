@@ -114,8 +114,8 @@ for (const led of ['sales', 'restocks', 'stockAdjustments']) {
     /allow read, create: if signedIn\(\);/.test(body) && /allow update: if false;/.test(body));
   ok(`${led}: DELETE = isAdmin() only`, /allow delete: if isAdmin\(\);/.test(body));
 }
-ok('auditLog: CREATE requires performedBy == request.auth.uid (actor cannot be forged); UPDATE false; DELETE isAdmin',
-  /match \/auditLog\/\{logId\} \{[\s\S]*?allow create: if signedIn\(\) && request\.resource\.data\.performedBy == request\.auth\.uid;[\s\S]*?allow update: if false;[\s\S]*?allow delete: if isAdmin\(\);/.test(rules));
+ok('auditLog: CREATE pins performedBy + performedByEmail + createdAt to the caller/server (actor cannot be forged); UPDATE false; DELETE isAdmin',
+  /match \/auditLog\/\{logId\} \{[\s\S]*?allow create: if signedIn\(\)\s*&& request\.resource\.data\.performedBy == request\.auth\.uid\s*&& request\.resource\.data\.performedByEmail == request\.auth\.token\.email\s*&& request\.resource\.data\.createdAt == request\.time;[\s\S]*?allow update: if false;[\s\S]*?allow delete: if isAdmin\(\);/.test(rules));
 ok('appSettings (holds roles/admins/staff): READ signed-in, CREATE+UPDATE isAdmin() only, DELETE false — staff cannot self-promote',
   /match \/appSettings\/\{docId\} \{[\s\S]*?allow read: if signedIn\(\);[\s\S]*?allow create, update: if isAdmin\(\);[\s\S]*?allow delete: if false;/.test(rules));
 ok('recoveryVault (full-data snapshots): read/create/delete isAdmin(), update false',
@@ -157,7 +157,7 @@ const M = [
   ['Receive PO',                   '✅','✅','✅','❌', 'ungated (Inventory)','poReceiveDoc txn','signedIn','Firestore + txn (state guards)'],
   ['Cancel PO / invoice',          '✅','✅','✅','❌', 'canManage in Billing; ungated PO','blind update','signedIn','Firestore (intentional)'],
   ['Edit a ledger row (sale/restock/adj)','❌','❌','❌','❌','no UI','—','update: false','Firestore (absolute)'],
-  ['Forge auditLog performedBy',   '❌','❌','❌','❌', 'no UI','pushAudit sets uid','performedBy == auth.uid','Firestore (REPO ✅ / LIVE pending — see §7)'],
+  ['Forge auditLog actor/time',    '❌','❌','❌','❌', 'no UI','pushAudit sets uid+email+serverTime','performedBy==uid && performedByEmail==token.email && createdAt==request.time','Firestore (REPO ✅ / LIVE pending — see §7)'],
   ['Edit App Settings / roles',    '✅','✅','❌','❌', 'section isAdmin','onAddAdmin','isAdmin()','Firestore'],
   ['Manage Users / grant perms',   '✅','✅','❌','❌', 'section isAdmin','onSetStaffPerm','isAdmin() (appSettings)','Firestore'],
   ['Reset All Data / Recovery Vault','✅','✅','❌','❌','section isAdmin','resetAllData','recoveryVault+meta isAdmin() + deletes isAdmin()','Firestore'],
@@ -226,12 +226,12 @@ ok('emulator: PHASE 19 section present (staff-writes-staff-perms, salesRollups, 
 // 7. DEPLOYMENT GAP — must stay visible until the owner publishes
 // ===================================================================
 console.log('\n7. Rules deployment status (owner action required)\n');
-ok('firestore.rules in the repo IS the hardened ruleset (auditLog self-attribution present)',
-  /allow create: if signedIn\(\) && request\.resource\.data\.performedBy == request\.auth\.uid;/.test(rules));
-ok('KNOWN_LIMITATIONS still flags the PH15-03 auditLog rule as NOT yet published to balaji-auto-os-7',
-  /auditLog.{0,80}still needs a manual `firebase deploy/i.test(known)
+ok('firestore.rules in the repo IS the hardened ruleset (auditLog actor self-attribution present — uid + displayed email + server time)',
+  /request\.resource\.data\.performedBy == request\.auth\.uid\s*&& request\.resource\.data\.performedByEmail == request\.auth\.token\.email/.test(rules));
+ok('KNOWN_LIMITATIONS still flags the auditLog rule delta as NOT yet published to balaji-auto-os-7',
+  /auditLog.{0,120}(still needs a manual `firebase deploy|unpublished|not.{0,20}published)/is.test(known)
   || /PH15-03.{0,200}needs a manual `firebase deploy/is.test(known)
-  || /live `auditLog` rule still allows a signed-in client to write an entry with a\s*\n?\s*forged `performedBy`/is.test(known));
+  || /forged `performedBy`/is.test(known));
 ok('the client already writes performedBy = the real uid, so publishing the rule needs NO code change',
   /performedBy: user\?\.uid \|\| null/.test(dash));
 

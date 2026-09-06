@@ -32,7 +32,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "node tests/run-all.cjs",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-rules-test \"node tests/rules/firestore.rules.test.cjs\""
+    "test:rules": "firebase emulators:exec --only firestore --project demo-rules-test \"node tests/rules/run-all.cjs\""
   },
   "dependencies": {
     "firebase": "^10.12.0",

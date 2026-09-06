@@ -24,14 +24,18 @@ entry below and `docs/testing/PHASE_15_AUDIT_LOG_INTEGRITY_REPORT.md` §14. Unti
 the live `auditLog` rule still allows a signed-in client to write an entry with a
 forged `performedBy`.)*
 
-**Phase 19 confirmed** the base ruleset IS live and enforcing on `balaji-auto-os-7` — an
-unauthenticated Firestore REST read of `customers` returns `403 PERMISSION_DENIED`, so
+**Phases 19–20 confirmed** the base ruleset IS live and enforcing on `balaji-auto-os-7` —
+unauthenticated Firestore REST reads of `customers` / `auditLog` / `invoices` /
+`counters` / `appSettings` / `recoveryVault` / `parts` all return `403 PERMISSION_DENIED`,
+and an unauthenticated `auditLog` *create* returns `403` (nothing written). So
 `read: if signedIn()`, `delete: if isAdmin()`, `appSettings … if isAdmin()`,
-`update: if false` on the ledgers, and the deny-by-default fallback are all published
-(they predate Phase 15). Only the `firestore.rules` delta since the last recorded deploy
-(`6bfb88d`) — i.e. the PH15-03 `auditLog` `performedBy == request.auth.uid` line at
-`7b5520c` — is unpublished. The client already writes `performedBy = user.uid`, so the
-deploy needs no code change:
+`update: if false` on the ledgers, `counters` monotonicity, and the deny-by-default
+fallback are all published (they predate Phase 15). What is **unpublished** is the
+`auditLog` `create` rule delta: PH15-03 (`performedBy == request.auth.uid`, `7b5520c`)
+**and** PH20-01 (`performedByEmail == request.auth.token.email`, `createdAt == request.time`).
+Until deployed, a *signed-in* client can forge an `auditLog` entry — the displayed
+actor email, the action and the timestamp are all client-controlled on the live rule.
+The client already writes the correct values, so the deploy needs no code change:
 ```bash
 npx firebase login
 npx firebase deploy --only firestore:rules --project balaji-auto-os-7
@@ -556,6 +560,28 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   reverse the stock-in — intentional (the goods arrived; the ledger row
   is the permanent record). Business-state transitions are enforced in
   the transaction layer, not Firestore rules — deliberate.
+
+- **Direct Firestore field-level integrity is enforced by the rules**
+  (PHASE 20 — audited, one MEDIUM defect fixed; see
+  `docs/testing/PHASE_20_FIRESTORE_SECURITY_BYPASS_REPORT.md`). Emulator testing
+  of forged/malicious writes (261 assertions across two rules-test files) confirms
+  the genuine security invariants hold: actor identity (`auditLog` performedBy +
+  performedByEmail + createdAt; `pendingSales.createdBy`; `editLocks`
+  ownerUid+sessionId), role/permission data (`appSettings` admin-only, no writable
+  `role` field anywhere), ledger immutability (`update: if false` overrides even
+  admin), monotonic invoice numbering, recovery data, unauthenticated deny.
+  Ordinary business fields (`invoice.status/paid/balance`, `part.stock`,
+  `salesRollups`, `_rev`) are DERIVED / APPLICATION-ENFORCED / intentionally
+  client-writable in this single-shop app — a forged write to them violates no
+  invariant, moves no money or stock through a side channel, and cannot touch the
+  immutable ledger (the realization cascade runs only from the app's own
+  transaction handlers, never from a remote invoice change). One MEDIUM defect
+  (PH20-01, fixed): the `auditLog` rule pinned the uid but not the *displayed*
+  actor email or the timestamp, so a signed-in client could insert an
+  impersonating / back-dated audit entry (real history stays immutable — this was
+  insertion, not alteration). Fixed with 2 rule clauses + a one-writer correction.
+  INFO: `counters.next` accepts an unbounded *forward* jump (monotonic invariant
+  intact — no duplicate serials; a nuisance only).
 
 - **Authorization is enforced at the Firestore-rules layer, not just the UI**
   (PHASE 19 — audited, no code change; see

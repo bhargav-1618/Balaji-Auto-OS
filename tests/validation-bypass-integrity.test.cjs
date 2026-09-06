@@ -384,8 +384,8 @@ ok('ledgers (sales / restocks / stockAdjustments) are append-only: update if fal
   /match \/sales\/\{saleId\} \{[\s\S]{0,120}allow update: if false/.test(rulesSrc)
   && /match \/restocks\/\{restockId\} \{[\s\S]{0,120}allow update: if false/.test(rulesSrc)
   && /match \/stockAdjustments\/\{adjId\} \{[\s\S]{0,120}allow update: if false/.test(rulesSrc));
-ok('auditLog create is self-attributed (performedBy == request.auth.uid)',
-  /allow create: if signedIn\(\) && request\.resource\.data\.performedBy == request\.auth\.uid/.test(rulesSrc));
+ok('auditLog create is self-attributed (performedBy + performedByEmail + createdAt pinned to the caller/server)',
+  /allow create: if signedIn\(\)\s*&& request\.resource\.data\.performedBy == request\.auth\.uid\s*&& request\.resource\.data\.performedByEmail == request\.auth\.token\.email/.test(rulesSrc));
 ok('appSettings writes are admin-only (privilege-escalation lock)',
   /match \/appSettings\/\{docId\} \{[\s\S]{0,120}allow create, update: if isAdmin\(\)/.test(rulesSrc));
 ok('counters/next can never decrease (invoice-number monotonicity)',

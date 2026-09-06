@@ -140,17 +140,24 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if isAdmin();
     }
-    // PHASE 15 (audit-log integrity) — `create` used to allow any signed-in
-    // user to write an auditLog document with ANY `performedBy`, so a
-    // malicious or buggy client could forge an entry attributed to a
-    // DIFFERENT user, or fabricate an action that never happened. Requiring
-    // `performedBy == request.auth.uid` (the same self-attribution check
-    // `pendingSales` already uses below) makes the field the app's own
-    // pushAudit/writeAudit always set actually enforced, not just
-    // conventionally correct. Read/update/delete semantics are unchanged.
+    // PHASE 15 + PHASE 20 (audit-log integrity) — the ACTOR is a security
+    // invariant. `create` used to allow any signed-in user to write an auditLog
+    // document with ANY `performedBy`; PHASE 15 pinned that to the caller's uid.
+    // PHASE 20 found the Audit Log UI actually DISPLAYS `performedByEmail`, not
+    // the uid — so pinning only the uid still let a signed-in client insert an
+    // entry that shows another user (e.g. the owner) performing an action they
+    // never did, at any time. All three are now checked: `performedBy` (uid) and
+    // `performedByEmail` (the displayed actor) must be the caller's own identity,
+    // and `createdAt` must be the server's request time (no back-dated history).
+    // The app's own pushAudit/writeAudit/writeCapacityAudit already set exactly
+    // these values. Read/update/delete semantics are unchanged (append-only;
+    // delete admin-only).
     match /auditLog/{logId} {
       allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.performedBy == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.performedBy == request.auth.uid
+        && request.resource.data.performedByEmail == request.auth.token.email
+        && request.resource.data.createdAt == request.time;
       allow update: if false;
       allow delete: if isAdmin();
     }

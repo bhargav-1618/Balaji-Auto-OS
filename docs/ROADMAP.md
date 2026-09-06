@@ -578,6 +578,39 @@ current release.
   `tests/authorization-matrix-integrity.test.cjs`, 76 static assertions),
   `npm run test:rules` 148/148 (+10), lint 0, build ✓. No `firestore.rules`
   change. Production code: 0 lines.
+- ~~**Firestore security-rule bypass / field-level integrity audit.**~~ **DONE —
+  PHASE 20, one MEDIUM defect fixed.** Direct emulator testing of forged/malicious
+  writes: "even when an authenticated client IS allowed into a collection, can it
+  forge a protected field?" Classified every field FIRESTORE-PROTECTED /
+  APPLICATION-ENFORCED / DERIVED / INTENTIONALLY-CLIENT-WRITABLE. The genuine
+  security invariants all hold: actor identity, role/permission data
+  (`appSettings` admin-only, no writable `role` field), ledger immutability
+  (`update: if false` overrides admin), monotonic invoice numbering, recovery
+  data, `editLocks` ownership+session, `pendingSales` creator-scope,
+  unauthenticated deny (live-confirmed 403). Ordinary business fields
+  (`invoice.status/paid`, `part.stock`) are correctly DERIVED / client-writable —
+  a forged write violates no invariant and triggers no ledger/stock side-effect.
+  One MEDIUM defect:
+  - **PH20-01.** `firestore.rules` pinned `auditLog.performedBy` (the uid — PH15)
+    but NOT `performedByEmail` (the string the Audit Log UI actually *displays*)
+    or `createdAt`. A signed-in staffer could POST an audit entry showing another
+    user (e.g. the owner) performing any action at any time — real history could
+    not be erased, but a forged entry could be *inserted*. Confirmed in the
+    emulator (5 forgery vectors). Fixed with 2 rule clauses
+    (`performedByEmail == request.auth.token.email`, `createdAt == request.time`)
+    reusing the PH15 self-attribution pattern, plus a one-writer correction
+    (`capacityService.writeCapacityAudit` wrote `performedBy: null`; now carries
+    `auth.currentUser` uid+email). No new function/file/abstraction.
+  Gates: `npm test` 141/141, `npm run test:rules` **261/261** (new
+  `tests/rules/security-bypass.rules.test.cjs`, 111 emulator assertions + runner;
+  `firestore.rules.test.cjs` 150), lint 0, build ✓. Production: `firestore.rules`
+  +2 clauses; `capacityService.js` +7 net; `package.json` 1 line.
+  - **Rules deployment (owner action required):** `firestore.rules` now carries
+    BOTH the Phase 15 and Phase 20 auditLog hardening. The base ruleset is live
+    (403 on unauth reads — verified) but the live `auditLog` `create` rule is the
+    pre-Phase-15 form. **OWNER must run `npx firebase deploy --only
+    firestore:rules --project balaji-auto-os-7`.** No Firebase credentials in
+    this environment; the client already writes the correct actor values.
 
 ## Scale — before large datasets
 

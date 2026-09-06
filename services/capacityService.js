@@ -28,6 +28,7 @@
  */
 
 import { serverTimestamp } from 'firebase/firestore';
+import { auth } from '../lib/firebase';
 import { createStore } from './persistenceStore';
 import * as repo from '../repositories/firestoreRepository';
 import { invoiceStatus } from './billingService';
@@ -287,14 +288,20 @@ export async function exportRecordsToExcel(moduleKey, records) {
 async function writeCapacityAudit({ demoMode, method, moduleKey, count, dateRangeLabel, actorEmail }) {
   const cfg = moduleConfig(moduleKey);
   const store = createStore(demoMode);
+  // PHASE 20 — a capacity cleanup PERMANENTLY deletes records, so its audit entry
+  // must carry the real signed-in identity, and firestore.rules now pins the
+  // auditLog `create` to `performedBy == request.auth.uid` AND `performedByEmail ==
+  // request.auth.token.email`. `auth.currentUser` is that same identity (a cleanup
+  // is only reachable from a signed-in session). Demo never touches Firestore.
+  const u = demoMode ? null : auth.currentUser;
   const entry = {
     id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     action: `capacity_${method}`, // capacity_delete | capacity_export_delete | capacity_archive
     entity: cfg.label,
     entityId: '',
     details: `${count} ${pluralize(cfg.recordLabel, count)} (${dateRangeLabel}) via capacity cleanup`,
-    performedBy: null,
-    performedByEmail: actorEmail || null,
+    performedBy: u ? u.uid : null,
+    performedByEmail: u ? u.email : (actorEmail || null),
     createdAt: demoMode ? new Date().toISOString() : serverTimestamp(),
   };
   await store.save(COLLECTIONS.AUDIT_LOG, entry);

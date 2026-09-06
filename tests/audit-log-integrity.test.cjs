@@ -204,8 +204,8 @@ console.log('\n8  Audit immutability / security (PH15-03)\n');
 
 {
   const rule = slice(rules, 'match /auditLog/{logId} {', '// ---- Pending sales');
-  ok('[was a defect, now fixed] auditLog\'s create rule used to allow ANY signed-in user to write an entry with ANY performedBy — a malicious/buggy client could forge an entry attributed to a different user. It now requires request.resource.data.performedBy == request.auth.uid, the same self-attribution pattern pendingSales already used — verified live against the emulator in tests/rules/firestore.rules.test.cjs',
-    /allow create: if signedIn\(\) && request\.resource\.data\.performedBy == request\.auth\.uid;/.test(rule));
+  ok('[was a defect, now fixed] auditLog\'s create rule used to allow ANY signed-in user to write an entry with ANY performedBy — a malicious/buggy client could forge an entry attributed to a different user. PH15-03 pinned request.resource.data.performedBy == request.auth.uid; PHASE 20 also pins performedByEmail == request.auth.token.email (the string the Audit UI displays) and createdAt == request.time — verified live against the emulator in tests/rules/',
+    /allow create: if signedIn\(\)\s*&& request\.resource\.data\.performedBy == request\.auth\.uid\s*&& request\.resource\.data\.performedByEmail == request\.auth\.token\.email\s*&& request\.resource\.data\.createdAt == request\.time;/.test(rule));
   ok('read access is unchanged (still every signed-in user, not narrowed to "your own entries only") — the shared audit trail remains fully visible',
     /allow read: if signedIn\(\);/.test(rule));
   ok('update is still unconditionally denied (append-only) and delete is still admin-only — both unchanged by this phase',

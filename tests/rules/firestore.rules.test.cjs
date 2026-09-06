@@ -26,7 +26,7 @@
  */
 const {
   doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc,
-  runTransaction, increment, Timestamp,
+  runTransaction, increment, Timestamp, serverTimestamp,
 } = require('firebase/firestore');
 const { assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
 const { makeTestEnv, seedAdmins, seedDoc, OWNER_EMAIL, ADMIN_EMAIL, STAFF_EMAIL } = require('./helpers.cjs');
@@ -132,24 +132,29 @@ async function main() {
     }
 
     // =========================================================================
-    // PHASE 15 (audit-log integrity) — auditLog's `create` rule must reject a
-    // forged `performedBy` (impersonating a DIFFERENT user), while still
-    // allowing a user to self-attribute their own entry and read the shared
-    // trail. This is stricter than the shared append-only pattern above
-    // (sales/restocks/stockAdjustments intentionally accept any signed-in
-    // writer — they carry no actor-identity field to forge in the first
-    // place), so it gets its own dedicated block rather than folding into it.
+    // PHASE 15 + PHASE 20 (audit-log integrity) — auditLog's `create` rule must
+    // reject a forged ACTOR: `performedBy` (uid — PH15), `performedByEmail` (the
+    // string the Audit UI displays — PH20) and `createdAt` (server time, no
+    // back-dating — PH20). A user may still self-attribute their own entry and
+    // read the shared trail. Stricter than the shared append-only pattern above
+    // (sales/restocks carry no actor field), so it keeps its own block. See
+    // tests/rules/security-bypass.rules.test.cjs for the full forgery matrix.
     // =========================================================================
     await testEnv.clearFirestore();
     {
       await seedAdmins(testEnv, [ADMIN_EMAIL]);
       const staffDb = testEnv.authenticatedContext('staff-uid', { email: STAFF_EMAIL }).firestore();
       const otherDb = testEnv.authenticatedContext('other-uid', { email: 'other@example.com' }).firestore();
+      const selfEntry = () => ({ action: 'sell_part', performedBy: 'staff-uid', performedByEmail: STAFF_EMAIL, createdAt: serverTimestamp() });
 
-      ok('staff: create auditLog entry self-attributed to their own uid allowed',
-        await allow(setDoc(doc(staffDb, 'auditLog/a1'), { action: 'sell_part', performedBy: 'staff-uid' })));
+      ok('staff: create auditLog entry self-attributed (own uid + own email + server time) allowed',
+        await allow(setDoc(doc(staffDb, 'auditLog/a1'), selfEntry())));
       ok('staff: create auditLog entry impersonating a DIFFERENT uid denied',
-        await deny(setDoc(doc(staffDb, 'auditLog/a2'), { action: 'sell_part', performedBy: 'other-uid' })));
+        await deny(setDoc(doc(staffDb, 'auditLog/a2'), { ...selfEntry(), performedBy: 'other-uid' })));
+      ok('staff: create auditLog entry with own uid but a DIFFERENT performedByEmail denied (PH20 — cannot impersonate the displayed actor)',
+        await deny(setDoc(doc(staffDb, 'auditLog/a2b'), { ...selfEntry(), performedByEmail: 'owner@shop.test' })));
+      ok('staff: create auditLog entry with a client-supplied (back-dated) createdAt denied (PH20 — must be request.time)',
+        await deny(setDoc(doc(staffDb, 'auditLog/a2c'), { ...selfEntry(), createdAt: Timestamp.fromMillis(Date.now() - 86400000) })));
       ok('other user: create auditLog entry with no performedBy field at all denied (missing, so cannot equal request.auth.uid)',
         await deny(setDoc(doc(otherDb, 'auditLog/a3'), { action: 'sell_part' })));
       ok('other user: read the shared auditLog (written by a different uid) still allowed',

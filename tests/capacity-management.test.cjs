@@ -109,7 +109,9 @@ ok('the UI never labels the permanent-delete action as "Archive" or vice versa',
 ok('cleanup writes to the same auditLog collection/local-storage the rest of the app already reads',
   /await store\.save\(COLLECTIONS\.AUDIT_LOG, entry\);/.test(svc));
 ok('the audit entry records method, module, count, and date range (who/when/what/how many)',
-  /action: `capacity_\$\{method\}`/.test(svc) && /performedByEmail: actorEmail/.test(svc) && /dateRangeLabel/.test(svc));
+  /action: `capacity_\$\{method\}`/.test(svc) && /performedByEmail: u \? u\.email : \(actorEmail \|\| null\)/.test(svc) && /dateRangeLabel/.test(svc));
+ok('PHASE 20 — the capacity audit entry carries the REAL signed-in uid + email (auth.currentUser), so it passes the hardened auditLog rule',
+  /import \{ auth \} from '\.\.\/lib\/firebase'/.test(svc) && /const u = demoMode \? null : auth\.currentUser;/.test(svc) && /performedBy: u \? u\.uid : null/.test(svc));
 
 // --- Part 10: the user is never auto-decided for — three explicit choices, no default ---
 ok('the cleanup wizard presents exactly three methods (delete / export_delete / archive), never auto-picks one',
