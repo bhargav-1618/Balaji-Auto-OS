@@ -495,13 +495,15 @@ listed in §24/§25.
 ## 28. Code-growth review
 
 ```
-Production lines added:    ~28   (mostly the shared clampNonNeg helper + its comment block + PH21 one-liners)
-Production lines removed:   ~14   (the divergent inline Math.max(0, parseInt/parseFloat …) copies)
-Net production change:      +14 lines, of which ~11 are comments
+Production lines added:    +56   (4 files: InventoryDashboard 24, inventoryService 24, format 5, SupplierPOBuilder 3)
+Production lines removed:   -28   (the divergent inline Math.max(0, parseInt/parseFloat … || 0) copies)
+Net production change:      +28 lines, of which ~20 are comments (the clampNonNeg
+                            rationale block + one `// PH21-01` note per touched site)
 
 New production functions:   1  (clampNonNeg — private, 1 line, in inventoryService.js)
 New production files:       0
 New abstractions:           0
+Net distinct numeric-parse expressions:  -5  (5 inline copies removed, routed through the shared helper)
 ```
 
 **Existing mechanisms reused:** `Number.isFinite` (the exact discipline
