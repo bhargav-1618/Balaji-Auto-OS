@@ -893,8 +893,29 @@ current release.
   dead chart components …`). INFO (not fixed): a `{n} parts`/`{n} items` label cluster
   in Suppliers doesn't singularise at 1.
   Report: `docs/testing/PHASE_24_EMPTY_STATE_INTEGRITY_REPORT.md`.
+- ~~**Phase 25 — large-data / scalability / client-heavy behaviour.**~~ **DONE —
+  DISCOVERY RESULT: PASS; 0 defects, 0 production code change.** Two-stage phase; Stage
+  1 (measurement) only. Measured the shipped derived functions and the live demo at
+  **100 / 500 / 1,000 / 5,000 / 10,000** records. Findings: every live listener is
+  `limit()`-bounded (`repositories/firestoreRepository.js` — parts 2,000 / customers
+  1,000 / invoices+jobCards 3,000 / sales 2,000 / …); pagination + search + filter are
+  **client-side over that resident window** (not a server cursor — documented, not a
+  bug); analytics Revenue/Cost/Profit/Margin come from the unbounded `salesRollups`
+  aggregate so they stay complete. At 10,000 (demo, which loads everything) the worst
+  cost is **one ~470–550 ms main-thread task** on load / a heavy tab-switch; production
+  stays ~150–350 ms behind the `limit()`. **Every count / total / filter / top-N is
+  correct against an independent oracle at every size, in Node and live** — no silent
+  truncation, no missing/duplicate rows, no `NaN`, no console error, DOM bounded to the
+  page size. The client-heavy characteristics (below) are deliberate, already
+  roadmapped, and were recorded as INFO — not misclassified. NEW
+  `tests/large-data-integrity.test.cjs` (118 assertions — fixtures at 5 sizes, shipped
+  functions vs a hand oracle, page-completeness, architecture guards). `npm test`
+  **146/146**. Report: `docs/testing/PHASE_25_LARGE_DATA_INTEGRITY_REPORT.md`.
 
 ## Scale — before large datasets
+
+*(Phase 25 measured the current behaviour of these items — all still accurate; see the
+report for the numbers.)*
 
 - **Move part images out of Firestore.** Production part photos are stored as base64
   `imageString` inside each `parts` document, so every inventory read pulls the full
@@ -905,8 +926,16 @@ current release.
 - **Composite indexes.** `firestore.indexes.json` is empty and correct today (all live
   queries are single-field). When a compound `where + orderBy` is introduced, add the
   index Firestore's error links and `firebase deploy --only firestore:indexes`.
-- **Server-side search.** In-memory ranking is sub-millisecond at current scale; a
-  hosted index (Algolia / Typesense) becomes necessary around ~100k customers.
+- **Server-side search.** In-memory ranking is sub-millisecond at current scale (Phase
+  25: ~6–12 ms over a 10,000-row array); a hosted index (Algolia / Typesense), or at
+  least wiring the repo's already-built `searchByPrefix` + a true-count indicator into
+  the master-entity lists, becomes necessary as `customers` / `parts` grow past their
+  live window (1,000 / 2,000) toward the stated 100k / 10k target — beyond the window
+  the older records are currently unlisted, uncounted and unsearchable from the list.
+- **`stats` / vehicle-analytics recompute per listener echo.** O(resident window):
+  ~15 ms at the production `limit()`, ~470 ms at a demo-unbounded 10,000 (Phase 25).
+  A `useMemo` narrowing or a web-worker offload is the lever if the window `limit()`s
+  are ever raised.
 - **Multi-branch stock.**
 
 ## Code health

@@ -878,6 +878,28 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
 - No table virtualisation. Pagination (25/page) keeps this a non-issue today; revisit
   past ~10,000 rows with a raised page size.
 
+  **Phase 25 — large-data / scalability (measured; PASS, no defect, no code change; see
+  `docs/testing/PHASE_25_LARGE_DATA_INTEGRITY_REPORT.md`).** The app is heavily
+  client-side: every live list `onSnapshot` is `limit()`-bounded (parts 2,000 /
+  customers 1,000 / invoices + job cards 3,000 / sales 2,000 / …), and pagination,
+  filtering and search all run **in the browser over that resident window** (a client
+  `.slice()`, not a server cursor — `fetchPage` / `searchByPrefix` exist in the repo but
+  are wired only to the capacity-cleanup wizard). Measured at 100 / 500 / 1,000 / 5,000
+  / 10,000: every count / total / filter / top-N stays correct against an independent
+  oracle, nothing is silently truncated, no `NaN`, no console error, and the DOM stays
+  bounded to the page size (~11 rows). The heaviest cost is a single **~470–550 ms**
+  main-thread task on load or a heavy tab-switch at the *demo-unbounded* 10,000;
+  production's `limit()` keeps it ~150–350 ms. Analytics Revenue / Cost / Profit /
+  Margin read the unbounded `salesRollups` aggregate, so they stay complete regardless
+  of ledger size. Architectural characteristics recorded as INFO (all already on
+  `ROADMAP.md`): (a) master collections (customers / parts) have no true-count indicator
+  and no wired server search past their window — beyond it, older records are unlisted,
+  uncounted and unsearchable from the list; (b) no table virtualisation; (c) the Billing
+  `stats` / vehicle-analytics recompute is O(resident window) on every listener echo;
+  (d) part images are base64-in-document (every parts read pulls the payload); (e)
+  audit-log export reads the full uncapped collection (admin one-shot). None is a
+  current failure at the app's near-term scale.
+
 ## Verification ceiling — browser-only, unverified here
 
 All automated verification runs in Node/jsdom. The following require a real browser and
