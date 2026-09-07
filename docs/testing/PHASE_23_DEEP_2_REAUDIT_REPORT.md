@@ -312,8 +312,8 @@ NEW DEFECTS:                     1   (PH23-D2)
 CRITICAL 0 · HIGH 0 · MEDIUM 1 · LOW 0
 FIXES:                           1
 PRODUCTION NET LINES:            +55  (4 files; ~30 comment; 1 new fn = isOutstanding)
-COMMIT:                          <filled on commit>
-DEPLOYMENT:                      <filled on deploy>
+COMMIT:                          82762ae
+DEPLOYMENT:                      Vercel eOZvu5zjQxqoLp-I7ZNQF (/, /login, /verify → 200)
 QA CLEANUP:                      complete
 FINAL CONFIDENCE:                HIGH for the analytics math; MEDIUM-HIGH overall
                                  (pending an authenticated-production spot-check)
