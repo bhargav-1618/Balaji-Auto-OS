@@ -173,10 +173,12 @@ export function stockDelta(prior, next) {
 export function revenueLines(iv) {
   const out = {};
   if (!isRealized(iv)) return out;
+  let sub = 0;
   asArray(iv.lines).forEach((l) => {
     const qty = toNum(l.qty);
     const gross = qty * toNum(l.rate);
     const revenue = Math.max(0, gross - gross * (toNum(l.disc) / 100));
+    sub += revenue;
     const cost = l.partId ? qty * toNum(l.purchasePrice) : 0;
     out[l.id] = {
       name: l.desc,
@@ -191,6 +193,16 @@ export function revenueLines(iv) {
       technician: l.technician || '',
     };
   });
+  // PHASE 23 (PH23-01) — fold the invoice-level discount into each line's realized
+  // revenue with the SAME afterDisc/sub ratio invoiceTotals() uses (and PHASE 11 §
+  // documents for GST). Without it, Σ revenueLines().revenue = the PRE-discount
+  // subtotal, so the sales ledger / rollups / dashboard analytics overstated revenue
+  // and profit by the whole discount on every discounted invoice.
+  const invDisc = iv?.discountType === 'percent' ? sub * (toNum(iv?.discount) / 100) : toNum(iv?.discount);
+  if (invDisc > 0 && sub > 0) {
+    const scale = Math.max(0, sub - invDisc) / sub;
+    Object.values(out).forEach((e) => { e.revenue *= scale; e.profit = e.revenue - e.cost; });
+  }
   return out;
 }
 

@@ -720,6 +720,41 @@ current release.
   build ✓. Production: **+84 / −53** across 7 files (`lib/workshopInvoicePdf.js` net
   −16 — private helper deleted); mostly comments. No new file / abstraction / schema /
   rules change. Report: `docs/testing/PHASE_22_PDF_EXPORT_INTEGRITY_REPORT.md`.
+- ~~**Analytics / source-of-truth reconciliation audit.**~~ **DONE — PHASE 23, one
+  MEDIUM fixed.** "Does `authoritative invoice → realization gate → sales ledger →
+  salesRollups → dashboard / Reports / Sales analytics` produce mathematically correct
+  Revenue / Cost / Gross Profit / Margin?" Built an independent hand-oracle (never calls a
+  production analytics helper) and reconciled a truth table
+  (Rev 3500 / Cost 2000 / Profit 1500 / Margin 42.857%) at every layer:
+  oracle ↔ `ledgerDelta` ↔ reconstructed rollup increments ↔ `Σ totalsOf().afterDisc/profit`
+  ↔ the shipped `totProfit = totRev − totCost`. Established the metric definitions from
+  source (analytics "Revenue" = realized invoice subtotal, post-discount, **ex-GST**;
+  driven by invoice *realization*, not cash collected). Margin guards, date boundaries
+  (`computeRange` closed on both ends, no overlap/gap, zero-padded `YYYY-MM`), zero/empty
+  (no NaN), negative-profit (never clamped), returns/reversal (exact inverse, idempotent),
+  multi-line (repeated part aggregates, independent labour lines don't merge), and demo
+  `salesRollups ↔ ledger ↔ paid-invoice subtotal` reconciliation all verified. The
+  previously-fixed `cost = 0` regression (BUG-LIVE-005) stays closed. One defect:
+  - **PH23-01 (MEDIUM).** An **invoice-level discount** (flat ₹ or %) was folded into the
+    invoice total (`totalsOf`/`invTotals` → `grandTotal`/`profitAmount`, and every Billing
+    report) but **not** into the sales ledger / `salesRollups` / dashboard analytics /
+    Monthly-Profit-Trend, which read per-line revenue. Every discounted paid invoice
+    **overstated analytics Revenue and Profit by the whole discount** (Cost unchanged →
+    Margin overstated), and the operational dashboard disagreed with the Billing screen on
+    the same invoice's profit. Root cause: the E2E-workflow fix that made `invTotals` apply
+    the discount (so `isRealized` stopped skipping the realization engine for discounted
+    invoices) fixed the *gate* but not the *amounts*. Fixed by allocating the discount
+    across the ledger's revenue lines with the **same `afterDisc/sub` ratio** `totalsOf` /
+    `invTotals` already use for GST (Phase 11 §) — applied once in the shared line builder
+    (`invoiceRevenueLines`, plus the exported twin `billingService.revenueLines`), so the
+    ledger, rollups, dashboard, Sales/Services modules and the trend all reconcile to the
+    invoice's own post-discount total. Live-verified in demo mode: a ₹300-discounted
+    ₹1,500-of-lines invoice realised ₹1,200 revenue / ₹1,200 profit (was ₹1,500 / ₹1,500).
+  Gates: `npm test` **144/144** (+1 new `tests/analytics-integrity.test.cjs`, 70
+  assertions — independent ledger oracle), `npm run test:rules` **2/2** (150 + 111, no
+  rules change), lint 0, build ✓. Production: **+28 / −0** across 2 files (~15 comment).
+  No new file / function / abstraction / schema / rules change.
+  Report: `docs/testing/PHASE_23_ANALYTICS_INTEGRITY_REPORT.md`.
 
 ## Scale — before large datasets
 

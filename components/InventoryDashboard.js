@@ -9637,6 +9637,7 @@ export default function InventoryDashboard() {
   };
   const invoiceRevenueLines = (iv) => {
     const map = {};
+    let sub = 0;
     (iv?.lines || []).forEach((l) => {
       if (!(l.desc || '').trim()) return;
       const qty = Number(l.qty) || 0;
@@ -9644,10 +9645,25 @@ export default function InventoryDashboard() {
       if (qty <= 0 && rate <= 0) return;
       const disc = Number(l.disc) || 0;
       const rev = qty * rate * (1 - disc / 100);
+      sub += rev;
       const key = (l.partId && l.kind === 'Part') ? `part:${l.partId}` : `line:${l.id}`;
       const e = map[key] || { qty: 0, revenue: 0, name: l.desc || '', category: lineCategory(l), partId: (l.partId && l.kind === 'Part') ? l.partId : null, kind: l.kind || 'Part', gst: Number(l.gst) || 0, disc, technician: l.technician || l.tech || '', hsn: l.hsn || '' };
       e.qty += qty; e.revenue += rev; map[key] = e;
     });
+    // PHASE 23 (PH23-01) — an invoice-level discount (flat ₹ or %) is money the customer
+    // does NOT pay for these lines. invTotals()/totalsOf() already fold it into `afterDisc`
+    // (and rescale GST by afterDisc/sub — see PHASE 11 §), so `iv.grandTotal` / `profitAmount`
+    // and the Billing reports are net-of-it. The sales ledger / salesRollups / dashboard
+    // analytics / Monthly-Profit-Trend read THESE line revenues, and without the same
+    // rescale they overstated Revenue AND Profit by the whole discount for every discounted
+    // paid invoice (Cost is unchanged, so Margin was overstated too). Same afterDisc/sub
+    // ratio, applied once here so every downstream aggregate reconciles to the invoice's
+    // own post-discount total.
+    const invDisc = iv?.discountType === 'percent' ? sub * (toNum(iv?.discount) / 100) : toNum(iv?.discount);
+    if (invDisc > 0 && sub > 0) {
+      const scale = Math.max(0, sub - invDisc) / sub;
+      Object.values(map).forEach((e) => { e.revenue *= scale; });
+    }
     return map;
   };
   // Legacy alias kept for any external callers (returns part lines only).

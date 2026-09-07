@@ -726,6 +726,40 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
     signed `/verify` (HMAC in the QR) is noted in `ROADMAP.md` as possible future
     hardening.
 
+- **Analytics Revenue / Cost / Gross Profit / Margin reconcile to the authoritative
+  invoices** (PHASE 23 — analytics / source-of-truth reconciliation; one MEDIUM fixed;
+  see `docs/testing/PHASE_23_ANALYTICS_INTEGRITY_REPORT.md`). The chain
+  `invoice → realization gate (status Paid) → sales ledger → salesRollups → dashboard /
+  Reports / Sales analytics` was reconciled at every layer against an independent
+  hand-calculation (never a production analytics helper): a truth table
+  (Rev 3500 / Cost 2000 / Profit 1500 / Margin 42.857%) agrees end-to-end;
+  `salesRollups.profit == revenue − cost` with no drift; returns/reversal are an exact
+  inverse; margin is guarded on every degenerate input; date ranges (`computeRange`) are
+  closed on both ends with no overlap or gap. **PH23-01 (MEDIUM, fixed):** an
+  **invoice-level discount** (flat ₹ or %) was folded into `iv.grandTotal` / `profitAmount`
+  and every Billing report (via `totalsOf` / `invTotals`), but **not** into the sales
+  ledger / `salesRollups` / dashboard analytics / Monthly-Profit-Trend, which read
+  per-line revenue — so every discounted paid invoice overstated analytics **Revenue and
+  Profit by the whole discount** (Cost unchanged → **Margin** overstated), and the
+  operational dashboard disagreed with the Billing screen on the same invoice's profit.
+  Fixed by allocating the discount across the ledger's revenue lines with the same
+  `afterDisc / sub` ratio `totalsOf` / `invTotals` already use for GST (Phase 11 §),
+  applied once in the shared line builder. No `firestore.rules` change.
+  Residual, by design (not defects):
+  - Analytics "Revenue" is **ex-GST** (recognized revenue); the Billing screen's
+    "Revenue (Month)" card is **GST-inclusive** turnover. Internally consistent within
+    each family; the two cards differ by the GST amount, intentionally.
+  - Analytics "Revenue" is driven by invoice **realization** (status Paid), not by cash
+    collected — a partially-paid invoice contributes 0 until its balance clears, then the
+    whole invoice recognises at once. The one cash-based figure ("₹X collected today") is
+    labelled as such.
+  - The rollup month key is the **realised date**, not the invoice date — a back-dated
+    invoice paid today lands in this month's trend. Consistent across the analytics family.
+  - `services/billingService.js`'s `revenueLines` / `ledgerDelta` (the exported, tested
+    twin of the component-scoped `invoiceRevenueLines` / `planInvoiceRealization`) is
+    **not wired into production**; both copies carry the PH23-01 fix and are tested, but
+    finishing the `services/` extraction is a `ROADMAP` "Code health" item.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made
