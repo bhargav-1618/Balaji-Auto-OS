@@ -939,6 +939,37 @@ current release.
     production Firestore writes.
   Report: `docs/testing/PHASE_26_OFFLINE_RECONNECT_INTEGRITY_REPORT.md`.
 
+- ~~**Phase 27 — browser compatibility / viewport / modal integrity.**~~ **DONE — one
+  HIGH found + fixed.** Two-stage. Exercised the shell, modals, tables, charts and
+  navigation across viewport widths, with phone-width full-screen forms as the
+  priority target. **Browsers actually run: Chromium/Chrome 148 desktop (responsive
+  resize 375–1920) + Chrome mobile device emulation (Android UA, touch, 375×667 /
+  375×812).** NOT run: real Android Chrome, real iOS Safari, desktop Firefox, desktop
+  Edge (Edge is engine-equivalent to the Chrome that was run; the others assessed from
+  source only). Shell, tables (`overflow-x:auto` wrappers), charts (SVG `viewBox` +
+  `ResizeObserver`), nav / z-index ladder, keyboard/focus trap: **PASS**. One defect:
+  - **PH27-01 (HIGH).** The mobile (< 768 px) full-screen forms in
+    `InventoryDashboard` — shared `MobileFormPage` (Receive / Adjust / Supplier) plus
+    the `asPage` branches of `CheckoutModal` (Sell) and `PartModal` (Add/Edit Part) —
+    rendered content in a `min-h-screen` block **in normal document flow**, assuming
+    "the BODY scrolls natively". It doesn't: the shell pins
+    `body { position:fixed; overflow:hidden; height:100dvh }` and these branches
+    `return` before `<main id="app-scroll">`, so **nothing scrolls**. Any form taller
+    than the viewport (short phone, keyboard open, long validation text, a banner) had
+    its lower half — including required fields — clipped below the fold with no way to
+    reach it. Confirmed live: **New Part on a 375×667 phone can't be created** — the
+    required *Categories* field is unreachable so "Add Part" stays disabled. Fixed:
+    all three wrappers now use the app's own established full-screen-form pattern
+    (`h-[100dvh] flex flex-col overflow-hidden` + `flex-1 min-h-0 overflow-y-auto` body
+    + `flex-shrink-0` header), identical to the Customers / Vehicles / Billing editors.
+    **+42 / −17**, 1 file, 0 new component/abstraction (`MobileFormPage` fixed once,
+    3 consumers inherit). NEW `tests/browser-viewport-integrity.test.cjs` (36
+    assertions — a pure before/after scroll model, the shipped source patterns,
+    cross-module parity, the render-path/breakpoint split, and no-regression on the
+    app-shell-fixed invariants). Gates: `npm test` **148/148**, `npm run test:rules`
+    **2/2**, lint 0, build ✓. No `firestore.rules` change; 0 production writes.
+  Report: `docs/testing/PHASE_27_BROWSER_VIEWPORT_INTEGRITY_REPORT.md`.
+
 ## Scale — before large datasets
 
 *(Phase 25 measured the current behaviour of these items — all still accurate; see the

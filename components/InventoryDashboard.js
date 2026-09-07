@@ -366,14 +366,26 @@ const SHOP_NAME = 'SRI BABA BALAJI MARUTI CARE';
 // H-5E: useBodyScrollLock/useIsMobile moved to hooks/ (pure React concerns, no
 // business logic) — see hooks/useBodyScrollLock.js, hooks/useIsMobile.js.
 
-// Full-screen mobile page shell: normal document flow (native body scroll), a
-// sticky back header, and children below. Shared by every long form so phones get
-// consistent native scrolling with no modal/viewport math.
+// Full-screen mobile page shell: a viewport-capped flex column — non-shrinking back
+// header, then children in ONE scroll region below. Shared by every long inventory
+// form so phones get consistent, reliable scrolling. (See PH27-01 below for why this
+// can't lean on document scroll the way it originally did.)
 function MobileFormPage({ title, onClose, children }) {
+  // PH27-01 — this used to be `min-h-screen flex flex-col` with {children} in normal
+  // document flow, on the assumption (see the old comments at every asPage call site)
+  // that "the BODY scrolls natively". It does NOT: the app shell pins
+  // `html, body { position: fixed; overflow: hidden; height: 100dvh }` (styles/globals.css)
+  // so the document itself can never be scrolled by touch or wheel — and this page
+  // renders BEFORE <main id="app-scroll">, so there is no shell scroll container either.
+  // Any form taller than the viewport (short phones, on-screen keyboard open, long
+  // validation text, draft/offline banners) had its lower fields — including required
+  // ones — clipped below the fold with no way to reach them. Fix mirrors the
+  // Customers/Vehicles/Billing full-screen editors: cap to the dynamic viewport and
+  // give the content ONE real scroll region.
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--surface-0)' }}>
+    <div className="h-[100dvh] flex flex-col overflow-hidden" style={{ background: 'var(--surface-0)' }}>
       <div
-        className="sticky top-0 z-20 flex items-center gap-2 px-3 py-3"
+        className="flex-shrink-0 flex items-center gap-2 px-3 py-3"
         style={{ background: 'var(--surface-1)', borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}
       >
         <button type="button" onClick={onClose} aria-label="Back" className="w-10 h-10 -ml-1 rounded-full flex items-center justify-center text-white/75 active:bg-white/10 transition">
@@ -381,7 +393,9 @@ function MobileFormPage({ title, onClose, children }) {
         </button>
         <div className="text-base font-bold bg-gradient-to-r from-[#d4af37] to-[#aa801e] bg-clip-text text-transparent">{title}</div>
       </div>
-      {children}
+      <div className="flex-1 min-h-0 overflow-y-auto dark-scroll">
+        {children}
+      </div>
     </div>
   );
 }
@@ -1232,16 +1246,21 @@ function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPage = fal
 
   return (
     <div
-      className={asPage ? 'min-h-screen flex flex-col' : 'fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm'}
+      className={asPage ? 'h-[100dvh] flex flex-col overflow-hidden' : 'fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm'}
       style={{ background: asPage ? 'var(--surface-0)' : 'rgba(0,0,0,0.7)' }}
       onClick={asPage ? undefined : (e) => e.target === e.currentTarget && onClose()}
     >
+      {/* PH27-01 — asPage is a full-screen phone page. The shell pins the document
+          (position:fixed; overflow:hidden) so it can't scroll natively; cap to the
+          dynamic viewport and let the body below own the ONE scroll region, or a tall
+          checkout (offline / below-floor / error banners, or just the keyboard open
+          over the price field) buries "Confirm Sale" off-screen with no way back. */}
       <div
-        className={asPage ? 'w-full flex-1' : 'w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl overflow-hidden backdrop-blur-md'}
+        className={asPage ? 'w-full flex-1 min-h-0 flex flex-col' : 'w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl overflow-hidden backdrop-blur-md'}
         style={asPage ? undefined : { background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }}
       >
         <div
-          className="flex items-center gap-2 px-4 sm:px-5 py-3 sm:py-4 sticky top-0 z-10"
+          className={`flex items-center gap-2 px-4 sm:px-5 py-3 sm:py-4 z-10 ${asPage ? 'flex-shrink-0' : 'sticky top-0'}`}
           style={{ background: asPage ? 'var(--surface-1)' : 'transparent', borderBottom: '1px solid rgba(var(--fg-rgb),0.06)' }}
         >
           {asPage && (
@@ -1263,7 +1282,7 @@ function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPage = fal
           )}
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className={asPage ? 'flex-1 min-h-0 overflow-y-auto dark-scroll p-5 space-y-4' : 'p-5 space-y-4'}>
           {salePending && (
             <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
               <span aria-hidden>⚠️</span>
@@ -3600,10 +3619,14 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
         </form>
   );
 
-  // Mobile: full-screen page in normal document flow — the BODY scrolls natively,
-  // so there is no fixed overlay, no height math, and none of the iOS/Android
-  // modal-scroll problems can occur. The form's own sticky footer (Back/Next/Save)
-  // pins to the viewport bottom via native scroll.
+  // Mobile: full-screen phone page. PH27-01 — this used to render {bodyEl} in normal
+  // document flow ("the BODY scrolls natively"). It does NOT: the app shell pins
+  // `html, body { position: fixed; overflow: hidden; height: 100dvh }`
+  // (styles/globals.css), and this returns BEFORE <main id="app-scroll">, so nothing
+  // scrolls. On a short phone / with the keyboard open the required Category & Vehicle
+  // fields sat below the fold with no way to reach them — Add Part stays disabled and
+  // the part cannot be created. Cap to the dynamic viewport + ONE scroll region; the
+  // form's own `sticky bottom-0` Back/Next/Save bar now pins to that region's bottom.
   // CONCURRENCY PHASE 1c — a viewer holding this popup open while someone else edits
   // gets it READ-ONLY (one disabled <fieldset> switches off every control) with the
   // lease / record-status banner on top, never force-closed.
@@ -3616,9 +3639,9 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
 
   if (asPage) {
     return (
-      <div className="min-h-screen flex flex-col" style={{ background: 'var(--surface-0)' }}>
+      <div className="h-[100dvh] flex flex-col overflow-hidden" style={{ background: 'var(--surface-0)' }}>
         <div
-          className="sticky top-0 z-20 flex items-center gap-2 px-3 py-3"
+          className="flex-shrink-0 flex items-center gap-2 px-3 py-3"
           style={{ background: 'var(--surface-1)', borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}
         >
           <button type="button" onClick={onClose} aria-label="Back" className="w-10 h-10 -ml-1 rounded-full flex items-center justify-center text-white/75 active:bg-white/10 transition">
@@ -3628,7 +3651,9 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
             {readOnly ? 'View Part' : isEdit ? 'Edit Part' : 'Add New Part'}
           </div>
         </div>
-        {bodyEl}
+        <div className="flex-1 min-h-0 overflow-y-auto dark-scroll">
+          {bodyEl}
+        </div>
       </div>
     );
   }

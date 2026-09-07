@@ -941,6 +941,32 @@ have NOT been measured:
 The code is built to pass these (transform/opacity-only animation, reserved image
 dimensions, labelled controls, tiny bundle), but confirming them is a runtime task.
 
+  **Phase 27 — browser / viewport / modal integrity (one HIGH found + fixed; see
+  `docs/testing/PHASE_27_BROWSER_VIEWPORT_INTEGRITY_REPORT.md`).** Exercised the shell,
+  modals, tables, charts and navigation across viewport widths. **Browsers actually
+  run this phase: Chromium/Chrome 148 desktop (responsive resize) + Chrome mobile
+  *device emulation* (Android UA, touch points) at 375×667 and 375×812.** NOT run and
+  NOT claimed as verified: **real Android Chrome, real iOS Safari, desktop Firefox,
+  desktop Edge.** Edge is the same Chromium/Blink engine as the Chrome that was run
+  (treated as equivalent-by-engine); Firefox risks were assessed from source only
+  (scrollbar fallbacks present, `100dvh` supported, no `-webkit-`-only layout).
+  - **PH27-01 (HIGH, fixed).** The mobile (< 768 px) full-screen inventory forms
+    (`MobileFormPage` → Receive / Adjust / Supplier; `CheckoutModal` and `PartModal`
+    `asPage` branches → Sell / Add / Edit Part) rendered content in normal document
+    flow assuming the body scrolls. The app shell pins the body
+    (`position:fixed; overflow:hidden`), so a form taller than the viewport was
+    clipped with no scroll — on a 375×667 phone the required *Categories* field was
+    unreachable and a part could not be created. Fixed by giving each wrapper the
+    same viewport-capped `flex flex-col` + `flex-1 min-h-0 overflow-y-auto` scroll
+    region every other full-screen editor in the app already uses.
+  - **Residual (iOS Safari, NOT re-tested):** iOS `100dvh` excludes the toolbar until
+    the user scrolls, and the on-screen keyboard resizes only `visualViewport`, not
+    the layout viewport. The form's scroll region always works, but the sticky footer
+    of an `asPage` form can still sit behind the iOS keyboard until the user scrolls
+    it into view. The shared `Modal.js` path measures `visualViewport` to avoid this;
+    the `asPage` forms rely on the scroll region. Not a regression — strictly better
+    than before — but not verified on a real iPhone.
+
 ## UI consistency (partial)
 
 The design-system foundation exists (`constants/ui.js`, shared `Badge`, one dropdown
