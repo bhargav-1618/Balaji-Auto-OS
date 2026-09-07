@@ -853,6 +853,22 @@ current release.
     **2/2**, lint 0, build ✓. Production: **+24 / −4** across 2 files (~18 comment; 0
     new fn / file / abstraction / schema / rules change). Report:
     `docs/testing/PHASE_23_DEEP_3_REAUDIT_REPORT.md`.
+- ~~**Phase 23 — authenticated production read-only spot-check.**~~ **ATTEMPTED 2×,
+  BLOCKED — Phase 23 CLOSED at CONDITIONAL PASS.** The final step was to reconcile the
+  four fixes (PH23-01/D1/D2/D3) against real production data. It could not run: the
+  Claude execution environment's network-egress policy prevents loading the production
+  app in any usable browser (Claude-in-Chrome never paired with the Code session;
+  the sandboxed Browser pane blocks the app's ~1.5 MB main bundle with
+  `net::ERR_FAILED` while `curl` gets 200 — confirmed 3 ways — so nothing past
+  `/login` renders), and entering credentials is prohibited. **0 production records
+  read, 0 modified, no mutation, no fabricated numbers.** A full BATCH 1–6 read-only
+  checklist was handed to the user to run in their own authenticated browser (uses the
+  existing `window.__txnCounts()` read-only debug hook + in-app navigation only); if
+  they return that evidence the classification can be lifted to PASS without another
+  audit pass. **DEEP-4 is not recommended** — the defect-class surface is exhausted
+  and a code pass cannot substitute for a production reconciliation. No further
+  analytics code changes without a new concrete defect. Report §"AUTHENTICATED
+  PRODUCTION READ-ONLY SPOT-CHECK".
 
 ## Scale — before large datasets
 

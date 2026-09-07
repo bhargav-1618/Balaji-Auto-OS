@@ -837,6 +837,22 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   negative. Historical `salesCount` values are not retroactively corrected (an
   increment counter, no migration).
 
+  **Phase 23 — authenticated production reconciliation not performed (final,
+  CONDITIONAL PASS).** The analytics audit and its three deep re-audits verified the
+  four fixes (PH23-01/D1/D2/D3) by independent source trace + hand oracle + mutation
+  testing (19/19) + demo-mode live verification, and all four are deployed. The
+  closing step — reconciling the fixes against *real production* invoices / sales /
+  rollups — was attempted twice and **BLOCKED** by the tooling: the Claude execution
+  environment cannot load `balaji-auto-os.vercel.app` in a usable browser (network-
+  egress policy; the sandboxed browser fails the app's ~1.5 MB main bundle while
+  `curl` gets 200; the Chrome extension never paired), and entering credentials is not
+  permitted. No production data was read or changed. Phase 23 therefore closes at
+  **CONDITIONAL PASS** — no known or suspected analytics defect remains open; the only
+  gap is this unrun production spot-check. A BATCH 1–6 read-only checklist (in-app
+  navigation + the `window.__txnCounts()` debug hook) is available for the user to run
+  in their own authenticated session; its evidence can lift this to PASS without
+  reopening the audit.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

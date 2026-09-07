@@ -225,9 +225,15 @@ number → the wrong business decision.
 
 Every invariant is now independently supported by source trace + hand oracle +
 mutation test (19/19) + demo-mode live verification. The single condition on an
-unqualified PASS is an **authenticated-production read-only spot-check**, which the
-tooling does not allow this session. If DEEP-4 is run, it should either find a fifth
-defect or perform that spot-check and close Phase 23 at PASS.
+unqualified PASS is an **authenticated-production read-only spot-check**, which was
+attempted this session and **BLOCKED** by the environment's network-egress policy and
+the absence of any authenticated-production browser surface (see the section below).
+
+**Phase 23 is closed at CONDITIONAL PASS.** DEEP-4 is **not** recommended — the
+defect-class surface is exhausted and another code pass cannot substitute for a
+production reconciliation. No further analytics code changes without a new concrete
+defect. The BATCH 1–6 read-only checklist remains available to the user; running it
+later can lift this to PASS without reopening the audit.
 
 ```
 PHASE 23 DEEP RE-AUDIT (ROUND 3): CONDITIONAL PASS
@@ -258,7 +264,119 @@ COMMIT:                         c88149e
 DEPLOYMENT:                     Vercel HFYOTlreDO_aSWc9UsfyT (/, /login, /verify → 200;
                                deployed bundle carries DEMO_SCHEMA v5 + the salesCount
                                moves, and no longer the v4 schema string)
+                               (docs commit 86ea548 re-triggered a code-identical
+                               rebuild → current prod buildId v2V3tOWTXK-JYT1ggrdmf)
 QA CLEANUP:                     complete
 FINAL CONFIDENCE:              HIGH for the analytics math + semantics; MEDIUM-HIGH overall
                               (pending an authenticated-production spot-check)
+```
+
+---
+
+## AUTHENTICATED PRODUCTION READ-ONLY SPOT-CHECK
+
+**Attempted twice, 2026-09-07 (this session). Result: BLOCKED — an authenticated
+production session could not be established from this environment. 0 production
+records read, 0 modified, no mutation occurred, no authenticated production number
+was fabricated.**
+
+### Authentication result — BLOCKED
+
+Every browser surface available to this session was tried, twice (the second attempt
+after the user reported connecting an authenticated Chrome session):
+
+| Surface | Result |
+|---|---|
+| **Claude in Chrome** (`mcp__claude-in-chrome__*`) — the user's real Chrome with its existing logged-in sessions | **Never paired with this session.** `list_connected_browsers` returned `[]` (and the action tools "not connected") on ~10 attempts across both tries, including after the user opened and signed into the extension side panel. The Chrome extension does not bridge to this Claude Code session. |
+| **In-app Browser pane** (`mcp__Claude_Browser__*`) — sandboxed browser | The app's main bundle **`/_next/static/chunks/pages/index-<hash>.js` (~1.5 MB) fails with `net::ERR_FAILED`** every time — confirmed three ways: the network log, an in-page `fetch()` of the same URL ("Failed to fetch"), and a 100 KB `Range` request of it (also fails) — while small chunks and a shell `curl` of the identical URL both return **200**. The sandbox blocks that specific large resource. The entire authenticated app (Dashboard, Analytics, Billing, Reports, Customers, Vehicles) is served from that one bundle, so **nothing past `/login` can render there** — this is not a login problem, and having the user sign in there would change nothing. Firebase Auth / Firestore XHR would additionally be blocked. |
+| **Logging in myself** | Not permitted — entering credentials to authenticate is a hard safety boundary. |
+
+Root cause, stated plainly: **the Claude execution environment's network-egress policy
+prevents this session from loading `balaji-auto-os.vercel.app` in a usable browser, and
+no browser surface available to the session can provide an authenticated production
+Firestore session.** Per §12 of the brief, the check is reported BLOCKED, not assumed
+to pass.
+
+### A complete read-only checklist was prepared for the user
+
+Because the reconciliation is sound in principle and only the *tooling* is blocked, a
+full **BATCH 1 → BATCH 6** read-only checklist was written and handed to the user to
+run in their own authenticated browser (ledger baseline via the existing
+`window.__txnCounts()` debug hook + `buildId`; 3 specific invoices source→ledger;
+one month's totals; receivables / Outstanding / Draft-Estimate KPIs; Dead Capital /
+Dead Stock / `salesCount`; cross-view Revenue; a before/after `__txnCounts()` mutation
+anchor). If the user returns that evidence, the independent reconciliation can be
+completed and the classification revisited without another audit pass.
+
+### What *was* verified this session (unauthenticated, from the shell — when egress was available)
+
+| Check | Result |
+|---|---|
+| `GET /`, `/login`, `/verify` | **200** (repeatedly over the session) |
+| Current production `buildId` | `v2V3tOWTXK-JYT1ggrdmf` — the rebuild triggered by docs commit `86ea548`, **code-identical to `c88149e`** (the only file differing between the two commits is this report). So the PH23-D3 fix is live. |
+| Deployed bundle content | contains `v5-salescount-from-ledger` and the `salesCount` diff-move; **does not** contain `v4-jobcard-real-statuses`. |
+| `firestore.rules` | unchanged this phase; `npm run test:rules` 2/2 (150 + 111), including anon-read-DENIED coverage. |
+
+### Records inspected / independent calculations / source-ledger-rollup-analytics-dashboard values
+
+**UNAVAILABLE** — every one of these requires reading authenticated production
+Firestore, which was blocked. Nothing was read, so nothing is reported. No numbers
+are fabricated.
+
+- Revenue / Cost / Gross Profit / Margin per invoice — **UNAVAILABLE**
+- Historical-cost production check (PH23-D1) — **UNAVAILABLE — additionally, no
+  naturally-occurring production record with a differing catalogue/snapshot cost was
+  identified, because the catalogue could not be read.**
+- Monthly reconciliation (Revenue / Cost / Profit / Margin vs `salesRollups` vs
+  Analytics vs dashboard trend) — **UNAVAILABLE**
+- Receivables (PH23-D2 — Outstanding / Pending / Total Spent vs invoice statuses,
+  Draft/Estimate not counted as owed) — **UNAVAILABLE**
+- `salesCount` / inventory-KPI divergence (PH23-D3) — **UNAVAILABLE**
+- Cross-view Revenue-definition consistency (Dashboard / Analytics / Sales / Billing /
+  Customer / Vehicle / Reports) — **UNAVAILABLE**
+
+### Confirmation of no production mutation
+
+**Confirmed — trivially.** No authenticated session was ever established, so no
+read or write reached production Firestore. The Browser pane only ever loaded the
+public shell and the `/login` form. `git status` clean apart from documentation.
+`CODE CHANGES: 0`.
+
+### Classification impact — this is the FINAL Phase 23 determination
+
+Phase 23 is closed at **CONDITIONAL PASS**, confidence **MEDIUM-HIGH**. The analytics
+math and semantics are fully verified by source trace + hand oracle + mutation testing
+(19/19) + demo-mode live verification across every KPI family; **the sole open item is
+that the four fixes have not been reconciled against authenticated production data, and
+that is blocked by the environment's network-egress policy / browser tooling — not by
+any known or suspected analytics defect.**
+
+- **DEEP-4 is explicitly NOT recommended** to compensate for the blocked spot-check —
+  four adversarial passes have exhausted the "source → intermediate transform → wrong
+  meaning" surface at diminishing returns, and another code pass would not substitute
+  for a production reconciliation.
+- **No further analytics code changes** unless a new concrete defect is found.
+- The authenticated production reconciliation remains available to the user as the
+  BATCH 1–6 read-only checklist; running it later can upgrade this to PASS without
+  reopening the audit.
+
+```
+AUTHENTICATED PRODUCTION CHECK:   BLOCKED (environment network-egress policy; no authenticated
+                                  production Firestore session obtainable this session)
+RECORDS READ:                     0
+RECORDS MODIFIED:                  0
+REVENUE:                          UNAVAILABLE
+COST:                             UNAVAILABLE
+GROSS PROFIT:                     UNAVAILABLE
+MARGIN:                           UNAVAILABLE
+HISTORICAL COST:                  UNAVAILABLE
+MONTHLY TOTALS:                   UNAVAILABLE
+RECEIVABLES:                      UNAVAILABLE
+SALE COUNT / INVENTORY KPI:       UNAVAILABLE
+CROSS-VIEW:                       UNAVAILABLE
+PRODUCTION MUTATIONS:             0
+FABRICATED PRODUCTION NUMBERS:    0
+NEW DEFECTS:                      0
+CODE CHANGES:                     0
+FINAL PHASE 23 STATUS:            CONDITIONAL PASS  (confidence MEDIUM-HIGH; Phase 23 closed)
 ```
