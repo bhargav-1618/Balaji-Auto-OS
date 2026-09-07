@@ -888,9 +888,11 @@ current release.
   assertions, independent oracles, 12 guard tripwires). Live-verified in demo mode
   (Dashboard/Analytics/Billing/Customers/Vehicles at scale + 2 filter→zero drills +
   the "1 visit" fix on page 4/14). Gates: `npm test` **145/145**, `npm run test:rules`
-  **2/2**, lint 0, build ✓. No `firestore.rules` change. INFO (not fixed): `RSpark`/
-  `RDonut`/`RBars` are dead code; a `{n} parts`/`{n} items` label cluster in Suppliers
-  doesn't singularise at 1. Report: `docs/testing/PHASE_24_EMPTY_STATE_INTEGRITY_REPORT.md`.
+  **2/2**, lint 0, build ✓. No `firestore.rules` change. Follow-up: `RSpark`/`RDonut`/
+  `RBars` dead-duplicate chart components **deleted** (`refactor(dashboard): remove
+  dead chart components …`). INFO (not fixed): a `{n} parts`/`{n} items` label cluster
+  in Suppliers doesn't singularise at 1.
+  Report: `docs/testing/PHASE_24_EMPTY_STATE_INTEGRITY_REPORT.md`.
 
 ## Scale — before large datasets
 

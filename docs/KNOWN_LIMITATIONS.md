@@ -863,11 +863,10 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   empty-state surface (pagination clamps, KPI divide-by-zero guards, chart floors,
   `SearchSelect` dependency-empty states, filter→zero) was swept at 0/1/2/many and is
   clean — no `NaN` / `Infinity` / `undefined` reaches any KPI or chart, no view crashes
-  or strands a workflow at zero records. Residual INFO (not defects): `RSpark` /
-  `RDonut` / `RBars` in `InventoryDashboard.js` are dead code (safe, delete
-  recommended); a `{n} parts` / `{n} PO` / `{n} items` label cluster in Supplier
-  Directory / Performance / brand chips does not singularise at n=1 (terse metadata,
-  cosmetic); the empty analytics XLSX export produces header-less blank sheets;
+  or strands a workflow at zero records. Residual INFO (not defects): a `{n} parts` /
+  `{n} PO` / `{n} items` label cluster in Supplier Directory / Performance / brand
+  chips does not singularise at n=1 (terse metadata, cosmetic); the empty analytics
+  XLSX export produces header-less blank sheets;
   list search/status filters do not rescope the workshop-wide KPI cards (by design —
   verified no stale values result).
 

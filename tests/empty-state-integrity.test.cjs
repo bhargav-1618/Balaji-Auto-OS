@@ -310,19 +310,18 @@ ok('RevenueTrend is only ever fed stats.trend, which is a fixed 14-iteration loo
 ok('RevenueTrend formula WOULD produce "NaN" at 1 point / be empty at 0 (latent, unreached)',
   revenueTrendPath([{ rev: 5 }]).includes('NaN') && revenueTrendPath([]).trim() === '');
 
-// -- 6b. RSpark / RDonut / RBars — keep their guards. (These are currently
-// DEAD CODE — defined in InventoryDashboard.js, rendered nowhere — so they cannot
-// crash a live view; the guards are asserted so a future re-wire stays safe.)
+// -- 6b. Reports charts. RptBars / RptDonut (the LIVE Reports-view charts) keep
+// their empty guards. The old module-level RSpark / RDonut / RBars were dead
+// duplicates of these and were deleted in the Phase 24 cleanup — assert they stay
+// gone so they can't silently return unguarded.
 {
   const inv = read('../components/InventoryDashboard.js');
-  ok('RSpark keeps the `data.length < 2` guard before indexing pts[-1]',
-    /function RSpark\([^]*?if \(data\.length < 2\) return/.test(inv));
-  ok('RDonut keeps the `total <= 0` guard before dividing by total',
-    /function RDonut\([^]*?if \(total <= 0\) return/.test(inv));
-  ok('RBars keeps the `!rows.length` guard',
-    /function RBars\([^]*?if \(!rows\.length\) return/.test(inv));
-  ok('RSpark / RDonut / RBars are currently unreferenced (dead code — INFO)',
-    !/<RSpark|<RDonut|<RBars/.test(inv));
+  ok('RptBars (live Reports chart) keeps the `!data.length` empty guard + Math.max(1,…) floor',
+    /const RptBars = \(\{ data \}\) => \{[^]*?Math\.max\(1, \.\.\.data\.map[^]*?if \(!data\.length\) return/.test(inv));
+  ok('RptDonut (live Reports chart) keeps the `!total` empty guard before dividing',
+    /const RptDonut = \(\{ data \}\) => \{[^]*?if \(!total\) return/.test(inv));
+  ok('dead RSpark / RDonut / RBars are GONE (no `function RSpark|RDonut|RBars` definition)',
+    !/function R(Spark|Donut|Bars)\b/.test(inv));
 }
 
 // -- 6c. Monthly Profit Trend (Analytics) — empty guard + maxBar floor

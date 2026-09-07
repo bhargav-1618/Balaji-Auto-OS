@@ -7159,44 +7159,9 @@ function ReportTable({ head, rows, exportName, exportHead, q, csv, demoMode, dem
   );
 }
 
-function RSpark({ data, height = 110, color = '#d4af37' }) {
-  const max = Math.max(1, ...data.map((d) => d.v));
-  const W = 520, H = height, pad = 4;
-  if (data.length < 2) return <div className="text-xs text-white/45 py-8 text-center">Not enough data yet.</div>;
-  const pts = data.map((d, i) => [pad + (i / (data.length - 1)) * (W - 2 * pad), H - pad - (d.v / max) * (H - 2 * pad)]);
-  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
-  const area = `${path} L${pts[pts.length - 1][0].toFixed(1)},${H - pad} L${pts[0][0].toFixed(1)},${H - pad} Z`;
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height }} preserveAspectRatio="none">
-      <defs><linearGradient id={`rg${color.slice(1)}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.32" /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient></defs>
-      <path d={area} fill={`url(#rg${color.slice(1)})`} /><path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
-      {pts.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="1.7" fill={color} />)}
-    </svg>
-  );
-}
-function RDonut({ segments }) {
-  const total = segments.reduce((s, x) => s + x.value, 0);
-  let acc = 0; const R = 52, C = 60, sw = 16, circ = 2 * Math.PI * R;
-  if (total <= 0) return <div className="text-xs text-white/45 py-8 text-center w-full">No data yet.</div>;
-  return (
-    <div className="flex items-center gap-4">
-      <svg viewBox="0 0 120 120" width="116" height="116" className="flex-shrink-0">
-        <circle cx={C} cy={C} r={R} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={sw} />
-        {segments.map((s, i) => { const frac = s.value / total; const dash = frac * circ; const el = <circle key={i} cx={C} cy={C} r={R} fill="none" stroke={s.color} strokeWidth={sw} strokeDasharray={`${dash} ${circ - dash}`} strokeDashoffset={-acc * circ} transform={`rotate(-90 ${C} ${C})`} />; acc += frac; return el; })}
-      </svg>
-      <div className="space-y-1 min-w-0 flex-1">{segments.map((s) => <div key={s.label} className="flex items-center justify-between gap-2 text-[11px]"><span className="flex items-center gap-1.5 min-w-0"><span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.color }} /><span className="text-white/60 truncate">{s.label}</span></span><span className="text-white/45">{Math.round((s.value / total) * 100)}%</span></div>)}</div>
-    </div>
-  );
-}
-function RBars({ rows }) {
-  const max = Math.max(1, ...rows.map((r) => r.v));
-  if (!rows.length) return <div className="text-xs text-white/45 py-6 text-center">No data yet.</div>;
-  return <div className="space-y-2">{rows.map((r, i) => (
-    <div key={r.label}><div className="flex justify-between text-[11px] mb-1"><span className="text-white/60 truncate pr-2">{r.label}</span><span className="text-white/75">{r.display}</span></div>
-    <div className="h-2 rounded-full bg-white/5 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${(r.v / max) * 100}%`, background: RPT_COLORS[i % RPT_COLORS.length] }} /></div></div>
-  ))}</div>;
-}
-
+// Reports-view charts live INSIDE ReportsView as `RptBars` / `RptDonut` (below).
+// Earlier module-level copies (`RSpark` / `RDonut` / `RBars`) were dead duplicates
+// and have been removed — don't re-add a second, unwired set here.
 function RptCard({ title, right, children, className = '' }) {
   return (
     <div className={`rounded-2xl p-4 ${className}`} style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' }}>

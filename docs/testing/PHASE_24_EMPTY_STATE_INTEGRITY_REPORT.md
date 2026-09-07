@@ -42,10 +42,12 @@ oracles + live demo-mode validation across 6 modules. No production data touched
 | Inventory | `InventoryDashboard.js` (Parts) + `inventory/*` | shared `<Pagination>` | health, reorder | — |
 | Suppliers | `inventory/SupplierDirectory.jsx`, `SupplierPerformance.jsx`, `SupplierPOBuilder.jsx` | shared `<Pagination>` | perf scores, `avg` helpers | part / supplier pickers |
 | Analytics | `AnalyticsView` (`InventoryDashboard.js`) | inline "N of M" | Locked/Expected/Dead Capital, Monthly Profit Trend, Top Parts, Fast Movers, Dead Stock, Revenue Mix, Vehicle Analytics, Restock Cost | filter bar (category / brand) |
-| Reports | `ReportsView` (`InventoryDashboard.js`) | inline | overview KPI row, `RSpark`\* | — |
+| Reports | `ReportsView` (`InventoryDashboard.js`) | inline | overview KPI row, `RptBars` / `RptDonut` | — |
 | Alerts | `computeAlerts` + Alert Center | — | alert list | — |
 
-\* `RSpark` / `RDonut` / `RBars` are **defined but rendered nowhere** — dead code (INFO-A).
+The audit also found `RSpark` / `RDonut` / `RBars` — module-level dead duplicates of
+`RptDonut` / `RptBars` — defined but rendered nowhere (INFO-A). **Deleted in the
+follow-up commit** `refactor(dashboard): remove dead chart components RSpark/RDonut/RBars`.
 
 **Shared infrastructure reused (no duplication added):** `components/inventory/Pagination.jsx`,
 `components/common/SearchSelect.jsx`, `services/analyticsService.js` guards,
@@ -79,7 +81,7 @@ oracles + live demo-mode validation across 6 modules. No production data touched
 | `computeVehicleStats` — 1 vehicle, 1 completed visit | `total 1`, `avgVisits "1.0"`, `repeat 0` (needs `> 1`) | PASS |
 | `trendPct(x, 0)` (only-this-period data) | `x > 0 ? 100 : 0` — **never `Infinity`** | PASS |
 | `computeMonthlyTrend` — 1 month | `growth` is `null` (needs `prev`), `best === worst === series[0]`, `avg` finite | PASS |
-| Chart with 1 point (`RSpark`) | `if (data.length < 2) return "Not enough data yet."` — guarded **before** `pts[-1]` | PASS |
+| Chart with 1 point (`RptBars` live Reports chart) | `if (!data.length) return "No data available."` + `Math.max(1, …)` floor | PASS |
 | **Singular / plural at 1** | `VehiclesModule` "**1 visits**" · `CustomersModule` "**1 bills**" | **PH24-01 / PH24-02 — FIXED** |
 | `pluralize('x', 1) === 'x'` (existing helper) | correct | PASS |
 | Customers card "1 vehicle" (existing `=== 1 ? …`) | correct — the two fixes match this idiom | PASS |
@@ -187,7 +189,8 @@ regressed them. **All KPIs finite and zero-correct at every cardinality.**
 | Monthly Profit Trend (Analytics) | explicit `series.length === 0` empty card | 1 bar | N bars | `maxBar = Math.max(1, …)`, `margin` guarded, `growth` guards `null` + `prev.profit !== 0` |
 | `Donut` (Billing) | empty ring | — | — | `frac = total > 0 ? s.value/total : 0` |
 | `Donut` (InventoryOverview) | empty ring | — | — | `total = reduce(…, 0) || 1` |
-| `RSpark` / `RDonut` / `RBars` | "Not enough data" / "No data yet" | guarded | — | `data.length < 2` / `total <= 0` / `!rows.length` — **but dead code (INFO-A)** |
+| `RptBars` / `RptDonut` (live Reports charts) | "No data available." | guarded | — | `!data.length` / `!total` + `Math.max(1, …)` floor |
+| ~~`RSpark` / `RDonut` / `RBars`~~ | — | — | — | dead duplicates — **deleted** (INFO-A, follow-up commit) |
 
 No chart indexes `data[0]` / `data[len-1]` / assumes `≥ 2` points without a guard **on a
 reachable path**. PASS.
@@ -389,9 +392,13 @@ all **reused as-is**; no parallel empty-state wrapper was created.
 
 ## 31. Remaining limitations
 
-- **INFO-A — dead chart code.** `RSpark` / `RDonut` / `RBars` (`InventoryDashboard.js`
-  ~7162–7196) are defined and referenced nowhere. Their guards are sound; they cannot crash.
-  Recommend deletion (flagged as a background task).
+- **INFO-A — dead chart code. RESOLVED.** `RSpark` / `RDonut` / `RBars`
+  (`InventoryDashboard.js` ~7162–7198) were module-level dead duplicates of the inner
+  `RptDonut` / `RptBars` used by `ReportsView` — defined and referenced nowhere.
+  **Deleted** in the follow-up commit `refactor(dashboard): remove dead chart
+  components RSpark/RDonut/RBars` (−37 lines, no behaviour change); `empty-state-
+  integrity.test.cjs` §6b now asserts they stay gone and that the live `RptBars` /
+  `RptDonut` keep their empty guards.
 - **INFO-B — `RevenueTrend` latent edge.** No `data.length < 2` guard, but it is structurally
   only ever fed the fixed 14-entry `stats.trend`. Would `NaN` at 1 point / be empty at 0
   points if reused with variable-length data. Add a guard **if** it's ever reused elsewhere.
@@ -473,7 +480,7 @@ DEPLOYMENT:                   Vercel sDKcmP6RDAMMexy46jJK_  (/, /login, /verify 
                               at demo Vehicles page 4/14 before push)
 
 REMAINING LIMITATIONS:
-  - INFO-A: RSpark / RDonut / RBars are dead code (safe; delete recommended)
+  - INFO-A: RSpark / RDonut / RBars dead code — RESOLVED (deleted in follow-up commit)
   - INFO-B: RevenueTrend has no <2-point guard but is only ever fed a fixed 14-point array
   - INFO-C: {n} parts / {n} PO / {n} items labels (Suppliers) don't singularise at n=1 — cosmetic, not fixed
   - INFO-D: empty analytics XLSX export → header-less blank sheets (acceptable)
