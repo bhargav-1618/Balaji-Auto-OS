@@ -9646,9 +9646,26 @@ export default function InventoryDashboard() {
       const disc = Number(l.disc) || 0;
       const rev = qty * rate * (1 - disc / 100);
       sub += rev;
-      const key = (l.partId && l.kind === 'Part') ? `part:${l.partId}` : `line:${l.id}`;
-      const e = map[key] || { qty: 0, revenue: 0, name: l.desc || '', category: lineCategory(l), partId: (l.partId && l.kind === 'Part') ? l.partId : null, kind: l.kind || 'Part', gst: Number(l.gst) || 0, disc, technician: l.technician || l.tech || '', hsn: l.hsn || '' };
-      e.qty += qty; e.revenue += rev; map[key] = e;
+      const isPartLine = l.partId && l.kind === 'Part';
+      // PH23-D1 — COGS from the line's OWN `purchasePrice` snapshot (captured at billing
+      // time by BillingModule.partLineData — "the inventory price itself is never
+      // mutated"), NOT the live catalogue. totalsOf()/iv.profitAmount and
+      // billingService.revenueLines already use this snapshot; the ledger diff loops
+      // below re-read inventory.find(...).purchasePrice, so an invoice drafted before a
+      // part-cost change and paid after it recorded a DIFFERENT profit in the sales
+      // ledger / salesRollups / analytics than on its own invoice. Catalogue is the
+      // fallback only for a legacy line that carries no snapshot.
+      const unitCost = isPartLine
+        ? (l.purchasePrice != null && l.purchasePrice !== ''
+          ? Number(l.purchasePrice) || 0
+          : (inventory.find((p) => p.id === l.partId)?.purchasePrice || 0))
+        : 0;
+      const key = isPartLine ? `part:${l.partId}` : `line:${l.id}`;
+      // PH23-D1 — `listPrice` is likewise the catalogue price snapshotted on the line at
+      // billing time; carry it so the "Extra Charged" indicator reflects what the part
+      // was actually listed at when billed, not today's catalogue.
+      const e = map[key] || { qty: 0, revenue: 0, cost: 0, listPrice: (l.listPrice != null && l.listPrice !== '') ? Number(l.listPrice) || 0 : 0, name: l.desc || '', category: lineCategory(l), partId: isPartLine ? l.partId : null, kind: l.kind || 'Part', gst: Number(l.gst) || 0, disc, technician: l.technician || l.tech || '', hsn: l.hsn || '' };
+      e.qty += qty; e.revenue += rev; e.cost += qty * unitCost; map[key] = e;
     });
     // PHASE 23 (PH23-01) — an invoice-level discount (flat ₹ or %) is money the customer
     // does NOT pay for these lines. invTotals()/totalsOf() already fold it into `afterDisc`
@@ -9695,16 +9712,19 @@ export default function InventoryDashboard() {
     const payModes = (ctx.payments || []).map((p) => p.mode).filter(Boolean).join(', ') || ctx.payMode || '';
     const src = next?.invNo || prior?.invNo || '';
     keys.forEach((key) => {
-      const b = before[key] || { qty: 0, revenue: 0 };
-      const a = after[key] || { qty: 0, revenue: 0, name: '', category: 'Miscellaneous', partId: null, kind: 'Part', gst: 0, disc: 0, technician: '' };
+      const b = before[key] || { qty: 0, revenue: 0, cost: 0 };
+      const a = after[key] || { qty: 0, revenue: 0, cost: 0, name: '', category: 'Miscellaneous', partId: null, kind: 'Part', gst: 0, disc: 0, technician: '' };
       const dQty = a.qty - b.qty;
       const dRev = a.revenue - b.revenue;
       if (dQty === 0 && Math.abs(dRev) < 0.005) return;
       const meta = after[key] || before[key];
       const isPart = !!meta.partId;
       const part = isPart ? inventory.find((p) => p.id === meta.partId) : null;
-      const unitCost = isPart ? (part?.purchasePrice || 0) : 0; // services/labour have no COGS
-      const dCost = dQty * unitCost;
+      // PH23-D1 — COGS diffs the line's OWN cost snapshot (carried by invoiceRevenueLines),
+      // symmetric with the revenue diff; re-reading the live catalogue here mis-priced any
+      // invoice drafted before and paid after a part-cost change.
+      const dCost = (a.cost || 0) - (b.cost || 0);
+      const unitCost = dQty !== 0 ? dCost / dQty : (isPart ? (part?.purchasePrice || 0) : 0);
       // Catalogue (list) price captured on the invoice line at pick-time. Lets the
       // Sales module report "catalogue Rs.690 -> sold Rs.790 -> extra Rs.100" instead
       // of silently hiding that the part was billed above/below its listed price.
@@ -9999,16 +10019,20 @@ export default function InventoryDashboard() {
     const payModes = (ctx.payments || []).map((p) => p.mode).filter(Boolean).join(', ') || ctx.payMode || '';
     const src = next?.invNo || prior?.invNo || '';
     keys.forEach((key) => {
-      const b = before[key] || { qty: 0, revenue: 0 };
-      const a = after[key] || { qty: 0, revenue: 0, name: '', category: 'Miscellaneous', partId: null, kind: 'Part', gst: 0, disc: 0, technician: '' };
+      const b = before[key] || { qty: 0, revenue: 0, cost: 0 };
+      const a = after[key] || { qty: 0, revenue: 0, cost: 0, name: '', category: 'Miscellaneous', partId: null, kind: 'Part', gst: 0, disc: 0, technician: '' };
       const dQty = a.qty - b.qty;
       const dRev = a.revenue - b.revenue;
       if (dQty === 0 && Math.abs(dRev) < 0.005) return;
       const meta = after[key] || before[key];
       const isPart = !!meta.partId;
       const part = isPart ? inventory.find((p) => p.id === meta.partId) : null;
-      const unitCost = isPart ? (part?.purchasePrice || 0) : 0;
-      const dCost = dQty * unitCost;
+      // PH23-D1 — COGS diffs the line's OWN cost snapshot (carried by invoiceRevenueLines),
+      // symmetric with the revenue diff; re-reading the live catalogue here mis-priced any
+      // invoice drafted before and paid after a part-cost change (and disagreed with
+      // totalsOf()/iv.profitAmount, which use the same snapshot).
+      const dCost = (a.cost || 0) - (b.cost || 0);
+      const unitCost = dQty !== 0 ? dCost / dQty : (isPart ? (part?.purchasePrice || 0) : 0);
       const listPrice = toNum(meta.listPrice) || (isPart ? toNum(part?.defaultSellingPrice || part?.sellingPrice) : 0);
       const soldUnit = dQty !== 0 ? dRev / dQty : 0;
       const extraRevenue = (isPart && listPrice > 0) ? (soldUnit - listPrice) * dQty : 0;

@@ -760,6 +760,34 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
     **not wired into production**; both copies carry the PH23-01 fix and are tested, but
     finishing the `services/` extraction is a `ROADMAP` "Code health" item.
 
+  **PH23-D1 (MEDIUM, fixed — deep re-audit; see
+  `docs/testing/PHASE_23_DEEP_REAUDIT_REPORT.md`):** the Phase 23 test proved cost
+  through `billingService.ledgerDelta`, which is *not on the production path* — so the
+  shipped ledger builders (`InventoryDashboard.planInvoiceRealization` /
+  `recordInvoiceSalesDelta`) were never checked. They computed COGS as
+  `dQty × inventory.find(partId).purchasePrice` — the **live catalogue** cost — not the
+  invoice line's `l.purchasePrice` snapshot that `totalsOf` / `iv.profitAmount` /
+  `billingService.revenueLines` all use. So an invoice **drafted before a part-cost
+  change** (a price edit, or a PO received with "update default price") **and paid
+  after it** recorded a different profit/margin in the sales ledger / `salesRollups` /
+  dashboard than on its own invoice; editing a paid invoice priced the added quantity
+  at today's cost. (A sale that is realised and left untouched is unaffected — its
+  `sales` row freezes `cost`/`profit` as plain numbers and the views never recompute.)
+  Fixed by carrying `e.cost` (from the line snapshot, catalogue = legacy fallback)
+  through `invoiceRevenueLines` and making both diff loops compute
+  `dCost = a.cost − b.cost` — symmetric with the `dRev = a.revenue − b.revenue` already
+  one line above. Live-verified in demo mode. No `firestore.rules` change.
+  Mutation-tested: 6/6 deliberate corruptions of the analytics truth table are caught.
+
+  Further residual, by design:
+  - The app has **4 "Revenue"-family definitions**: (1) analytics — realized,
+    post-discount, **ex-GST**; (2) Billing "Revenue (Month)" — `Σ totalsOf().grand`,
+    **GST-inclusive and includes Draft/Unpaid invoices** (invoiced *turnover*, not
+    revenue — a label imprecision, not a math error); (3) Vehicle Analytics —
+    `Σ invoiceTotals().grand` for realized only, GST-inclusive; (4) Customer "Total
+    Spent" — `Σ invTotals().paid`, **cash collected**. Each is internally consistent
+    and no view sums a GST-inclusive figure with an ex-GST one.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

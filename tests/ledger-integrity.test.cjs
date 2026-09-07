@@ -108,7 +108,9 @@ function oracleLedgerKeys(lines) {
 {
   const fn = slice(dash, 'const invoiceRevenueLines = (iv) => {', 'const invoicePartSales = (iv) => {');
   ok('invoiceRevenueLines keys a Part line by partId (merges repeats of the same part into one ledger row)',
-    /const key = \(l\.partId && l\.kind === 'Part'\) \? `part:\$\{l\.partId\}`/.test(fn));
+    // PH23-D1 factored the `l.partId && l.kind === 'Part'` test into `isPartLine`.
+    /const isPartLine = l\.partId && l\.kind === 'Part';/.test(fn)
+    && /const key = isPartLine \? `part:\$\{l\.partId\}`/.test(fn));
   ok('invoiceRevenueLines keys every other line by its own line id (never merges distinct labour/service lines)',
     /: `line:\$\{l\.id\}`;/.test(fn));
   ok('invoiceRevenueLines skips a blank-description line entirely (no ledger row for an empty row)',

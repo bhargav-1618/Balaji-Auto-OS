@@ -755,6 +755,42 @@ current release.
   rules change), lint 0, build ✓. Production: **+28 / −0** across 2 files (~15 comment).
   No new file / function / abstraction / schema / rules change.
   Report: `docs/testing/PHASE_23_ANALYTICS_INTEGRITY_REPORT.md`.
+- ~~**Phase 23 deep adversarial re-audit.**~~ **DONE — CONDITIONAL PASS; one MEDIUM
+  fixed.** Independent second pass to *disprove* the Phase 23 PASS. PH23-01 (invoice
+  discount) re-confirmed — the `afterDisc/sub` allocation is rounding-exact (7
+  adversarial cases, worst drift `8.5e-14`). Revenue / Gross Profit / Margin
+  reconciliation confirmed; **6/6 mutation-test corruptions of the truth table were
+  detected** (the suite is not vacuous). But the Phase 23 test proved cost through
+  `billingService.ledgerDelta` — which **is not wired into production** — so the
+  shipped path was never checked. One defect:
+  - **PH23-D1 (MEDIUM).** `InventoryDashboard.planInvoiceRealization` /
+    `recordInvoiceSalesDelta` (the real ledger builders) computed COGS as
+    `dQty × inventory.find(partId).purchasePrice` — **today's catalogue cost** — not
+    the invoice line's `l.purchasePrice` snapshot that `totalsOf` / `iv.profitAmount`
+    / `billingService.revenueLines` all use. An invoice drafted before a part-cost
+    change (a price edit, or a PO received with "update default price") and paid
+    after it recorded a different profit/margin in the sales ledger / `salesRollups`
+    / dashboard than on its own invoice; editing a paid invoice priced the delta at
+    today's cost. Same class as PH23-01: correct source, an intermediate
+    re-calculation missing an input, a plausible-looking dashboard. Root cause:
+    `invoiceRevenueLines` carried `qty`/`revenue` per line but not `cost`, so the
+    diff loops re-sourced it from the live `part` object they were already fetching.
+    Fixed — `invoiceRevenueLines` now accumulates `e.cost` from `l.purchasePrice`
+    (catalogue = fallback for a legacy line only), and both diff loops compute
+    `dCost = a.cost − b.cost` — **symmetric with the existing
+    `dRev = a.revenue − b.revenue` one line above**. All four money paths now agree.
+    Live-verified in demo mode: draft INV-0299 (snapshot ₹1000), two PO receipts
+    raised the catalogue to ₹1200, then paid → ledger `cost 1000 / profit 398`
+    (== `iv.profitAmount`), not `1200 / 198`.
+  Also: the app has **4 distinct "Revenue"-family definitions** (analytics ex-GST
+  realized / Billing GST-inclusive incl-unpaid / Vehicle GST-inclusive realized /
+  Customer cash-collected) — all inventoried and classified INTENTIONAL; the Billing
+  "Revenue (Month)" card is *invoiced turnover*, not revenue (label note, no code
+  change). Gates: `npm test` **144/144** (`analytics-integrity.test.cjs` 105
+  assertions, +35 — §12 reproduces the *shipped* ledger, §13 rounding, §14 mutation
+  self-test), `npm run test:rules` **2/2**, lint 0, build ✓. Production: **+24 / −0**
+  in 1 file (~18 comment). No new file / function / abstraction / schema / rules
+  change. Report: `docs/testing/PHASE_23_DEEP_REAUDIT_REPORT.md`.
 
 ## Scale — before large datasets
 

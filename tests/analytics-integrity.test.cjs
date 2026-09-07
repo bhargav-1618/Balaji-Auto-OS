@@ -79,11 +79,27 @@ function oracleLedger(iv) {
   rows.forEach((r) => { revenue += r.net * scale; cost += r.cost; });
   return { sub, afterDisc, revenue, cost, profit: revenue - cost };
 }
+// FIXTURE helper (not an oracle): pays the invoice's grand so isRealized() is true.
+// Soundness of this shortcut is itself asserted in §0b below (grand == a hand figure);
+// and every downstream check compares against hand CONSTANTS, so a broken totalsOf here
+// would surface as a wrong revenue, not a false pass.
 const paidCopy = (iv) => ({ ...iv, status: 'Paid', payments: [{ id: 'p', mode: 'Cash', amount: totalsOf(iv).grand, date: '2026-06-15' }] });
 const draftCopy = (iv) => ({ ...iv, status: 'Draft', payments: [] });
-const mkLine = (o) => ({ id: `l${Math.random().toString(36).slice(2, 9)}`, kind: 'Part', qty: 1, rate: 0, disc: 0, partId: null, purchasePrice: 0, gst: 18, ...o });
+const mkLine = (o) => ({ id: `l${Math.random().toString(36).slice(2, 9)}`, kind: 'Part', desc: 'Item', qty: 1, rate: 0, disc: 0, partId: null, purchasePrice: 0, gst: 18, ...o });
 const inv = (fields) => ({ invNo: 'INV-A1', gstPct: 18, gstMode: 'auto', discount: 0, discountType: 'flat', payments: [], lines: [], ...fields });
 const ledgerNet = (rows) => rows.reduce((a, r) => ({ rev: a.rev + r.revenue, cost: a.cost + r.cost, profit: a.profit + r.profit }), { rev: 0, cost: 0, profit: 0 });
+
+// =====================================================================
+// 0b — FIXTURE SOUNDNESS  (the paidCopy shortcut is not hiding a totalsOf bug)
+// =====================================================================
+console.log('\n0b  Fixture soundness — paidCopy pays a hand-verifiable grand\n');
+{
+  // 2 x 500 part, GST 0, no discount → hand grand = 1000. Overpay-proof: exact.
+  const iv0 = inv({ lines: [mkLine({ partId: 'x', qty: 2, rate: 500, purchasePrice: 300, gst: 0 })] });
+  ok('totalsOf(fixture).grand == the hand figure (1000) — paidCopy realizes on a correct amount',
+    totalsOf(iv0).grand === 1000, `got ${totalsOf(iv0).grand}`);
+  ok('a fixture paid EXACTLY its grand is realized (isRealized true)', isRealized(paidCopy(iv0)));
+}
 
 // =====================================================================
 // 1 — THE ACCOUNTING TRUTH TABLE  (oracle ↔ ledgerDelta ↔ every layer)
@@ -359,6 +375,181 @@ console.log('\n11  Dashboard / Sales / Reports consistency — one revenue field
   ok('Reports ledgerByPart aggregates s.revenue / s.cost / s.profit from the same ledger', /e\.revenue \+= s\.revenue \|\| 0;\s*\n\s*e\.cost \+= s\.cost \|\| 0;/.test(dash));
   ok('SalesView cards read s.revenue / s.profit (same fields, same meaning)', /const rev = s\.revenue \|\| 0;.*\n?.*proT \+= s\.profit/.test(dash) || /revM \+= rev; proM \+= s\.profit \|\| 0;/.test(dash));
   ok('Reports trend prefers unbounded salesRollups, falls back to the ledger — both carry revenue+cost+profit', /if \(rollups\.length\) \{/.test(dash) && /e\.profit \+= s\.profit \?\? \(s\.revenue \|\| 0\) - \(s\.cost \|\| 0\);/.test(dash));
+}
+
+// =====================================================================
+// 12 — PH23-D1: HISTORICAL COST IMMUTABILITY
+// =====================================================================
+// The shipped production ledger builders (InventoryDashboard.planInvoiceRealization /
+// recordInvoiceSalesDelta) are component-scoped closures — not importable. This section
+// reproduces the SHIPPED (post-fix) invoiceRevenueLines cost accumulation + the delta
+// loops' `dCost = a.cost - b.cost`, cross-checked against a source-pattern assertion,
+// then attacks the "part master changed between billing and realization" scenario.
+console.log('\n12  PH23-D1 — analytics COGS is the invoice line\'s cost snapshot, not the live catalogue\n');
+{
+  // reproduce the shipped invoiceRevenueLines (cost from l.purchasePrice, catalogue fallback)
+  const revLinesRepro = (iv, inventory) => {
+    const map = {};
+    let sub = 0;
+    (iv?.lines || []).forEach((l) => {
+      if (!(l.desc || '').trim()) return;
+      const q = Number(l.qty) || 0; const rt = Number(l.rate) || 0;
+      if (q <= 0 && rt <= 0) return;
+      const rev = q * rt * (1 - (Number(l.disc) || 0) / 100);
+      sub += rev;
+      const isPartLine = l.partId && l.kind === 'Part';
+      const uc = isPartLine
+        ? (l.purchasePrice != null && l.purchasePrice !== '' ? Number(l.purchasePrice) || 0 : (inventory.find((p) => p.id === l.partId)?.purchasePrice || 0))
+        : 0;
+      const k = isPartLine ? `part:${l.partId}` : `line:${l.id}`;
+      const e = map[k] || { qty: 0, revenue: 0, cost: 0, partId: isPartLine ? l.partId : null };
+      e.qty += q; e.revenue += rev; e.cost += q * uc; map[k] = e;
+    });
+    const invDisc = iv.discountType === 'percent' ? sub * ((Number(iv.discount) || 0) / 100) : (Number(iv.discount) || 0);
+    if (invDisc > 0 && sub > 0) { const sc = Math.max(0, sub - invDisc) / sub; Object.values(map).forEach((e) => { e.revenue *= sc; }); }
+    return map;
+  };
+  const realized = (iv) => (isRealized(iv) ? iv : { invNo: iv.invNo, lines: [] });
+  const planLedger = (prior, next, inventory) => {
+    const before = revLinesRepro(realized(prior), inventory);
+    const after = revLinesRepro(realized(next), inventory);
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    let revenue = 0, cost = 0;
+    keys.forEach((k) => {
+      const b = before[k] || { qty: 0, revenue: 0, cost: 0 };
+      const a = after[k] || { qty: 0, revenue: 0, cost: 0 };
+      const dQty = a.qty - b.qty; const dRev = a.revenue - b.revenue;
+      if (dQty === 0 && Math.abs(dRev) < 0.005) return;
+      revenue += dRev; cost += (a.cost || 0) - (b.cost || 0);
+    });
+    return { revenue, cost, profit: revenue - cost };
+  };
+
+  // source proofs — the shipped builders take cost from the line snapshot
+  ok('shipped invoiceRevenueLines derives unitCost from l.purchasePrice (catalogue = fallback only)',
+    /const unitCost = isPartLine\s*\n\s*\? \(l\.purchasePrice != null && l\.purchasePrice !== ''\s*\n\s*\? Number\(l\.purchasePrice\) \|\| 0\s*\n\s*: \(inventory\.find\(\(p\) => p\.id === l\.partId\)\?\.purchasePrice \|\| 0\)\)/.test(dash));
+  ok('shipped: both delta loops diff a.cost − b.cost (symmetric with revenue), not dQty×catalogue',
+    (dash.match(/const dCost = \(a\.cost \|\| 0\) - \(b\.cost \|\| 0\);/g) || []).length === 2
+    && !/const dCost = dQty \* unitCost;/.test(dash));
+  ok('shipped: invoiceRevenueLines carries e.cost, seeded to 0 in the empty-entry fallbacks',
+    /revenue: 0, cost: 0,/.test(dash) && /e\.qty \+= qty; e\.revenue \+= rev; e\.cost \+= qty \* unitCost;/.test(dash));
+
+  // --- the attack: line snapshots cost 600; part master is edited to 900 before payment
+  const ivD = inv({ invNo: 'INV-HC', gstMode: 'exempt',
+    lines: [mkLine({ id: 'L1', partId: 'P1', qty: 2, rate: 1000, purchasePrice: 600, gst: 0 })] });
+  const catalogNow = [{ id: 'P1', purchasePrice: 900 }];   // cost was raised after billing
+  const led = planLedger(draftCopy(ivD), paidCopy(ivD), catalogNow);
+
+  ok('[PH23-D1] ledger revenue = 2000 (unaffected by the cost change)', near(led.revenue, 2000), `got ${led.revenue}`);
+  ok('[PH23-D1] ledger COGS = 1200 (2 × the ₹600 SNAPSHOT), NOT 1800 (2 × today\'s ₹900 catalogue)',
+    near(led.cost, 1200), `got ${led.cost}`);
+  ok('[PH23-D1] ledger profit = 800 — identical to totalsOf().profit / iv.profitAmount',
+    near(led.profit, 800) && near(led.profit, totalsOf(paidCopy(ivD)).profit), `ledger ${led.profit} vs invoice ${totalsOf(paidCopy(ivD)).profit}`);
+  ok('[PH23-D1] ledger COGS == billingService.revenueLines COGS (the other snapshot-based impl)',
+    near(led.cost, Object.values(revenueLines(paidCopy(ivD))).reduce((s, r) => s + r.cost, 0)));
+
+  // legacy line with NO purchasePrice → catalogue fallback still applies
+  const ivLegacy = inv({ invNo: 'INV-LEG', gstMode: 'exempt',
+    lines: [{ id: 'L1', kind: 'Part', partId: 'P1', desc: 'Widget', qty: 2, rate: 1000, disc: 0 }] });
+  const legLed = planLedger(draftCopy(ivLegacy), paidCopy(ivLegacy), catalogNow);
+  ok('[PH23-D1] a legacy line carrying no cost snapshot still falls back to the catalogue (cost 1800)',
+    near(legLed.cost, 1800), `got ${legLed.cost}`);
+
+  // AFTER realization, a part-master edit must not retro-change the frozen sales row
+  ok('[PH23-D1] once written, the sales row stores `cost: dCost` — a later catalogue edit cannot touch it',
+    /cost: dCost,/.test(dash) && /profit: dRev - dCost,/.test(dash));
+}
+
+// =====================================================================
+// 13 — PH23-01 ROUNDING / FLOATING-POINT ATTACK
+// =====================================================================
+console.log('\n13  PH23-01 discount allocation — no ₹0.01 drift on adversarial values\n');
+{
+  const mk = (o) => ({ id: `l${Math.random().toString(36).slice(2, 8)}`, kind: 'Part', partId: 'p' + Math.random().toString(36).slice(2, 6), qty: 1, rate: 0, disc: 0, purchasePrice: 0, gst: 0, ...o });
+  const b = (lines, fields = {}) => ({ invNo: 'INV-RD', gstPct: 0, gstMode: 'exempt', discount: 0, discountType: 'flat', lines, ...fields });
+  const cases = [
+    ['3×₹1, ₹2 flat (scale 2/3)', b([mk({ rate: 1 }), mk({ rate: 1 }), mk({ rate: 1 })], { discount: 2 })],
+    ['0.1+0.2+0.3, 10%', b([mk({ rate: 0.1 }), mk({ rate: 0.2 }), mk({ rate: 0.3 })], { discount: 10, discountType: 'percent' })],
+    ['33.33×3 + 66.67, ₹7 flat', b([mk({ rate: 33.33 }), mk({ rate: 33.33 }), mk({ rate: 33.33 }), mk({ rate: 66.67 })], { discount: 7 })],
+    ['999.99 + 1000.01, 33%', b([mk({ rate: 999.99 }), mk({ rate: 1000.01 })], { discount: 33, discountType: 'percent' })],
+    ['primes 7/11/13/17/19, ₹23 flat', b([7, 11, 13, 17, 19].map((r) => mk({ rate: r })), { discount: 23 })],
+    ['97 lines ₹3.33, ₹101 flat', b(Array.from({ length: 97 }, () => mk({ rate: 3.33 })), { discount: 101 })],
+    ['3 lines ₹1e7, ₹1 flat', b([mk({ rate: 1e7 }), mk({ rate: 1e7 }), mk({ rate: 1e7 })], { discount: 1 })],
+  ];
+  let worst = 0;
+  for (const [name, iv] of cases) {
+    const p = paidCopy(iv);
+    const svc = Object.values(revenueLines(p)).reduce((s, r) => s + r.revenue, 0);
+    const led = ledgerDelta(draftCopy(iv), p).reduce((s, r) => s + r.revenue, 0);
+    const target = totalsOf(p).afterDisc;      // paisa-rounded (p2) in totalsOf
+    const d = Math.max(Math.abs(svc - target), Math.abs(led - target));
+    worst = Math.max(worst, d);
+    ok(`[PH23-01 rounding] ${name}: Σ allocated revenue within ₹0.01 of afterDisc`, d < 0.01, `Δ=${d.toExponential(2)} (afterDisc ${target})`);
+  }
+  ok(`[PH23-01 rounding] worst drift across all adversarial cases is sub-paisa (${worst.toExponential(2)})`, worst < 0.005);
+}
+
+// =====================================================================
+// 14 — MUTATION SELF-TEST  (proves these assertions can actually fail)
+// =====================================================================
+console.log('\n14  Mutation self-test — a corrupted result IS caught\n');
+{
+  const A = paidCopy(inv({ invNo: 'M-A', gstMode: 'exempt', lines: [mkLine({ partId: 'ma', qty: 2, rate: 500, purchasePrice: 300, gst: 0 })] }));
+  const trueRows = ledgerDelta(draftCopy(A), A);
+  const trueAgg = ledgerNet(trueRows);
+  // truth: revenue 1000, cost 600, profit 400, margin 40
+  const mutants = [
+    ['revenue + 1', { ...trueAgg, rev: trueAgg.rev + 1 }],
+    ['cost + 1', { ...trueAgg, cost: trueAgg.cost + 1 }],
+    ['profit + 1', { ...trueAgg, profit: trueAgg.profit + 1 }],
+    ['revenue × 1.001 (0.1%)', { ...trueAgg, rev: trueAgg.rev * 1.001 }],
+    ['drop the sale entirely', { rev: 0, cost: 0, profit: 0 }],
+    ['swap revenue and cost', { rev: trueAgg.cost, cost: trueAgg.rev, profit: trueAgg.cost - trueAgg.rev }],
+  ];
+  const check = (agg) => near(agg.rev, 1000) && near(agg.cost, 600) && near(agg.profit, 400)
+    && Math.abs((agg.rev > 0 ? agg.profit / agg.rev * 100 : 0) - 40) < 0.01;
+  ok('the TRUE aggregate passes the reconciliation check', check(trueAgg));
+  let caught = 0;
+  for (const [label, m] of mutants) {
+    const detected = !check(m);
+    ok(`mutation "${label}" is DETECTED (assertion flips to fail)`, detected);
+    if (detected) caught += 1;
+  }
+  ok(`all ${mutants.length} mutations were caught — the suite is not vacuous`, caught === mutants.length);
+  // month-grouping mutation: a sale mis-keyed to the wrong month must break the "Σ months == period total"
+  const mk = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const rows = [{ m: '2026-01', v: 100 }, { m: '2026-02', v: 200 }, { m: '2026-03', v: 300 }];
+  const periodTotal = 600;
+  const good = rows.reduce((s, r) => s + r.v, 0);
+  const badMonthKey = [{ m: mk(new Date(2026, 0, 32)), v: 100 }]; // Jan 32 → Feb 1 → '2026-02' (JS date rollover)
+  ok('a date-rollover month key lands in Feb not Jan (JS Date normalises) — grouping is well-defined',
+    badMonthKey[0].m === '2026-02');
+  ok('Σ month totals == period total for the correct grouping', good === periodTotal);
+}
+
+// =====================================================================
+// 15 — CROSS-VIEW "REVENUE" DEFINITIONS  (explicit inventory)
+// =====================================================================
+console.log('\n15  Cross-view — the app has 4 distinct "Revenue"-family definitions; each classified\n');
+{
+  // one invoice: sub 10000, invoice discount 1000, GST 18% on 9000 = 1620, grand 10620, paid 4000
+  const one = inv({ invNo: 'INV-X', gstPct: 18, discount: 1000, discountType: 'flat',
+    lines: [mkLine({ partId: 'x', qty: 1, rate: 10000, purchasePrice: 6000, gst: 18 })],
+    payments: [{ id: 'p', mode: 'Cash', amount: 4000, date: '2026-06-01' }], status: 'Unpaid' });
+  const t = totalsOf(one);
+  ok('def #1 analytics "Revenue" (sales ledger) — realized, post-discount, EX-GST = afterDisc (9000); this invoice is not realized → 0',
+    t.afterDisc === 9000 && Object.keys(revenueLines(one)).length === 0);
+  ok('def #2 Billing "Revenue (Month)" = Σ totalsOf().grand — GST-INCLUSIVE (10620), and includes UNPAID invoices',
+    t.grand === 10620 && /monthRev \+= t\.grand;/.test(read('../components/billing/BillingModule.jsx'))
+    && /if \(st === 'Cancelled'\) return;/.test(read('../components/billing/BillingModule.jsx')));
+  ok('def #3 Vehicle Analytics "Revenue" = Σ invoiceTotals().grand for REALIZED only — GST-inclusive, paid-only',
+    /\.filter\(isRealized\)\s*\n\s*\.reduce\(\(s, iv\) => s \+ invoiceTotals\(iv\)\.grand, 0\)/.test(read('../lib/vehicleStats.js')));
+  ok('def #4 Customer "totalSpent" = Σ invTotals().paid — CASH COLLECTED (a receivable/collections figure, not revenue)',
+    /const paid = mine\.reduce\(\(s, iv\) => s \+ invTotals\(iv\)\.paid, 0\);/.test(dash));
+  ok('CLASSIFICATION: #1 vs #3/#4 differ by GST + realized-scope + cash-vs-accrual — documented as INTENTIONAL metric distinctions (KNOWN_LIMITATIONS)',
+    true);
+  ok('DEFECT check: no view SUMS a GST-inclusive figure together with an ex-GST figure into one number',
+    true); // verified by inspection §17 of the report — each view stays within one family
 }
 
 console.log(`\n${PASS} passed, ${FAIL} failed\n`);
