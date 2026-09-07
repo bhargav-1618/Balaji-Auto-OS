@@ -11630,14 +11630,26 @@ export default function InventoryDashboard() {
       }
     } catch (err) {
       console.error('Stock sync failed:', err);
-      // Issue 1: an OFFLINE write is queued by IndexedDB and will replay — keep
-      // the optimistic value. Any OTHER failure (permission denied, API disabled,
-      // not-found) will never succeed, so roll the UI back so it can never show a
-      // value the database doesn't have.
-      const offlineish = err?.code === 'unavailable' || /offline|network/i.test(err?.message || '');
-      if (!offlineish && prevStock != null) {
+      // PH26-01 (offline / reconnect integrity) — the only path that reaches here is
+      // a stock INCREASE, which runs the `runTransaction` above (a decrease goes
+      // through Sell; an equal value never calls this). Firestore transactions are
+      // NOT persisted offline — the SDK is explicit: "Unlike transactions, write
+      // batches are persisted offline" — so an offline failure here (code
+      // 'unavailable') definitely did NOT commit and nothing will replay. The
+      // earlier code kept the optimistic value on 'unavailable' assuming an
+      // IndexedDB-queued write would replay: true for a plain updateDoc, never for
+      // a transaction — so an offline restock silently reverted on reconnect (or
+      // was lost if the tab closed first) with no error. Roll the optimistic value
+      // back and say so, exactly as adjustStockLine / receivePO already do.
+      if (prevStock != null) {
         setInventory((prev) => prev.map((p) => (p.id === partId ? { ...p, stock: prevStock } : p)));
-        toast.error('Could not update stock — the change was reverted. Check your connection / Firestore access.');
+        toast.error(
+          isTxTimeout(err)
+            ? timeoutMessage('This stock update')
+            : (err?.code === 'unavailable' || /offline|network/i.test(err?.message || ''))
+            ? 'You’re offline — this restock wasn’t saved. Try again once your connection is back.'
+            : 'Could not update stock — the change was reverted. Check your connection / Firestore access.',
+        );
       }
     }
   }, [demoMode]);

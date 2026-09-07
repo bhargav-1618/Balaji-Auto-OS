@@ -184,6 +184,33 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   send whenever connectivity returns, so bounding their wait would misreport
   "still queued, will send" as "failed."
 
+  **PH26-01 (MEDIUM, fixed — Phase 26 offline / reconnect / offline-edit
+  integrity; see `docs/testing/PHASE_26_OFFLINE_RECONNECT_INTEGRITY_REPORT.md`):**
+  the inline stock-stepper restock (`commitStock` — the `[+]` button, or typing a
+  higher stock number) kept its **optimistic value** on an offline transaction
+  failure and showed **no error**. Its shared `catch` took the "an OFFLINE write is
+  queued by IndexedDB and will replay — keep the optimistic value" branch on
+  `err.code === 'unavailable'` — correct for the *other* branch (a plain
+  `updateDoc`), but this path is a `runTransaction`, and **Firestore transactions
+  are not persisted offline** (the SDK is explicit: *"Unlike transactions, write
+  batches are persisted offline"*; `tx.get` offline rejects `UNAVAILABLE … the
+  client is offline`). So an offline restock silently reverted on the next
+  `!hasPendingWrites` `parts` snapshot (delivered on reconnect), or was lost with no
+  audit / ledger / toast trace if the tab closed first. Contained to inventory (not
+  money), self-healing toward an *understated* count (safe direction — worst case a
+  false low-stock alert / redundant reorder), no data corruption. Fixed by making the
+  catch always roll the optimistic value back and show an accurate message
+  ("You're offline — this restock wasn't saved. Try again once your connection is
+  back."), exactly as `adjustStockLine` / `receivePO` already do for the same failure
+  class — reusing `isTxTimeout` / `timeoutMessage`, no new mechanism. Every *other*
+  offline write path was already correct (payment / invoice / adjustment / PO receive
+  / Quick Sell / guarded edits — all transactions that fail fast, keep their opId,
+  and are idempotent on retry; simple creates + field edits queue in IndexedDB and
+  replay). Residual INFO: a clean offline failure still shows the conservative "it may
+  already be recorded — a repeat is safe" copy (safe; `navigator.onLine` is treated as
+  a hint, never trusted to assert "definitely no commit"); a plain offline *create*
+  spins the Save button until reconnect then completes (durable, no false success).
+
 - **Browser / tab lifecycle integrity is now hardened** (CONCURRENCY PHASE 7b —
   shipped, emulator + automated + production verified). Phase 7's discovery pass
   found three gaps in how tab duplication, edit leases, and in-app navigation

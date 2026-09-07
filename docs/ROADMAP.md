@@ -911,6 +911,33 @@ current release.
   `tests/large-data-integrity.test.cjs` (118 assertions — fixtures at 5 sizes, shipped
   functions vs a hand oracle, page-completeness, architecture guards). `npm test`
   **146/146**. Report: `docs/testing/PHASE_25_LARGE_DATA_INTEGRITY_REPORT.md`.
+- ~~**Phase 26 — offline / reconnect / offline-edit integrity.**~~ **DONE — one MEDIUM
+  found + fixed.** Two-stage. Followed one user through ONLINE → OFFLINE → read → edit
+  → RECONNECT. Established (SDK source + emulator `disableNetwork`/`enableNetwork`
+  repro + source trace): persistence is `persistentLocalCache`; plain writes
+  (`setDoc`/`updateDoc`/`addDoc`/`deleteDoc`) **queue in IndexedDB and replay**, their
+  promise pending until server ack; `runTransaction` **cannot run offline** — the
+  SDK is explicit ("Unlike transactions, write batches are persisted offline") and its
+  `tx.get` rejects `UNAVAILABLE … client is offline`. Every financial/authoritative
+  write is a transaction → **fails fast offline, keeps its opId, idempotent on retry**
+  (marker-in-transaction) → no false success, no duplicate, no silent overwrite. Quick
+  Sell has a bespoke durable `pendingSales/{opId}` intent + reconcile (Phase 8B). One
+  gap:
+  - **PH26-01 (MEDIUM).** The inline stock-stepper restock (`commitStock`, the `[+]`
+    button) kept its **optimistic value** on an offline transaction failure and showed
+    **no error** — its shared `catch` took the `offlineish` "an IndexedDB-queued write
+    will replay" branch, but that path is a `runTransaction`, which is **not** persisted
+    offline. So an offline restock silently reverted on the reconnect snapshot, or was
+    lost with no trace if the tab closed first. Fixed: the catch now always rolls the
+    optimistic value back and shows an accurate message ("You're offline — this restock
+    wasn't saved…"), exactly as `adjustStockLine` / `receivePO` already do for the same
+    failure class. **+19 / −7**, 1 file, 0 new fn/abstraction (reuses `isTxTimeout` /
+    `timeoutMessage`). NEW `tests/offline-reconnect-integrity.test.cjs` (43 assertions —
+    SDK-contract facts, the full offline-state matrix, an idempotent-replay model, and
+    a before/after model of the `commitStock` catch). Gates: `npm test` **147/147**,
+    `npm run test:rules` **2/2**, lint 0, build ✓. No `firestore.rules` change; 0
+    production Firestore writes.
+  Report: `docs/testing/PHASE_26_OFFLINE_RECONNECT_INTEGRITY_REPORT.md`.
 
 ## Scale — before large datasets
 
