@@ -493,8 +493,8 @@ TESTS:                             105 assertions (analytics-integrity.test.cjs)
 TESTS THAT WOULD FAIL UNDER MUTATION:  6/6 (verified)
 PRODUCTION CODE CHANGE:            yes
 PRODUCTION NET LINES:              +24 (1 file; ~18 comment)
-COMMIT:                            <filled on commit>
-DEPLOYMENT:                        <filled on deploy>
+COMMIT:                            5862e0f
+DEPLOYMENT:                        Vercel JmDw5LSq9NR_zzCyRspJM (/, /login, /verify → 200)
 QA CLEANUP:                        complete — demo re-seeded pristine, scratch deleted
 REMAINING LIMITATIONS:             billingService ledger twin unused in prod (ROADMAP);
                                    Billing "Revenue" label = turnover not revenue (doc);
