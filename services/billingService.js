@@ -129,6 +129,23 @@ export function isRealized(iv) {
   return invoiceStatus(iv) === INVOICE_STATUS.PAID;
 }
 
+/**
+ * THE RECEIVABLE GATE — the symmetric counterpart of isRealized(). An invoice is
+ * "outstanding" only when it is a FINALISED bill (never a draft or an estimate),
+ * not cancelled/refunded/returned, and still has money owed on it.
+ *
+ * PH23-D2 — `invTotals(iv).balance` alone is NOT this test: a Draft or an Estimate
+ * also has `balance === grand` (no payments), so summing `.balance` over "everything
+ * except Cancelled" (as the Billing "Outstanding" KPI and syncCustomerTotals did)
+ * counts every open quote and every work-in-progress draft as a real receivable, and
+ * a red danger figure claims the shop is owed money nobody has been billed for.
+ */
+export function isOutstanding(iv) {
+  if (!iv || iv.isEstimate) return false;
+  const s = invoiceStatus(iv);
+  return s === INVOICE_STATUS.PENDING || s === INVOICE_STATUS.PARTIALLY_PAID;
+}
+
 /** Which ledger a line belongs to: Sales (parts) or Services (labour). */
 export function lineCategory(l) {
   if (l?.partId && l.kind === LINE_KIND.PART) return REVENUE_CATEGORY.PARTS;

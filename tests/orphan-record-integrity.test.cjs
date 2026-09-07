@@ -229,7 +229,7 @@ ok('[fact] BillingModule never calls setCustomers(...) — saving/editing/paying
   !/\bsetCustomers\(/.test(billing));
 
 ok('[fact] syncCustomerTotals only ever .map()s the EXISTING customers array — a customerId with no matching entry falls through every branch unchanged; it can never ADD an entry, so a full recompute over invoices cannot resurrect a deleted customer',
-  /const syncCustomerTotals = \(custId, allInvoices\) => \{[\s\S]{0,50}if \(!custId\) return Promise\.resolve\(\);[\s\S]{0,700}return setCustomers\(\(prev\) => prev\.map\(\(c\) => \(c\.id === custId \? \{ \.\.\.c, totalSpent: paid, outstanding \} : c\)\)\);/.test(dash));
+  /const syncCustomerTotals = \(custId, allInvoices\) => \{[\s\S]{0,50}if \(!custId\) return Promise\.resolve\(\);[\s\S]{0,1600}return setCustomers\(\(prev\) => prev\.map\(\(c\) => \(c\.id === custId \? \{ \.\.\.c, totalSpent: paid, outstanding \} : c\)\)\);/.test(dash));
 
 ok('[fact] touchVehicleHistory only ever .map()s the EXISTING customers array (same non-adding shape as syncCustomerTotals) — a deleted customer\'s id matches no entry and the map is a no-op for it',
   /const touchVehicleHistory = \(iv\) => \{[\s\S]{0,900}return setCustomers\(\(prev\) => prev\.map\(\(c\) => \{[\s\S]{0,400}if \(iv\.customerId && c\.id !== iv\.customerId\) return c;/.test(dash));

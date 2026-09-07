@@ -2452,7 +2452,9 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
   const bulkPDF = () => downloadCombinedInvoicePDF(selectedInvoices(), false);
   const bulkPrint = () => downloadCombinedInvoicePDF(selectedInvoices(), true);
   const bulkReminder = () => {
-    const rows = selectedInvoices().filter((iv) => totalsOf(iv).balance > 0 && iv.phone);
+    // PH23-D2 — never send a customer a "pending balance" reminder for a Draft or an
+    // Estimate (both have balance === grand); only a finalised, still-owed invoice.
+    const rows = selectedInvoices().filter((iv) => ['Unpaid', 'Partially Paid'].includes(deriveStatus(iv)) && iv.phone);
     if (!rows.length) return toast.error('No selected invoices with a balance & phone');
     rows.forEach((iv) => { const t = totalsOf(iv); window.open(`https://wa.me/91${(iv.phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(`Reminder: Invoice ${iv.invNo} has a pending balance of ${inr(t.balance)}. Kindly clear at your convenience. — Sri Baba Balaji Maruti Care`)}`, '_blank'); });
     toast.success(`Opened ${rows.length} reminder(s)`);
@@ -2516,26 +2518,40 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     let grand = 0, paid = 0, outstanding = 0, gstTotal = 0, partsRev = 0, labourRev = 0, profitToday = 0;
     let revToday = 0, invToday = 0, draftCount = 0, pendingCount = 0, monthRev = 0, monthProfit = 0;
     const modeSplit = {};
+    let realCount = 0;
+    // PH23-D2 — a real, non-reversed bill: not an estimate (a quote), not a draft
+    // (work-in-progress, never sent), not cancelled/refunded/returned (reversed).
+    // Every money KPI on this screen — Revenue (Month/Today), GST Collected,
+    // Parts/Labour Revenue, and the red danger "Outstanding" + "Pending Payments" —
+    // used to sum over "everything except Cancelled", so a single ₹9,440 draft read
+    // as ₹9,440 of revenue AND ₹9,440 owed, and a refunded sale still counted as
+    // revenue even though the analytics ledger had reversed it.
+    const REAL_STATUSES = ['Paid', 'Unpaid', 'Partially Paid'];
     invoices.forEach((iv) => {
       const t = totalsOf(iv); const st = deriveStatus(iv);
-      if (st === 'Cancelled') return;
-      grand += t.grand; paid += t.paid; outstanding += t.balance; gstTotal += t.gst;
+      if (st === 'Draft' || iv.isEstimate) { draftCount += 1; return; }
+      if (!REAL_STATUSES.includes(st)) return;   // Cancelled / Refunded / Returned
+      realCount += 1;
+      grand += t.grand; paid += t.paid; gstTotal += t.gst;
       partsRev += t.partsRev; labourRev += t.labourRev;
+      // "Outstanding" / "Pending Payments" are RECEIVABLES — a finalised, still-owed bill
+      // only (Refunded / Returned are settled, not owed).
+      const owed = st === 'Unpaid' || st === 'Partially Paid';
+      if (owed) { outstanding += t.balance; pendingCount += 1; }
       if (iv.date === today) { revToday += t.grand; invToday += 1; profitToday += t.profit; }
       const d = new Date(iv.date);
       if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) { monthRev += t.grand; monthProfit += t.profit; }
-      if (st === 'Draft' || iv.isEstimate) draftCount += 1;
-      if (t.balance > 0 && !iv.isEstimate) pendingCount += 1;
       asArray(iv.payments).forEach((p) => { modeSplit[p.mode] = (modeSplit[p.mode] || 0) + num(p.amount); });
     });
-    const avgInv = invoices.length ? grand / invoices.length : 0;
+    const avgInv = realCount ? grand / realCount : 0;
     // --- chart series (dependency-free SVG) ---
     // Revenue trend: last 14 days
     const trend = [];
-    for (let i = 13; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); const key = localDateStr(d); const rev = invoices.filter((iv) => iv.date === key && deriveStatus(iv) !== 'Cancelled').reduce((s, iv) => s + totalsOf(iv).grand, 0); trend.push({ key, label: `${d.getDate()}/${d.getMonth() + 1}`, rev }); }
+    const isReal = (iv) => !iv.isEstimate && REAL_STATUSES.includes(deriveStatus(iv)); // PH23-D2 — real, non-reversed bills only
+    for (let i = 13; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); const key = localDateStr(d); const rev = invoices.filter((iv) => iv.date === key && isReal(iv)).reduce((s, iv) => s + totalsOf(iv).grand, 0); trend.push({ key, label: `${d.getDate()}/${d.getMonth() + 1}`, rev }); }
     // Top customers by revenue
     const custMap = {};
-    invoices.forEach((iv) => { if (deriveStatus(iv) === 'Cancelled') return; const k = iv.customer || '—'; custMap[k] = (custMap[k] || 0) + totalsOf(iv).grand; });
+    invoices.forEach((iv) => { if (!isReal(iv)) return; const k = iv.customer || '—'; custMap[k] = (custMap[k] || 0) + totalsOf(iv).grand; });
     const topCustomers = Object.entries(custMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
     // Top parts by revenue
     // E2E workflow QA fix: same gross-vs-net bug as totalsOf's partsRev/labourRev — this
@@ -2544,7 +2560,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     // actually billed for it. Reproduced live: a 10%-off line showed its pre-discount
     // gross here instead of the net figure the Invoice Summary/KPIs correctly show.
     const partMap = {};
-    invoices.forEach((iv) => { if (deriveStatus(iv) === 'Cancelled') return; asArray(iv.lines).filter((l) => l.kind === 'Part').forEach((l) => { const k = l.desc || '—'; const gross = num(l.qty) * num(l.rate); const net = l.disc ? Math.max(0, gross - gross * (num(l.disc) / 100)) : gross; partMap[k] = (partMap[k] || 0) + net; }); });
+    invoices.forEach((iv) => { if (!isReal(iv)) return; asArray(iv.lines).filter((l) => l.kind === 'Part').forEach((l) => { const k = l.desc || '—'; const gross = num(l.qty) * num(l.rate); const net = l.disc ? Math.max(0, gross - gross * (num(l.disc) / 100)) : gross; partMap[k] = (partMap[k] || 0) + net; }); });
     const topParts = Object.entries(partMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
     return { count: invoices.length, grand, paid, outstanding, gstTotal, partsRev, labourRev, profitToday, revToday, invToday, draftCount, pendingCount, monthRev, monthProfit, avgInv, modeSplit, trend, topCustomers, topParts };
   }, [invoices]);

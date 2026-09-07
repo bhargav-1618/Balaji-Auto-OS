@@ -143,8 +143,13 @@ export function computeAlerts(inventory, reorderRequests, connError, extra = {})
   });
 
   // --- Billing alerts (outstanding balances) ---
+  // PH23-D2 — a Draft is not a bill and an Estimate is a quote; neither is an
+  // "outstanding balance". Refunded / Returned are settled. Only a finalised, still-owed
+  // invoice can be overdue. (This reads the stored status to stay dependency-free — the
+  // writers keep it fresh on every save/payment.)
+  const OWES_NOTHING = ['Draft', 'Estimate', 'Cancelled', 'Refunded', 'Returned'];
   invoices.forEach((iv) => {
-    if (iv.isEstimate || iv.status === 'Cancelled') return;
+    if (iv.isEstimate || OWES_NOTHING.includes(iv.status)) return;
     const bal = iv.balance != null ? Number(iv.balance) : Math.max(0, (Number(iv.grandTotal) || 0) - (Number(iv.paid) || 0));
     if (bal > 0) {
       const ageDays = iv.date ? Math.floor((now - new Date(iv.date).getTime()) / 86400000) : 0;

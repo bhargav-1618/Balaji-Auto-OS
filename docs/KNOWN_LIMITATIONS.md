@@ -779,14 +779,36 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   one line above. Live-verified in demo mode. No `firestore.rules` change.
   Mutation-tested: 6/6 deliberate corruptions of the analytics truth table are caught.
 
+  **PH23-D2 (MEDIUM, fixed — deep re-audit round 2; see
+  `docs/testing/PHASE_23_DEEP_2_REAUDIT_REPORT.md`):** the Billing "Outstanding" and
+  "Pending Payments" KPIs (red danger figures) and the per-customer Outstanding /
+  Total Spent totals summed `invTotals(iv).balance` / `.paid` over **every invoice
+  except Cancelled**. A **Draft** (work-in-progress, never billed) and an **Estimate**
+  (a quote) both carry `balance === grand`, so each read as its full amount *owed*; a
+  **Refunded / Returned** sale still counted as revenue and its returned payment as
+  "spent". A ₹9,440 draft made the dashboard claim the shop was owed ₹9,440 nobody had
+  been billed. The app's own list filter, `computeWorkshopProgress` and `isRealized`
+  all already used the right predicate (`['Unpaid','Partially Paid']`); six aggregators
+  did not. Fixed by adding **`billingService.isOutstanding`** — the symmetric
+  counterpart of `isRealized` (`isRealized` = money is here; `isOutstanding` = money is
+  owed; everything else contributes nothing) — and routing `syncCustomerTotals`,
+  `BillingModule.stats` (the whole money loop now skips Draft/Estimate and counts only
+  `['Paid','Unpaid','Partially Paid']` — so Revenue Month/Today, GST Collected,
+  Parts/Labour Revenue, Avg Invoice, the trend and Top Customers/Parts are all
+  actuals-only too), `bulkReminder` (WhatsApp) and `computeAlerts` through it.
+  Live-verified: a ₹9,440 draft moves NO money KPI. Mutation-tested 16/16.
+
   Further residual, by design:
   - The app has **4 "Revenue"-family definitions**: (1) analytics — realized,
-    post-discount, **ex-GST**; (2) Billing "Revenue (Month)" — `Σ totalsOf().grand`,
-    **GST-inclusive and includes Draft/Unpaid invoices** (invoiced *turnover*, not
-    revenue — a label imprecision, not a math error); (3) Vehicle Analytics —
+    post-discount, **ex-GST**; (2) Billing "Revenue (Month)" — `Σ totalsOf().grand`
+    over finalised **paid + unpaid** invoices (no longer drafts/estimates, PH23-D2),
+    **GST-inclusive** invoiced *turnover*; (3) Vehicle Analytics —
     `Σ invoiceTotals().grand` for realized only, GST-inclusive; (4) Customer "Total
-    Spent" — `Σ invTotals().paid`, **cash collected**. Each is internally consistent
-    and no view sums a GST-inclusive figure with an ex-GST one.
+    Spent" — `Σ invTotals().paid` over real bills, **cash collected**. Each is
+    internally consistent and no view sums a GST-inclusive figure with an ex-GST one.
+  - The `salesRollups` month key is client `new Date()` at plan time while the sales
+    row is `serverTimestamp()` — a theoretical month-boundary split (needs a
+    realization within seconds of midnight on the 1st). INFO, not fixed.
 
 ## 🟡 Performance (fine at current scale)
 

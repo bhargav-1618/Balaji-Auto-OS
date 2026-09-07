@@ -21,8 +21,8 @@ ok('line-derived total (1000) is the truth, not the stale 999999', lineDerived =
 // guards: neither sync path may trust the stored grandTotal
 ok('syncCustomerTotals no longer reads a local totalsOf trusting grandTotal',
   !/const totalsOf = \(iv\) => \{ if \(iv\.grandTotal != null\)/.test(src));
-ok('syncCustomerTotals routes through invTotals',
-  /outstanding = mine\.reduce\(\(s, iv\) => s \+ invTotals\(iv\)\.balance/.test(src));
+ok('syncCustomerTotals routes through invTotals (line-derived), not a stored total',
+  /const outstanding = mine\.reduce\(\(s, iv\) => s \+ \(isOutstanding\(iv\) \? invTotals\(iv\)\.balance : 0\)/.test(src));
 ok('touchVehicleHistory records spend via invTotals, not raw grandTotal',
   /const spend = invTotals\(iv\)\.grand/.test(src));
 ok('the raw "Number(iv.grandTotal) || 0" spend read is gone',

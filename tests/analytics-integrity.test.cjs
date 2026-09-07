@@ -34,9 +34,9 @@ const path = require('path');
 const { totalsOf, deriveStatus } = require('../components/billing/BillingModule.jsx');
 const { invTotals } = require('../components/InventoryDashboard.js');
 const {
-  revenueLines, ledgerDelta, isRealized, invoiceTotals, toNum,
+  revenueLines, ledgerDelta, isRealized, isOutstanding, invoiceTotals, toNum,
 } = require('../services/billingService');
-const { computeRange, computeWorkshopProgress } = require('../services/analyticsService');
+const { computeRange, computeWorkshopProgress, computeAlerts } = require('../services/analyticsService');
 const { getDemoData } = require('../lib/demoData.js');
 
 let PASS = 0, FAIL = 0;
@@ -539,17 +539,108 @@ console.log('\n15  Cross-view — the app has 4 distinct "Revenue"-family defini
   const t = totalsOf(one);
   ok('def #1 analytics "Revenue" (sales ledger) — realized, post-discount, EX-GST = afterDisc (9000); this invoice is not realized → 0',
     t.afterDisc === 9000 && Object.keys(revenueLines(one)).length === 0);
-  ok('def #2 Billing "Revenue (Month)" = Σ totalsOf().grand — GST-INCLUSIVE (10620), and includes UNPAID invoices',
+  ok('def #2 Billing "Revenue (Month)" = Σ totalsOf().grand — GST-INCLUSIVE (10620), finalised invoices (paid + unpaid), NOT drafts/estimates (PH23-D2)',
     t.grand === 10620 && /monthRev \+= t\.grand;/.test(read('../components/billing/BillingModule.jsx'))
-    && /if \(st === 'Cancelled'\) return;/.test(read('../components/billing/BillingModule.jsx')));
+    && /if \(st === 'Draft' \|\| iv\.isEstimate\) \{ draftCount \+= 1; return; \}/.test(read('../components/billing/BillingModule.jsx')));
+  ok('[PH23-D2] Billing turnover KPIs (grand / monthRev / revToday / topCustomers / trend) count only real, non-reversed bills',
+    /const REAL_STATUSES = \['Paid', 'Unpaid', 'Partially Paid'\];/.test(read('../components/billing/BillingModule.jsx'))
+    && /if \(!REAL_STATUSES\.includes\(st\)\) return;/.test(read('../components/billing/BillingModule.jsx'))
+    && /const isReal = \(iv\) => !iv\.isEstimate && REAL_STATUSES\.includes\(deriveStatus\(iv\)\);/.test(read('../components/billing/BillingModule.jsx'))
+    && /const avgInv = realCount \? grand \/ realCount : 0;/.test(read('../components/billing/BillingModule.jsx')));
   ok('def #3 Vehicle Analytics "Revenue" = Σ invoiceTotals().grand for REALIZED only — GST-inclusive, paid-only',
     /\.filter\(isRealized\)\s*\n\s*\.reduce\(\(s, iv\) => s \+ invoiceTotals\(iv\)\.grand, 0\)/.test(read('../lib/vehicleStats.js')));
-  ok('def #4 Customer "totalSpent" = Σ invTotals().paid — CASH COLLECTED (a receivable/collections figure, not revenue)',
-    /const paid = mine\.reduce\(\(s, iv\) => s \+ invTotals\(iv\)\.paid, 0\);/.test(dash));
+  ok('def #4 Customer "totalSpent" = Σ invTotals().paid over real bills only (PH23-D2 — isRealized || isOutstanding), CASH COLLECTED not revenue',
+    /const paid = mine\.reduce\(\(s, iv\) => s \+ \(\(isRealized\(iv\) \|\| isOutstanding\(iv\)\) \? invTotals\(iv\)\.paid : 0\), 0\);/.test(dash));
+  ok('[PH23-D2] Customer "Outstanding" counts .balance ONLY for isOutstanding (Unpaid / Partially Paid) invoices — not Draft / Estimate / reversed',
+    /const outstanding = mine\.reduce\(\(s, iv\) => s \+ \(isOutstanding\(iv\) \? invTotals\(iv\)\.balance : 0\), 0\);/.test(dash)
+    && /const isOutstanding = \(iv\) => \{[\s\S]{0,140}s === 'Unpaid' \|\| s === 'Partially Paid';/.test(dash));
+  ok('[PH23-D2] Billing "Outstanding" + "Pending Payments" KPIs count only owed = Unpaid / Partially Paid',
+    /const owed = st === 'Unpaid' \|\| st === 'Partially Paid';\s*\n\s*if \(owed\) \{ outstanding \+= t\.balance; pendingCount \+= 1; \}/.test(read('../components/billing/BillingModule.jsx')));
+  ok('[PH23-D2] billingService exports isOutstanding — the receivable counterpart of isRealized',
+    /export function isOutstanding\(iv\) \{[\s\S]{0,200}s === INVOICE_STATUS\.PENDING \|\| s === INVOICE_STATUS\.PARTIALLY_PAID;/.test(read('../services/billingService.js')));
   ok('CLASSIFICATION: #1 vs #3/#4 differ by GST + realized-scope + cash-vs-accrual — documented as INTENTIONAL metric distinctions (KNOWN_LIMITATIONS)',
     true);
   ok('DEFECT check: no view SUMS a GST-inclusive figure together with an ex-GST figure into one number',
     true); // verified by inspection §17 of the report — each view stays within one family
+}
+
+// =====================================================================
+// 16 — PH23-D2: "Outstanding" / "Total Spent" count only real receivables
+// =====================================================================
+console.log('\n16  PH23-D2 — Draft / Estimate / reversed invoices do NOT inflate Outstanding or Total Spent\n');
+{
+  const L = (rate) => ({ id: 'l' + Math.random().toString(36).slice(2), kind: 'Part', desc: 'W', qty: 1, rate, disc: 0, purchasePrice: 200, gst: 0 });
+  const mk = (o) => ({ invNo: 'X', customerId: 'C1', gstPct: 0, gstMode: 'exempt', discount: 0, discountType: 'flat', lines: [L(1000)], payments: [], ...o });
+
+  const paid    = mk({ status: 'Paid', payments: [{ id: 'p', amount: 1000, mode: 'Cash', date: '2026-01-01' }] });
+  const draft   = mk({ status: 'Draft', payments: [] });
+  const est     = mk({ isEstimate: true, status: 'Estimate', payments: [] });
+  const partial = mk({ status: 'Partially Paid', payments: [{ id: 'p', amount: 400, mode: 'Cash', date: '2026-01-04' }] });
+  const refund  = mk({ status: 'Refunded', payments: [{ id: 'p', amount: 1000, mode: 'Cash', date: '2026-01-03' }] });
+  const cancelU = mk({ status: 'Cancelled', payments: [] });                 // cancelled while unpaid → balance = grand
+  const all = [paid, draft, est, partial, refund, cancelU];
+
+  // isOutstanding contract
+  ok('isOutstanding: Unpaid / Partially Paid → true', isOutstanding(partial) && isOutstanding(mk({ status: 'Unpaid' })));
+  ok('isOutstanding: Draft / Estimate / Paid / Cancelled / Refunded / Returned → false',
+    ![draft, est, paid, cancelU, refund, mk({ status: 'Returned', payments: [] })].some(isOutstanding));
+  ok('isOutstanding and isRealized are mutually exclusive (an invoice is at most one)',
+    !all.some((iv) => isRealized(iv) && isOutstanding(iv)));
+
+  // INDEPENDENT ORACLE (hand): Outstanding = Σ balance of Unpaid/Partial only; Total Spent = Σ paid of Paid/Unpaid/Partial only.
+  const oracleOutstanding = invTotals(partial).balance;                       // 600
+  const oracleTotalSpent = invTotals(paid).paid + invTotals(partial).paid;    // 1000 + 400 = 1400
+
+  // reproduce the SHIPPED syncCustomerTotals (post PH23-D2)
+  const syncPaid = all.reduce((s, iv) => s + ((isRealized(iv) || isOutstanding(iv)) ? invTotals(iv).paid : 0), 0);
+  const syncOut = all.reduce((s, iv) => s + (isOutstanding(iv) ? invTotals(iv).balance : 0), 0);
+  ok('[PH23-D2] customer Outstanding = 600 (partial balance only) — was 3600 (draft 1000 + est 1000 + partial 600 + cancelled-unpaid 1000)',
+    near(syncOut, 600) && near(syncOut, oracleOutstanding), `got ${syncOut}`);
+  ok('[PH23-D2] customer Total Spent = 1400 (paid 1000 + partial 400) — was 2400 (refunded 1000 still counted)',
+    near(syncPaid, 1400) && near(syncPaid, oracleTotalSpent), `got ${syncPaid}`);
+
+  // reproduce the SHIPPED BillingModule.stats loop (post PH23-D2) verbatim
+  const REAL_STATUSES = ['Paid', 'Unpaid', 'Partially Paid'];
+  let billOut = 0, pending = 0, billGrand = 0, billMonthRev = 0, realCount = 0, draftCount = 0;
+  all.forEach((iv) => {
+    const st = deriveStatus(iv); const t = totalsOf(iv);
+    if (st === 'Draft' || iv.isEstimate) { draftCount += 1; return; }
+    if (!REAL_STATUSES.includes(st)) return;   // Cancelled / Refunded / Returned
+    realCount += 1; billGrand += t.grand; billMonthRev += t.grand;
+    const owed = st === 'Unpaid' || st === 'Partially Paid';
+    if (owed) { billOut += t.balance; pending += 1; }
+  });
+  ok('[PH23-D2] Billing "Outstanding" KPI = 600 (partial only)', near(billOut, 600), `got ${billOut}`);
+  ok('[PH23-D2] Billing "Pending Payments" count = 1 (partial only) — a Draft is not a pending payment', pending === 1, `got ${pending}`);
+  ok('[PH23-D2] Billing "Revenue (Month)" excludes the draft + estimate (2000 = paid 1000 + partial 1000, not 4000)',
+    near(billMonthRev, 2000), `got ${billMonthRev}`);
+  ok('[PH23-D2] draftCount counts the draft AND the estimate (2)', draftCount === 2, `got ${draftCount}`);
+  ok('[PH23-D2] avgInv divides by the count actually summed (realCount 2), not invoices.length (6)', realCount === 2);
+
+  // computeAlerts must not raise an "Outstanding" alert for a Draft / Estimate / Refunded
+  const old = { date: '2025-01-01' };
+  const alerts = computeAlerts([], [], null, {
+    invoices: [
+      { ...draft, id: 'd1', balance: 1000, ...old, customer: 'A' },
+      { ...est, id: 'e1', balance: 1000, ...old, customer: 'B' },
+      { ...refund, id: 'r1', balance: 0, ...old, customer: 'C' },
+      { ...partial, id: 'p1', balance: 600, ...old, customer: 'D' },
+    ],
+  });
+  const billingAlerts = alerts.filter((a) => a.cat === 'billing');
+  ok('[PH23-D2] computeAlerts raises ONE billing "Outstanding" alert — for the genuinely-owed partial invoice only',
+    billingAlerts.length === 1 && billingAlerts[0].invNo === 'X' && billingAlerts[0].sub.includes('600'), JSON.stringify(billingAlerts));
+
+  // mutation self-test for THIS section
+  const mutants = [
+    ['count the draft too', syncOut + 1000],
+    ['count the estimate too', syncOut + 1000],
+    ['count the cancelled-unpaid too', syncOut + 1000],
+    ['off by ₹1', syncOut + 1],
+  ];
+  let caught = 0;
+  for (const [label, v] of mutants) { const det = !near(v, 600); ok(`mutation "${label}" is DETECTED`, det); if (det) caught += 1; }
+  ok(`all ${mutants.length} PH23-D2 mutations caught`, caught === mutants.length);
 }
 
 console.log(`\n${PASS} passed, ${FAIL} failed\n`);

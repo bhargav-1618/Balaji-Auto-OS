@@ -791,6 +791,38 @@ current release.
   self-test), `npm run test:rules` **2/2**, lint 0, build ✓. Production: **+24 / −0**
   in 1 file (~18 comment). No new file / function / abstraction / schema / rules
   change. Report: `docs/testing/PHASE_23_DEEP_REAUDIT_REPORT.md`.
+- ~~**Phase 23 deep re-audit, round 2.**~~ **DONE — CONDITIONAL PASS; one MEDIUM
+  fixed.** Third pass. Traced the paths production actually runs (not the tested-but-
+  unused `billingService` twins), enumerated every rollup writer and every
+  `.balance`/`.paid`/outstanding aggregation site (6), re-ran mutation testing
+  (**16/16** corruptions caught). PH23-01 (invoice discount, rounding-exact,
+  `8.5e-14`) and PH23-D1 (COGS = line snapshot) both re-confirmed; also noted PH23-D1
+  silently removed a reversal-drift bug (a fully-reversed sale used to leave permanent
+  rollup drift if the catalogue moved between realization and reversal). One new
+  defect:
+  - **PH23-D2 (MEDIUM).** The Billing "**Outstanding**" and "**Pending Payments**"
+    KPIs (red danger figures) and the per-customer **Outstanding** / **Total Spent**
+    totals summed `invTotals(iv).balance` / `.paid` over **every invoice except
+    Cancelled**. A Draft (work-in-progress, never billed) and an Estimate (a quote)
+    each have `balance === grand`, so each read as its full amount *owed*; a Refunded
+    / Returned sale still counted as revenue and its returned payment as "spent". A
+    ₹9,440 draft made the dashboard claim the shop was owed ₹9,440 nobody had been
+    billed. Same class as PH23-01/D1: source correct (`invTotals`), an intermediate
+    predicate too loose, a plausible red UI. The app's own list filter,
+    `computeWorkshopProgress` and `isRealized` all already used the right predicate
+    (`['Unpaid','Partially Paid']`); six aggregators did not. Fixed by adding
+    **`billingService.isOutstanding`** — the symmetric counterpart of the existing
+    `isRealized` (`isRealized` = money is here; `isOutstanding` = money is owed;
+    everything else contributes nothing) — and routing `syncCustomerTotals`,
+    `BillingModule.stats` (the whole money loop now skips Draft/Estimate and counts
+    only `['Paid','Unpaid','Partially Paid']`), `bulkReminder` (WhatsApp) and
+    `computeAlerts` through it. Live-verified: a ₹9,440 draft now moves NO money KPI —
+    only the "Drafts / Estimates" count. Gates: `npm test` **144/144**
+    (`analytics-integrity.test.cjs` 125 assertions — §16 reproduces the shipped
+    `syncCustomerTotals` + `stats` loop verbatim + independent oracle + 10 new
+    mutations), `npm run test:rules` **2/2**, lint 0, build ✓. Production: **+55 / −12**
+    across 4 files (~30 comment; 1 new fn). No new file / abstraction / schema / rules
+    change. Report: `docs/testing/PHASE_23_DEEP_2_REAUDIT_REPORT.md`.
 
 ## Scale — before large datasets
 

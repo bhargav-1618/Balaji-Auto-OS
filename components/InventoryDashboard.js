@@ -9607,8 +9607,17 @@ export default function InventoryDashboard() {
     // Use the shared invTotals (derives from lines, ignores stale grandTotal) so this
     // customer's outstanding always matches what Billing and Reports show. A local copy
     // here previously trusted the stored total first and could diverge.
-    const paid = mine.reduce((s, iv) => s + invTotals(iv).paid, 0);
-    const outstanding = mine.reduce((s, iv) => s + invTotals(iv).balance, 0);
+    //
+    // PH23-D2 — but ONLY over invoices that are really the customer's money. This used
+    // to sum `.paid` and `.balance` over EVERY invoice with this customerId, so:
+    //   • a Draft or Estimate (balance === grand, no payments) inflated "Outstanding"
+    //     by its full amount — the customer had not been billed anything;
+    //   • a Refunded / Returned invoice still counted its (returned) payment in
+    //     "Total Spent", and a Cancelled unpaid invoice still counted its balance.
+    // isRealized (Paid) and isOutstanding (Unpaid / Partially Paid) are the two states
+    // where real money is, or is owed; nothing else contributes.
+    const paid = mine.reduce((s, iv) => s + ((isRealized(iv) || isOutstanding(iv)) ? invTotals(iv).paid : 0), 0);
+    const outstanding = mine.reduce((s, iv) => s + (isOutstanding(iv) ? invTotals(iv).balance : 0), 0);
     return setCustomers((prev) => prev.map((c) => (c.id === custId ? { ...c, totalSpent: paid, outstanding } : c)));
   };
   // Phase 3: automatic inventory sync from Billing. Each invoice remembers the
@@ -9873,6 +9882,14 @@ export default function InventoryDashboard() {
     if (!iv || iv.isEstimate) return false;
     if (['Cancelled', 'Refunded', 'Returned'].includes(iv.status)) return false;
     return invStatus(iv) === 'Paid';
+  };
+  // PH23-D2 — the receivable counterpart of isRealized: a finalised bill (not a draft
+  // or estimate, not cancelled/refunded/returned) that still has money owed. Used by
+  // syncCustomerTotals so a customer's "Outstanding" is real receivables only.
+  const isOutstanding = (iv) => {
+    if (!iv || iv.isEstimate) return false;
+    const s = invStatus(iv);
+    return s === 'Unpaid' || s === 'Partially Paid';
   };
   const realizedPartQtys = (iv) => (isRealized(iv) ? invoicePartQtys(iv) : {});
   const realizedRevenue = (iv) => (isRealized(iv) ? iv : { invNo: iv?.invNo, lines: [] });
