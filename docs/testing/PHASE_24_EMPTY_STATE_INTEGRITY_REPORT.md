@@ -466,8 +466,11 @@ BUILD:                        ✓ compiled successfully
 QA CLEANUP:                   complete — demo storage wiped, dev server + emulator stopped, .next rebuilt
 CODE GROWTH:                  +4 / −2 production (net 0; 0 new fn / file / abstraction) · +~515 test
 
-COMMIT:                       <filled on commit>
-DEPLOYMENT:                   <filled on deploy>
+COMMIT:                       c161e0b
+DEPLOYMENT:                   Vercel sDKcmP6RDAMMexy46jJK_  (/, /login, /verify → 200;
+                              build triggered immediately on push, compiled ✓; the
+                              "1 visit" fix was live-verified on the local dev build
+                              at demo Vehicles page 4/14 before push)
 
 REMAINING LIMITATIONS:
   - INFO-A: RSpark / RDonut / RBars are dead code (safe; delete recommended)
