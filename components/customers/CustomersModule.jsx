@@ -1930,7 +1930,8 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
                   <Badge color={c.status === 'Active' ? '#34d399' : '#9ca3af'}>{t(`status.${String(c.status || '').toLowerCase()}`, c.status)}</Badge>
                 </div>
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
-                  <span className="text-[10px] text-white/45">{(c.vehicles || []).length} {t('customers.vehicleCount', (c.vehicles || []).length === 1 ? 'vehicle' : 'vehicles')} · {billsOf(c)} {t('customers.bills', 'bills')} · {inr(c.totalSpent)}</span>
+                  {/* PH24 — singular/plural: "1 bill", not "1 bills" (matches the "vehicle"/"vehicles" idiom already used one token earlier on this same line) */}
+                  <span className="text-[10px] text-white/45">{(c.vehicles || []).length} {t('customers.vehicleCount', (c.vehicles || []).length === 1 ? 'vehicle' : 'vehicles')} · {billsOf(c)} {t('customers.bills', billsOf(c) === 1 ? 'bill' : 'bills')} · {inr(c.totalSpent)}</span>
                   {num(c.outstanding) > 0 && <span className="text-[10px] text-red-400 font-semibold">{t('customers.due', 'Due')} {inr(c.outstanding)}</span>}
                   <div className="ml-auto flex gap-1.5" onClick={(e) => e.stopPropagation()}>
                     {canManage && <button onClick={() => openCustomerEditor(c)} disabled={c.id === selId && lease.status === 'held'} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-40 disabled:cursor-not-allowed">{c.id === selId && lease.status === 'held' ? <Lock size={13} /> : <Edit3 size={13} />}</button>}

@@ -853,6 +853,24 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   in their own authenticated session; its evidence can lift this to PASS without
   reopening the audit.
 
+  **PH24-01 / PH24-02 (LOW, fixed — empty-state / cardinality audit; see
+  `docs/testing/PHASE_24_EMPTY_STATE_INTEGRITY_REPORT.md`):** two mobile-card labels
+  did not singularise at exactly one record — the Vehicles card showed "**1 visits**"
+  and the Customers card showed "**1 bills**" (immediately after a correctly-branched
+  "1 vehicle" on the same line). Fixed by reusing the app's own
+  `count === 1 ? singular : plural` idiom inside the existing `t(key, fallback)` i18n
+  wrapper (Hindi / Telugu unaffected). Net zero production lines. The rest of the
+  empty-state surface (pagination clamps, KPI divide-by-zero guards, chart floors,
+  `SearchSelect` dependency-empty states, filter→zero) was swept at 0/1/2/many and is
+  clean — no `NaN` / `Infinity` / `undefined` reaches any KPI or chart, no view crashes
+  or strands a workflow at zero records. Residual INFO (not defects): `RSpark` /
+  `RDonut` / `RBars` in `InventoryDashboard.js` are dead code (safe, delete
+  recommended); a `{n} parts` / `{n} PO` / `{n} items` label cluster in Supplier
+  Directory / Performance / brand chips does not singularise at n=1 (terse metadata,
+  cosmetic); the empty analytics XLSX export produces header-less blank sheets;
+  list search/status filters do not rescope the workshop-wide KPI cards (by design —
+  verified no stale values result).
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

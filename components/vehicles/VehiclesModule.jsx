@@ -1401,7 +1401,8 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
                     {ins && <Badge label={`${t('vehicles.col.insurance', 'Ins')}: ${ins.t}`} color={ins.c} size="sm" />}
                     {puc && <Badge label={`${t('vehicles.col.puc', 'PUC')}: ${puc.t}`} color={puc.c} size="sm" />}
-                    <span className="text-[10px] text-white/45">{visitsOf(r)} {t('customers.col.visits', 'visits').toLowerCase()} · {inr(revenueOf(r))}</span>
+                    {/* PH24 — singular/plural: "1 visit", not "1 visits" (matches the app's own `x === 1 ? …` idiom, e.g. the customer card's vehicle count) */}
+                    <span className="text-[10px] text-white/45">{visitsOf(r)} {t('customers.col.visits', visitsOf(r) === 1 ? 'visit' : 'visits').toLowerCase()} · {inr(revenueOf(r))}</span>
                     <div className="ml-auto flex gap-1.5" onClick={(e) => e.stopPropagation()}>
                       {canManage && <button onClick={() => openEdit(r)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><Edit3 size={13} /></button>}
                       <button onClick={() => onCreateInvoice?.({ id: r.ownerId, name: r.owner, phone: r.ownerPhone, vehicles: [r] })} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><IndianRupee size={13} /></button>

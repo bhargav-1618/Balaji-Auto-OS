@@ -869,6 +869,28 @@ current release.
   and a code pass cannot substitute for a production reconciliation. No further
   analytics code changes without a new concrete defect. Report §"AUTHENTICATED
   PRODUCTION READ-ONLY SPOT-CHECK".
+- ~~**Phase 24 — empty-state / cardinality / UI resilience.**~~ **DONE — PASS; 2 LOW
+  fixed.** Swept every module, chart, table, KPI and dependency lookup at
+  **0 / 1 / 2 / many** records + every transition + the shrink-while-viewing case.
+  Prior phases (16 pagination, 21 malformed input, 23 analytics) had already hardened
+  the surface — this pass confirmed it end-to-end (independent pagination oracle;
+  deep finiteness scan of every analytics return at 0/1/2 — no `NaN`/`Infinity`/
+  `undefined` reached any KPI; every chart path guarded by `Math.max(1,…)` / `total>0?`
+  / `||1` / a `length<2` guard; `SearchSelect` dependency-empty verified with the
+  walk-in / inline-create escape hatches). Two cosmetic pluralisation slips found and
+  fixed:
+  - **PH24-01 (LOW)** — `VehiclesModule` mobile card rendered "**1 visits**".
+  - **PH24-02 (LOW)** — `CustomersModule` mobile card rendered "**1 bills**" (one
+    token after a correctly-branched "1 vehicle").
+  Both fixed by reusing the app's own `count === 1 ? singular : plural` idiom inside
+  the existing `t(key, fallback)` i18n wrapper — **net 0 production lines**, 0 new
+  functions/files/abstractions. NEW `tests/empty-state-integrity.test.cjs` (147
+  assertions, independent oracles, 12 guard tripwires). Live-verified in demo mode
+  (Dashboard/Analytics/Billing/Customers/Vehicles at scale + 2 filter→zero drills +
+  the "1 visit" fix on page 4/14). Gates: `npm test` **145/145**, `npm run test:rules`
+  **2/2**, lint 0, build ✓. No `firestore.rules` change. INFO (not fixed): `RSpark`/
+  `RDonut`/`RBars` are dead code; a `{n} parts`/`{n} items` label cluster in Suppliers
+  doesn't singularise at 1. Report: `docs/testing/PHASE_24_EMPTY_STATE_INTEGRITY_REPORT.md`.
 
 ## Scale — before large datasets
 
