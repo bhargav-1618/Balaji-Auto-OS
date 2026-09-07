@@ -140,7 +140,7 @@ sale. No migration was run.
 
 ## 6. Independent oracle & mutation testing
 
-`tests/analytics-integrity.test.cjs` §17 (new, +14 assertions → 141):
+`tests/analytics-integrity.test.cjs` §17 (new, 125 → 141 assertions):
 
 - source guards on all 3 write sites + the (unchanged) Quick Sell site
 - a functional reproduction of the `salesCount` move: a part sold 14 units on invoices
@@ -254,8 +254,10 @@ NEW DEFECTS:                    1  (PH23-D3)
 CRITICAL 0 · HIGH 0 · MEDIUM 1 · LOW 0
 FIXES:                          1
 PRODUCTION NET LINES:           +24  (2 files; ~18 comment; 0 new fn/abstraction)
-COMMIT:                         <filled on commit>
-DEPLOYMENT:                     <filled on deploy>
+COMMIT:                         c88149e
+DEPLOYMENT:                     Vercel HFYOTlreDO_aSWc9UsfyT (/, /login, /verify → 200;
+                               deployed bundle carries DEMO_SCHEMA v5 + the salesCount
+                               moves, and no longer the v4 schema string)
 QA CLEANUP:                     complete
 FINAL CONFIDENCE:              HIGH for the analytics math + semantics; MEDIUM-HIGH overall
                               (pending an authenticated-production spot-check)
