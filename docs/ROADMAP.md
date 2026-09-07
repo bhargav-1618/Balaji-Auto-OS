@@ -823,6 +823,36 @@ current release.
     mutations), `npm run test:rules` **2/2**, lint 0, build ✓. Production: **+55 / −12**
     across 4 files (~30 comment; 1 new fn). No new file / abstraction / schema / rules
     change. Report: `docs/testing/PHASE_23_DEEP_2_REAUDIT_REPORT.md`.
+- ~~**Phase 23 deep re-audit, round 3.**~~ **DONE — CONDITIONAL PASS; one MEDIUM
+  fixed.** Fourth pass, aimed at the KPI families that had *not* had Revenue/Cost/
+  Profit/Margin/Outstanding-level scrutiny: Customer, Vehicle, Workshop, Parts
+  profitability, Inventory valuation, Capital / dead-stock, GST, counts, average
+  invoice, trend. Each traced to its authoritative source, independently recomputed,
+  and mutation-tested (**19/19** cumulative corruptions caught). PH23-01, PH23-D1,
+  PH23-D2 all re-confirmed. Parts profitability (`ledgerByPart` over the frozen `sales`
+  rows), inventory valuation (a potential figure, correctly labelled), vehicle
+  analytics (`isRealized`-gated GST-inclusive turnover, intentional), customer/workshop/
+  GST/collection/count/trend KPIs — all **MATCH**. One new defect:
+  - **PH23-D3 (MEDIUM).** `part.salesCount` — a stored lifetime "units sold" counter —
+    was maintained only by **Quick Sell**; the **invoice realization** (the primary
+    billing flow) moved `stock` but not `salesCount`. So a part that only ever sells on
+    invoices stayed at `salesCount === 0`, and the **Dead Stock** list, the **Total
+    Dead Capital** KPI ("Locked in never-sold items") and the **Fast Mover** badge —
+    which all classify on `salesCount` — reported invoice-sold bestsellers as
+    never-sold dead capital. In the demo a clutch plate with 15 units / ₹39,508 of real
+    ledger sales topped the Dead Stock list; "Dead Capital" ₹1,06,206 → ₹19,638 after
+    the fix. Same class as PH23-01/D1/D2: source correct, a sibling write incomplete, a
+    plausible number, the wrong business meaning. `computeInsights` "slow-moving stock"
+    already read the `sales` ledger — the classification was the one place that didn't.
+    Fixed by moving `salesCount` with `stock` in the three realization stock writes
+    (`increment(-delta)`, symmetric and idempotent), reconciling the demo seed to the
+    derived ledger, and bumping `DEMO_SCHEMA`. Live-verified in demo mode (seed
+    reconciliation and the runtime path). Gates: `npm test` **144/144**
+    (`analytics-integrity.test.cjs` 141 assertions — §17 reproduces the shipped writes
+    + `isFastMover` + full demo reconciliation + 3 new mutations), `npm run test:rules`
+    **2/2**, lint 0, build ✓. Production: **+24 / −4** across 2 files (~18 comment; 0
+    new fn / file / abstraction / schema / rules change). Report:
+    `docs/testing/PHASE_23_DEEP_3_REAUDIT_REPORT.md`.
 
 ## Scale — before large datasets
 

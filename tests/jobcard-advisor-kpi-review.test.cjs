@@ -60,7 +60,7 @@ ok('cards still mid-workflow get a recent intake date instead of a stale months-
 // which is exactly what DEMO_SCHEMA exists to catch — without bumping it, every
 // browser that already ran the old seed keeps the stale 'Work In Progress' data
 // forever (localStorage survives a code deploy). ────────────────────────────────
-ok('DEMO_SCHEMA was bumped so existing sessions actually get re-seeded with the fix, not just fresh ones', /const DEMO_SCHEMA = 'v4-jobcard-real-statuses';/.test(dash));
+ok('DEMO_SCHEMA was bumped so existing sessions actually get re-seeded with the fix, not just fresh ones (v5 = PH23-D3 salesCount-from-ledger)', /const DEMO_SCHEMA = 'v5-salescount-from-ledger';/.test(dash));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

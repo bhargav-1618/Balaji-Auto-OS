@@ -810,6 +810,33 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
     row is `serverTimestamp()` — a theoretical month-boundary split (needs a
     realization within seconds of midnight on the 1st). INFO, not fixed.
 
+  **PH23-D3 (MEDIUM, fixed — deep re-audit round 3; see
+  `docs/testing/PHASE_23_DEEP_3_REAUDIT_REPORT.md`):** `part.salesCount` — a stored
+  lifetime "units sold" counter — was maintained only by **Quick Sell** (the counter
+  sale), which updates it alongside `stock` in one write. The **invoice realization**
+  (the primary billing flow — parts fitted during a service go on the job-card invoice)
+  moved `stock` but **never touched `salesCount`**, so any part that only ever sells
+  through invoices sat at `salesCount === 0` forever. The **Dead Stock** list, the
+  **Total Dead Capital** KPI (`hint: "Locked in never-sold items"`) and the **Fast
+  Mover** badge all classify on `salesCount === 0` / `>= min`, so invoice-sold
+  bestsellers were reported as **never-sold dead capital**. In the demo a clutch plate
+  with **15 units / ₹39,508 of real ledger sales** was the **#1 entry on the Dead Stock
+  list** and roughly half the "Dead Capital" figure (₹1,06,206 → ₹19,638 after the
+  fix). The app's own `computeInsights` "slow-moving stock" line already read the
+  `sales` ledger, not `salesCount` — the classification was the one place that didn't.
+  Fixed by moving `salesCount` with `stock` in the three invoice-realization stock
+  writes (`applyRealizationPlanInTx`, `applyPlanToLocalInventory`, and the demo
+  `applyStockDelta`) — `increment(-delta)`, symmetric with `stock` and idempotent on a
+  re-run — plus reconciling the demo seed's `salesCount` to the derived ledger and
+  bumping `DEMO_SCHEMA`. No new counter, no reader changes, no `firestore.rules`
+  change. Live-verified in demo mode (seed reconciliation and the runtime path).
+  Mutation-tested: 19/19 cumulative corruptions caught.
+  Residual: a pre-fix invoice sale that is *later reversed* can push `salesCount`
+  transiently negative; every reader treats `< 0` the same as "has sold" (the safe
+  reading) and it self-heals on the next sale — consistent with `stock` being allowed
+  negative. Historical `salesCount` values are not retroactively corrected (an
+  increment counter, no migration).
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

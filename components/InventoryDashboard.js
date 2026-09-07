@@ -6897,7 +6897,7 @@ function StockOutView({ sales, stockAdjustments, demoMode, demoCanExport = true,
 //
 // Bump this whenever the seeded data's shape changes. Mismatched caches are purged on
 // load so the demo always matches the code that is running.
-const DEMO_SCHEMA = 'v4-jobcard-real-statuses';
+const DEMO_SCHEMA = 'v5-salescount-from-ledger';
 
 // Runs synchronously, at most once, BEFORE any hydration effect reads storage.
 // (Doing this inside a useEffect was too late: the invoice-hydration effect is declared
@@ -9845,7 +9845,10 @@ export default function InventoryDashboard() {
       if (updated < 0) {
         console.error(`[TXN] NEGATIVE STOCK: "${p.name}" is now ${updated}. Parts were issued that were not in stock — reconcile physically.`);
       }
-      return { ...p, stock: updated, lastSaleAt: deltaMap[p.id] < 0 ? Date.now() : p.lastSaleAt };
+      // PH23-D3 — this is the demo invoice-realization stock path (its ONLY caller is
+      // runInvoiceRealizationDemo). Move salesCount with stock, same as production's
+      // applyRealizationPlanInTx, so demo Dead Stock / Fast Mover analytics are right.
+      return { ...p, stock: updated, salesCount: (p.salesCount || 0) - deltaMap[p.id], lastSaleAt: deltaMap[p.id] < 0 ? Date.now() : p.lastSaleAt };
     });
     inventoryRef.current = next;
     setInventory(next);
@@ -10135,7 +10138,15 @@ export default function InventoryDashboard() {
   const applyRealizationPlanInTx = (tx, plan, existingPartIds) => {
     Object.entries(plan.stockDeltas).forEach(([partId, delta]) => {
       if (!existingPartIds.has(partId)) return; // PH9-01: part deleted from catalog — nothing to adjust
-      tx.update(doc(db, COLLECTIONS.PARTS, partId), { stock: increment(delta), updatedAt: serverTimestamp() });
+      // PH23-D3 — `salesCount` is the part's lifetime units-sold counter (Quick Sell
+      // maintains it alongside `stock` in ONE update; see runQuickSaleTx). The invoice
+      // realization moved `stock` but NOT `salesCount`, so a part that only ever sells
+      // through invoices stayed at salesCount 0 — and the Dead Stock / Dead Capital /
+      // Fast Mover analytics, which classify on `salesCount === 0`, flagged bestsellers
+      // as "never-sold" (a 14-unit / ₹39,508 part topped the demo Dead Stock list).
+      // The delta is negative when parts leave the shelf on a sale, so `-delta` is the
+      // units sold; a reversal (delta positive) unwinds it, exactly like `stock`.
+      tx.update(doc(db, COLLECTIONS.PARTS, partId), { stock: increment(delta), salesCount: increment(-delta), updatedAt: serverTimestamp() });
     });
     plan.salesLines.forEach((record) => {
       tx.set(doc(collection(db, COLLECTIONS.SALES)), { ...record, createdAt: serverTimestamp() });
@@ -10164,7 +10175,9 @@ export default function InventoryDashboard() {
   const applyPlanToLocalInventory = (plan) => {
     const ids = Object.keys(plan.stockDeltas);
     if (!ids.length) return;
-    const next = inventoryRef.current.map((p) => (ids.includes(p.id) ? { ...p, stock: (p.stock || 0) + plan.stockDeltas[p.id] } : p));
+    const next = inventoryRef.current.map((p) => (ids.includes(p.id)
+      ? { ...p, stock: (p.stock || 0) + plan.stockDeltas[p.id], salesCount: (p.salesCount || 0) - plan.stockDeltas[p.id] } // PH23-D3 — mirror the tx's salesCount move
+      : p));
     inventoryRef.current = next;
     setInventory(next);
   };

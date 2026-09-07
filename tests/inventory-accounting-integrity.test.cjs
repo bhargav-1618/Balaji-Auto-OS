@@ -124,7 +124,8 @@ ok('MOVEMENT: Quick Sell (runQuickSaleTx) — sales ledger + stock decrement + s
 
 ok('MOVEMENT: Invoice realization/reversal (planInvoiceRealization + applyRealizationPlanInTx) — sales ledger row (positive for realize, compensating negative for reverse) + stock delta inside the SAME transaction as the invoice write, skips a part that no longer exists (PH9-01) instead of throwing',
   /if \(!existingPartIds\.has\(partId\)\) return; \/\/ PH9-01: part deleted from catalog — nothing to adjust/.test(applyRealizationFn)
-  && /tx\.update\(doc\(db, COLLECTIONS\.PARTS, partId\), \{ stock: increment\(delta\), updatedAt: serverTimestamp\(\) \}\);/.test(applyRealizationFn)
+  // PH23-D3 — the same update now also moves `salesCount` (units-sold counter), symmetric with `stock`.
+  && /tx\.update\(doc\(db, COLLECTIONS\.PARTS, partId\), \{ stock: increment\(delta\), salesCount: increment\(-delta\), updatedAt: serverTimestamp\(\) \}\);/.test(applyRealizationFn)
   && /tx\.set\(doc\(collection\(db, COLLECTIONS\.SALES\)\), \{ \.\.\.record, createdAt: serverTimestamp\(\) \}\);/.test(applyRealizationFn));
 
 ok('[fact] Refund/Return (Credit Note) reuses the SAME invoice-realization reversal above — no separate restoration path exists any more (PH11-01, Phase 11)',

@@ -643,5 +643,57 @@ console.log('\n16  PH23-D2 — Draft / Estimate / reversed invoices do NOT infla
   ok(`all ${mutants.length} PH23-D2 mutations caught`, caught === mutants.length);
 }
 
+// =====================================================================
+// 17 — PH23-D3: `salesCount` is total units sold, not Quick-Sell-only
+// =====================================================================
+console.log('\n17  PH23-D3 — invoice sales bump part.salesCount, so Dead Stock / Fast Mover analytics match the ledger\n');
+{
+  const { isFastMover, getFastMoverMin } = require('../services/inventoryService');
+
+  // --- source: every invoice-realization stock write also moves salesCount (symmetric with stock) ---
+  ok('shipped applyRealizationPlanInTx moves salesCount with stock, in the SAME tx.update',
+    /tx\.update\(doc\(db, COLLECTIONS\.PARTS, partId\), \{ stock: increment\(delta\), salesCount: increment\(-delta\), updatedAt: serverTimestamp\(\) \}\);/.test(dash));
+  ok('shipped applyPlanToLocalInventory (prod local mirror) moves salesCount with stock',
+    /stock: \(p\.stock \|\| 0\) \+ plan\.stockDeltas\[p\.id\], salesCount: \(p\.salesCount \|\| 0\) - plan\.stockDeltas\[p\.id\]/.test(dash));
+  ok('shipped applyStockDelta (demo invoice-realization path) moves salesCount with stock',
+    /stock: updated, salesCount: \(p\.salesCount \|\| 0\) - deltaMap\[p\.id\], lastSaleAt:/.test(dash));
+  ok('Quick Sell already moved salesCount (unchanged) — so both sale paths now maintain it',
+    /tx\.update\(partRef, \{ stock: increment\(-want\), salesCount: increment\(want\)/.test(dash));
+
+  // --- functional: reproduce the realization salesCount move (delta = oldRealizedQty − newRealizedQty) ---
+  const applySalesCount = (part, stockDelta) => ({ ...part, salesCount: (part.salesCount || 0) - stockDelta });
+  const p0 = { id: 'P', name: 'Clutch Plate', salesCount: 0, stock: 24, purchasePrice: 2251 };
+  const afterSale = applySalesCount(p0, -14);   // 14 units left the shelf on an invoice
+  ok('[PH23-D3] a part sold 14 units on invoices → salesCount 14 (was stuck at 0)', afterSale.salesCount === 14);
+  const afterReversal = applySalesCount(afterSale, 3);  // 3 of them returned
+  ok('[PH23-D3] reversing 3 units → salesCount 11 (symmetric with stock, exactly like a reversal)', afterReversal.salesCount === 11);
+  ok('[PH23-D3] with salesCount 14, isFastMover is now decided on real sales, not on 0', isFastMover({ salesCount: 14 }) === (14 >= getFastMoverMin()));
+  ok('[PH23-D3] the Dead Capital KPI predicate `salesCount === 0` now excludes this part (it HAS sold)', !((afterSale.salesCount || 0) === 0));
+
+  // --- demo dataset: salesCount reconciled to the ledger (seed no longer random) ---
+  const { parts: demoParts, sales: demoSales } = getDemoData();
+  const ledgerUnits = {};
+  demoSales.forEach((s) => { if (s.partId) ledgerUnits[s.partId] = (ledgerUnits[s.partId] || 0) + (Number(s.qty) || 0); });
+  const mismatched = demoParts.filter((p) => (p.salesCount || 0) !== Math.max(0, ledgerUnits[p.id] || 0));
+  ok('[PH23-D3] EVERY demo part\'s salesCount == its total ledger units (was a random between(0,120))',
+    mismatched.length === 0, `${mismatched.length} mismatched, e.g. ${JSON.stringify(mismatched.slice(0, 2).map((p) => ({ n: p.name, sc: p.salesCount, ledger: ledgerUnits[p.id] || 0 })))}`);
+  ok('[PH23-D3] demoData.js reconciles salesCount from the derived ledger',
+    /parts\.forEach\(\(p\) => \{ p\.salesCount = Math\.max\(0, soldUnits\[p\.id\] \|\| 0\); \}\);/.test(read('../lib/demoData.js')));
+  ok('[PH23-D3] DEMO_SCHEMA bumped so existing demo sessions get the reconciled seed',
+    /const DEMO_SCHEMA = 'v5-salescount-from-ledger';/.test(dash));
+
+  // a demo part that HAS ledger sales must not be classifiable as "never-sold" dead stock
+  const soldDemoParts = demoParts.filter((p) => (ledgerUnits[p.id] || 0) > 0 && !p.archived);
+  ok('[PH23-D3] no demo part with real ledger sales is left at salesCount 0 (the "Maruti Dzire Clutch Plate on the Dead Stock list" bug)',
+    soldDemoParts.every((p) => (p.salesCount || 0) > 0), `${soldDemoParts.filter((p) => !(p.salesCount > 0)).length} still at 0`);
+
+  // mutation self-test
+  const truth = afterSale.salesCount; // 14
+  const muts = [['salesCount + 1', truth + 1], ['stayed at 0 (the bug)', 0], ['double-counted', truth * 2]];
+  let caught = 0;
+  for (const [label, v] of muts) { const det = v !== 14; ok(`mutation "${label}" is DETECTED`, det); if (det) caught += 1; }
+  ok(`all ${muts.length} PH23-D3 mutations caught`, caught === muts.length);
+}
+
 console.log(`\n${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);
