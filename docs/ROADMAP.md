@@ -641,6 +641,38 @@ current release.
   227 assertions incl. an in-process malformed-PDF render), `npm run test:rules`
   **261/261** (no rules change), lint 0, build ✓. Production: ~+14 lines (mostly
   comments) across 4 files.
+- ~~**Phase 21 deep adversarial validation.**~~ **DONE — one MEDIUM + one LOW fixed;
+  two residuals documented.** Second-level pass to *disprove* the Phase 21 verdict.
+  The **input** conclusions all held (forms / paste / CSV / search / PDF / numeric —
+  re-confirmed, now live). **"Everything else is SAFE" did NOT** — the original test
+  meant to exercise a wrong-type structural field but the line was
+  `'not-an-array' ? [] : []` (a no-op).
+  - **PH21-D1 (MEDIUM):** a forged/corrupt Firestore doc with a wrong-type nested
+    ARRAY field (`invoice.lines`, `customer.vehicles`, `jobCard.parts`/`labour`,
+    `part.suppliers`, `po.items` as a truthy non-array) crashes the app app-wide —
+    `x || []` is not a type guard, and there is one app-level ErrorBoundary so
+    "Reload" re-fetches the bad doc and re-crashes. Reachable by a `signedIn` client
+    (Phase 20: rules type-check nothing) or a bad migration. Fixed with
+    **`lib/format.asArray`** — the same normalise-at-the-edge guard VehiclesModule
+    already applied locally (`normalizeVehicle`), lifted to the shared layer and
+    routed through every shared calculator + both money-path copies + every
+    always-mounted / list-level consumer + each module's own `useSearchIndex`.
+    `asArray(x)` ≡ `x || []` for every real value. Live-verified: all 8 tabs + the
+    command palette survive the forged data.
+  - **PH21-D1b (LOW):** `computeWorkshopScore` returned `{score: NaN}` → dashboard
+    "NaN/100" on a forged sales row `qty:"abc"` (`??` doesn't coerce a string, then
+    `+` concatenates). Fixed — `qtyOf` coerces.
+  - **Documented, not fixed:** PH21-D2 (wrong-type nested **scalar** rendered as a
+    React child → "Objects are not valid as a React child" → app crash; complete fix
+    = Firestore-rules `is list`/`is string` assertions, Phase 20's layer);
+    PH21-D3 (INFO — a forged 22-digit `invNo` garbles the DRF-draft numbering
+    fallback; Phase 2 `counters` is the real GST-serial allocator).
+  Gates: `npm test` **142/142** (`malformed-input-integrity.test.cjs` §10 added, 238
+  assertions), `npm run test:rules` **261/261** (no rules change), lint 0, build ✓.
+  Production: 1 shared `asArray` (1 line) + ~40 `(x || []).method` → `asArray(x).method`
+  swaps + 2 `qtyOf` coercions; no new abstraction / schema layer / rules change.
+  5 brittle source-regex tests loosened to accept `asArray(x)` alongside `x || []`.
+  Commit `33e3dd8`. Report: `docs/testing/PHASE_21_DEEP_VALIDATION_REPORT.md`.
 
 ## Scale — before large datasets
 

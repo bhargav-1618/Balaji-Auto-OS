@@ -631,9 +631,10 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   no money/stock/ledger invariant is touched; contrast invoice numbering
   and PO receive, which *are* closed at the transaction layer).
 
-- **Malformed / extreme / hostile-looking input stays contained** (PHASE 21 —
-  audited, one HIGH defect fixed; see
-  `docs/testing/PHASE_21_MALFORMED_INPUT_INTEGRITY_REPORT.md`). HTML/script-like
+- **Malformed / extreme / hostile-looking input stays contained** (PHASE 21 +
+  a deep adversarial re-validation — one HIGH + one MEDIUM + one LOW fixed; see
+  `docs/testing/PHASE_21_MALFORMED_INPUT_INTEGRITY_REPORT.md` and
+  `docs/testing/PHASE_21_DEEP_VALIDATION_REPORT.md`). HTML/script-like
   strings are stored and rendered as **text** (zero `dangerouslySetInnerHTML` /
   `innerHTML` / `eval` in app code; CSP with no prod `unsafe-eval`; React escapes
   every string child). Unicode / emoji / RTL / zero-width / 10 000-char round-trip
@@ -650,14 +651,38 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   (`billingService.toNum`, already `Number.isFinite`-guarded) was unaffected. Fixed
   by finite-guarding + `MAX_SAFE_INTEGER`-clamping the shared coercers and
   `lib/format.num`, then routing the drifted inline copies through them. No rules
-  change. **Documented, not fixed:** (1) a part whose price was set to a finite huge
-  value (`1e308`) *before* this fix and never re-saved would still overflow the
-  Valuation report — `num()` is finite-guarded but not magnitude-clamped (it must
-  pass large legitimate aggregates and negative deltas); self-heals on the next edit
-  of that part; no such data in production; (2) an authenticated client can still
-  forge a Firestore document with a `NaN`/`Infinity`/wrong-typed field directly —
-  `num()`/`toNum()` neutralise it in every read path, and this is an authorization
-  concern already in Phase 19/20's scope, not an input surface.
+  change.
+
+  **PH21-D1 (MEDIUM, fixed):** a forged/corrupt Firestore document with a wrong-type
+  nested **array** field — `invoice.lines`, `customer.vehicles`, `jobCard.parts` /
+  `labour`, `part.suppliers`, `po.items` stored as a truthy non-array (string /
+  object / number) — crashed the app app-wide. `x || []` is not a type guard
+  (`'oops' || []` is `'oops'`, and the next `.forEach`/`.map` throws); there is one
+  app-level `<ErrorBoundary>`, so "Reload" re-fetches the bad doc and re-crashes.
+  Reachable by any `signedIn` client (Phase 20 established the operational-collection
+  rules type-check nothing) or a half-finished write / bad migration. Fixed with
+  `lib/format.asArray` — the normalise-at-the-edge guard `VehiclesModule` already
+  used locally (`normalizeVehicle`), lifted to the shared layer and routed through
+  every shared calculator, both money-path copies, and every always-mounted /
+  list-level consumer (dashboard, command palette, reports, each module's own search
+  index). Live-verified: all 8 tabs + the palette survive the forged data.
+  **PH21-D1b (LOW, fixed):** a forged/legacy sales row `qty:"abc"` made
+  `computeWorkshopScore` return `{score: NaN}` → dashboard "NaN/100" (`??` doesn't
+  coerce a string, then `+` concatenates); `qtyOf` now coerces.
+
+  **Documented, not fixed:** (1) a part whose price was set to a finite huge value
+  (`1e308`) *before* the PH21-01 fix and never re-saved would still overflow the
+  Valuation report — `num()` is finite-guarded but not magnitude-clamped; self-heals
+  on the next edit; no such data in production. (2) **PH21-D2** — a forged document
+  with a wrong-type nested **scalar** (`vehicle.regNo = {}`) still crashes the
+  module that renders it (`{v.regNo}` → "Objects are not valid as a React child").
+  Each module also has its own local list/detail code beyond the shared calculators.
+  The complete fix is Firestore-rules type assertions
+  (`request.resource.data.lines is list`) — Phase 20's layer, which currently
+  asserts nothing — deferred because it needs a rules deployment (one is already
+  pending), does not cover legacy / bug-introduced data, and is a focused task of
+  its own. Until then a forged/corrupt document can still drop a secondary module
+  view into the ErrorBoundary; recovery is an admin deleting the offending document.
 
 ## 🟡 Performance (fine at current scale)
 
