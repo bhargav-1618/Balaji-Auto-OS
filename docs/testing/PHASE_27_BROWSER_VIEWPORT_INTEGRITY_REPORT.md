@@ -253,7 +253,7 @@ elsewhere). **This is an assessment, not a verification.**
 | `docs/testing/PHASE_27_BROWSER_VIEWPORT_INTEGRITY_REPORT.md` | this report |
 | `docs/ROADMAP.md`, `docs/KNOWN_LIMITATIONS.md` | Phase 27 entry + iOS-Safari residual |
 
-## 15. Gate results
+## 15. Gate results & deployment
 
 ```
 npm test           → 148/148 test files
@@ -263,6 +263,12 @@ npm run build       → ✓  (First Load JS unchanged: 709 kB /)
 firestore.rules     → unchanged
 production writes   → 0
 ```
+
+**Commit `165cfb5` on `main` → Vercel build `PIzNdVlISVUuGMR_sj5K_` (live).**
+Production-bundle verified by fetching `/_next/static/chunks/pages/index-*.js`:
+`w-full flex-1 min-h-0 flex flex-col` and
+`flex-1 min-h-0 overflow-y-auto dark-scroll p-5 space-y-4` present;
+`min-h-screen flex flex-col` (the broken pattern) **absent**.
 
 ## 16. Final assessment
 
