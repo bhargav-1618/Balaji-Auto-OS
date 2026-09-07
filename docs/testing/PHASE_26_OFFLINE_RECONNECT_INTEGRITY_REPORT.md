@@ -444,8 +444,8 @@ QA CLEANUP:                   complete — emulator scripts removed, dev+emulato
 PRODUCTION MUTATIONS:        0
 CODE GROWTH:                  +19 / −7 production (1 file, ~13 comment; 0 new fn/file/abstraction) · +~250 test
 
-COMMIT:                       <filled on commit>
-DEPLOYMENT:                   <filled on deploy>
+COMMIT:                       01871c6
+DEPLOYMENT:                   Vercel JCMGSzIFNXcU59ty9UcMV (/, /login, /verify -> 200; deployed bundle carries the new "this restock wasn't saved" message and no longer contains the `offlineish` variable)
 
 REMAINING LIMITATIONS:
   - INFO: clean-offline failure shows the conservative "may already be recorded" copy (safe; navigator.onLine treated as a hint)
