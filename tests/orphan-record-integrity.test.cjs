@@ -202,7 +202,7 @@ ok('[fact] BillingModule\'s custVehicles (vehicle picker for an invoice) returns
 
 ok('[fact] the workshop-copy invoice PDF resolves customer/vehicle live (for extra detail) but every field falls back to the invoice\'s OWN denormalized copy (iv.customer/iv.regNo/iv.phone/...) when the customer record is gone',
   /const cust = customers\.find\(\(c\) => c\.id === iv\.customerId\) \|\| null;/.test(billing)
-  && /const veh = cust \? \(cust\.vehicles \|\| \[\]\)\.find\(\(v\) => v\.id === iv\.vehicleId\) : null;/.test(billing)
+  && /const veh = cust \? (?:\(cust\.vehicles \|\| \[\]\)|asArray\(cust\.vehicles\))\.find\(\(v\) => v\.id === iv\.vehicleId\) : null;/.test(billing)
   && /const custName = cust\?\.name \|\| iv\.customer;/.test(pdfLib)
   && /\['Customer Name', cust\?\.name \|\| iv\.customer\]/.test(pdfLib)
   && /\['Phone', cust\?\.phone \|\| iv\.phone\]/.test(pdfLib));

@@ -26,6 +26,11 @@ const fs = require('fs');
 const path = require('path');
 const { totalsOf, deriveStatus } = require('../components/billing/BillingModule.jsx');
 const { invTotals, invStatus } = require('../components/InventoryDashboard.js');
+// PHASE 22 (PH22-01) — billingService.invoiceTotals is the THIRD money-path copy
+// (lib/vehicleStats.revenueOf → the Vehicle Report "Revenue" export reads its `.grand`).
+// It used to be a simplified subset that silently ignored the invoice-level discount
+// and gstMode; it now mirrors totalsOf, so it belongs in this three-way check.
+const { invoiceTotals: svcInvoiceTotals } = require('../services/billingService');
 
 let PASS = 0, FAIL = 0, DEFECTS = 0;
 const ok = (name, cond, detail = '') => {
@@ -95,8 +100,14 @@ function checkAgainstBoth(name, invoice) {
   ok(`${name} — invTotals matches independent oracle (grand/paid/balance)`,
     b.grand === oracle.grand && near(b.paid, oracle.paid) && near(b.balance, oracle.balance),
     `oracle=${JSON.stringify(oracle)} invTotals=${JSON.stringify({ grand: b.grand, paid: b.paid, balance: b.balance })}`);
-  ok(`${name} — no NaN/Infinity/undefined in either production path's output`,
-    [a.sub, a.gst, a.grand, a.paid, a.balance, b.grand, b.paid, b.balance].every((v) => Number.isFinite(v)));
+  const c = svcInvoiceTotals(invoice);
+  // billingService.invoiceTotals deliberately rounds `sub`/`gst` to whole rupees (its
+  // consumers only read grand/paid/balance/parts/labour) — so only those are compared.
+  ok(`${name} — billingService.invoiceTotals matches independent oracle (grand/paid/balance) [PH22-01]`,
+    c.grand === oracle.grand && near(c.paid, oracle.paid) && near(c.balance, oracle.balance),
+    `oracle grand/paid/balance=${oracle.grand}/${oracle.paid}/${oracle.balance}  invoiceTotals=${c.grand}/${c.paid}/${c.balance}`);
+  ok(`${name} — no NaN/Infinity/undefined in any of the THREE production paths' output`,
+    [a.sub, a.gst, a.grand, a.paid, a.balance, b.grand, b.paid, b.balance, c.grand, c.paid, c.balance].every((v) => Number.isFinite(v)));
 }
 
 // =====================================================================
@@ -218,9 +229,9 @@ console.log('\n8  Payment integrity — traced from payment records, not trusted
 {
   // No payment at all.
   const unpaid = inv({ lines: [line(1, 500)] });
-  ok('no payment -> paid=0, balance=grand, status Unpaid/Pending on the two paths respectively (documented label difference, PH11-03)',
+  ok('no payment -> paid=0, and BOTH status paths now agree on the label "Unpaid" (PH22-03 — was Unpaid/Pending)',
     totalsOf(unpaid).paid === 0 && invTotals(unpaid).paid === 0
-    && deriveStatus(unpaid) === 'Unpaid' && invStatus(unpaid) === 'Pending');
+    && deriveStatus(unpaid) === 'Unpaid' && invStatus(unpaid) === 'Unpaid');
 }
 {
   // A payment carrying amount 0 (a blank row) must not count as "a payment"
@@ -384,14 +395,15 @@ ok('[fact] CGST/SGST are split from the ALREADY-ROUNDED gst total (half each, od
 }
 
 // =====================================================================
-// 15 — STATUS LABEL CONSISTENCY (documented, not fixed — Phase 11's own
-//      "for every relationship classify explicitly" instruction applied to
-//      the one remaining, low-impact discrepancy between the two paths)
+// 15 — STATUS LABEL CONSISTENCY — the "Unpaid" vs "Pending" split is CLOSED (PH22-03)
 // =====================================================================
-console.log('\n15  Remaining label discrepancy (documented, LOW — not a money-value defect)\n');
-ok('[fact, documented] deriveStatus\'s "nothing paid yet, not a draft" label is "Unpaid"; invStatus\'s equivalent branch is "Pending" — a display-string difference only (grand/paid/balance numbers are identical on both paths, per section 8 above); invStatus feeds Reports/Dashboard exports, so a report can show "Pending" for an invoice Billing\'s own screen calls "Unpaid"',
+console.log('\n15  Status label — deriveStatus and invStatus now agree (PH22-03, was a documented LOW)\n');
+ok('[FIXED, PH22-03] both derived-status functions label the "nothing paid, not a draft" state "Unpaid" — the Reports/Dashboard export can no longer show "Pending" for an invoice the Billing screen calls "Unpaid"',
   /return inv\.status === 'Draft' \? 'Draft' : 'Unpaid';/.test(billing)
-  && /return iv\.status === 'Draft' \? 'Draft' : 'Pending';/.test(dash));
+  && /return iv\.status === 'Draft' \? 'Draft' : 'Unpaid';/.test(dash)
+  && !/'Draft' : 'Pending'/.test(dash));
+ok('[FIXED, PH22-03] the shared INVOICE_STATUS.PENDING constant now carries the value "Unpaid"',
+  /PENDING: 'Unpaid'/.test(fs.readFileSync(path.resolve(__dirname, '../constants/index.js'), 'utf8')));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed, ${DEFECTS} DEFECT(S) found\n`);
 // PH11-01 and PH11-02 are verified FIXED above; the sole remaining

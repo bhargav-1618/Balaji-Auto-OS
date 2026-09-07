@@ -673,6 +673,53 @@ current release.
   swaps + 2 `qtyOf` coercions; no new abstraction / schema layer / rules change.
   5 brittle source-regex tests loosened to accept `asArray(x)` alongside `x || []`.
   Commit `33e3dd8`. Report: `docs/testing/PHASE_21_DEEP_VALIDATION_REPORT.md`.
+- ~~**PDF / export integrity audit.**~~ **DONE — PHASE 22, two MEDIUM + two LOW
+  fixed.** "For every export, does the generated output match the authoritative
+  Firestore / application data — record-for-record and value-for-value?" Central
+  check: the three-way comparison for invoices —
+  `authoritative record ↔ independent hand-calculation (never read off the PDF) ↔ the
+  generated output's real bytes`. Verified automated **and** live in demo mode against
+  real rendered PDFs (INV-0171 existing paid invoice; INV-0297 QA draft): grand / GST /
+  discount / round-off / paid / balance / status / identity all agree. Invoice XLSX
+  cardinality live: 296 filtered = 296 exported, 0 missing / 0 duplicate. QR payload =
+  summary only, `t = round(grand)`, identity exact. `/verify` renders the URL params
+  verbatim (no DB lookup — intentional). Wrong-record isolation confirmed (A's PDF
+  carries zero of B's data; a gone customer → the invoice's own denormalised fields,
+  never another record). Four defects:
+  - **PH22-01 (MEDIUM).** `billingService.invoiceTotals` — the third money-path copy,
+    behind the **Vehicle Report "Revenue"** export (`lib/vehicleStats.revenueOf`) —
+    was a simplified model: it ignored the invoice-level discount, `gstMode`
+    (exempt / IGST) and the per-line-GST-absent → `gstPct` fallback. So a discounted
+    or GST-exempt invoice's contribution to exported vehicle revenue was overstated,
+    and `invoiceStatus` / `isRealized` could disagree with the Billing screen's
+    `deriveStatus` on those invoices. Body rewritten to mirror `totalsOf`'s full
+    model (the docstring's "exactly one definition of the total" is now true);
+    `financial-integrity.test.cjs` runs its independent oracle against all three
+    copies.
+  - **PH22-02 (MEDIUM).** The invoice-PDF generators (`drawInvoiceDocument`,
+    `lib/workshopInvoicePdf.js`) still used `iv.lines || []` / `iv.payments || []` /
+    `jc.statusLog || []` — the **PH21-D1 wrong-type-array class**, in the one path
+    PH21-D1's sweep did not reach; a forged non-array field crashed PDF generation
+    (the on-screen list already survives). `asArray` guards added.
+  - **PH22-03 (LOW).** Status-vocabulary split — `invoiceStatus` / `invStatus`
+    returned `"Pending"` while `deriveStatus` (Billing screen + its exports), the
+    status filter, the PDF badge palette, `analyticsService` and `constants/ui.js`
+    all said `"Unpaid"` → the **same** unpaid invoice printed as "Pending" in the
+    Reports→Billing export and "Unpaid" in the Billing export. Fixed:
+    `INVOICE_STATUS.PENDING: 'Unpaid'` (key kept) + `invStatus`'s last branch.
+  - **PH22-04 (LOW, found live).** The customer-copy invoice PDF and the Purchase
+    Order PDF cut line/item descriptions at `.slice(0, 52)` with **no ellipsis**,
+    while the workshop copy of the same invoice wraps the full text. Consolidated the
+    three "truncate to a width with an ellipsis" copies in the PDF layer
+    (`pdfTheme.fitText` private, `workshopInvoicePdf.truncW` private, the bare
+    `.slice`) into one exported `pdfTheme.truncW`; customer-copy + PO now use it.
+    Live-verified: a 166-char description now renders width-fitted, ending in `…`.
+  Gates: `npm test` **143/143** (+1 new `tests/pdf-export-integrity.test.cjs`, 125
+  assertions — independent invoice oracle + in-process PDF render + `(…) Tj` text
+  extraction), `npm run test:rules` **2/2** (150 + 111, no rules change), lint 0,
+  build ✓. Production: **+84 / −53** across 7 files (`lib/workshopInvoicePdf.js` net
+  −16 — private helper deleted); mostly comments. No new file / abstraction / schema /
+  rules change. Report: `docs/testing/PHASE_22_PDF_EXPORT_INTEGRITY_REPORT.md`.
 
 ## Scale — before large datasets
 

@@ -5,7 +5,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { X, Search, Plus, Minus, ClipboardList, Check, MessageCircle, ChevronLeft, Trash2, PackageX, FileDown } from 'lucide-react';
 import { useSearchIndex, matchIndexed } from '../../lib/useSearch';
-import { PDF_PAGE, PDF_GOLD, PDF_RULE, PDF_TEXT, liveShop, drawPdfHeader, drawPdfPageNumber } from '../../lib/pdfTheme';
+import { PDF_PAGE, PDF_GOLD, PDF_RULE, PDF_TEXT, liveShop, drawPdfHeader, drawPdfPageNumber, truncW } from '../../lib/pdfTheme';
 import { checkCapacityGuard } from '../../lib/useCapacity';
 import notify from '../common/notify';
 
@@ -205,7 +205,9 @@ export default function SupplierPOBuilder({ inventory = [], suppliers = [], rest
       doc.setTextColor(50, 50, 50);
       grp.items.forEach((it) => {
         pageBreak(785);
-        doc.text(String(it.name).slice(0, 52), M + 8, y);
+        // PH22-04 — width-aware truncation (shared pdfTheme.truncW) instead of a flat
+        // `.slice(0, 52)`: a long part name is now cut with a visible "…", not silently.
+        doc.text(truncW(doc, String(it.name), 350 - (M + 8) - 12), M + 8, y);
         doc.text(String(it.qty), 350, y);
         doc.text(money(it.unitCost), 415, y);
         doc.text(money(it.qty * it.unitCost), 490, y);

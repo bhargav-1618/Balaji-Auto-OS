@@ -7029,7 +7029,7 @@ const invStatus = (iv) => {
   if (t.grand > 0 && t.paid > t.grand + 0.5) return 'Partially Paid';
   if (t.balance <= 0 && t.grand > 0) return 'Paid';
   if (t.paid > 0) return 'Partially Paid';
-  return iv.status === 'Draft' ? 'Draft' : 'Pending';
+  return iv.status === 'Draft' ? 'Draft' : 'Unpaid'; // PH22-03 — was 'Pending'; matches deriveStatus / every export
 };
 const RPT_COLORS = ['#d4af37', '#60a5fa', '#34d399', '#f472b6', '#a78bfa', '#fbbf24', '#22d3ee', '#fb923c'];
 

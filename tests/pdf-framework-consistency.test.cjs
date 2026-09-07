@@ -122,7 +122,7 @@ console.log('\nPart 2 — every generator migrated off its own local copies, ont
   // Address/Email/Logo), not the bare hardcoded SHOP, so a saved Business Profile
   // actually shows on generated Purchase Orders like it already does on Invoice/Job
   // Card. SHOP itself is unused here now (no local re-declaration, no direct read).
-  ok('Purchase Order: imports the shared theme', /import \{ PDF_PAGE, PDF_GOLD, PDF_RULE, PDF_TEXT, liveShop, drawPdfHeader, drawPdfPageNumber \} from '\.\.\/\.\.\/lib\/pdfTheme';/.test(src));
+  ok('Purchase Order: imports the shared theme', /import \{[^}]*\bPDF_PAGE\b[^}]*\bPDF_GOLD\b[^}]*\bliveShop\b[^}]*\bdrawPdfHeader\b[^}]*\bdrawPdfPageNumber\b[^}]*\} from '\.\.\/\.\.\/lib\/pdfTheme';/.test(src));
   ok('Purchase Order: now draws the shared branded letterhead, live from Settings (previously had NO header band/branding at all, then a hardcoded SHOP)',
     /drawPdfHeader\(doc, \{ W, M, shop: liveShop\(demoMode\) \}\)/.test(src));
   ok('Purchase Order: the rogue third gold value (150,120,40) is gone, replaced by the shared on-light gold token',

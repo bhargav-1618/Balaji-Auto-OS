@@ -119,7 +119,13 @@ export const LIMITS = Object.freeze({
 export const INVOICE_STATUS = Object.freeze({
   DRAFT: 'Draft',
   ESTIMATE: 'Estimate',
-  PENDING: 'Pending',
+  // PHASE 22 (PH22-03) — the value is 'Unpaid', not 'Pending'. Every user-facing surface
+  // (the Billing screen + its PDF/XLSX exports via BillingModule.deriveStatus, the status
+  // filter, the PDF status-badge palette, analyticsService's "awaiting payment" filter,
+  // constants/ui.js's colour map) already says "Unpaid" — only billingService.invoiceStatus
+  // and InventoryDashboard.invStatus said "Pending", so the SAME unpaid invoice showed as
+  // "Pending" in the Reports→Billing export and "Unpaid" in the Billing export. One word.
+  PENDING: 'Unpaid',
   PARTIALLY_PAID: 'Partially Paid',
   PAID: 'Paid',
   CANCELLED: 'Cancelled',

@@ -349,7 +349,7 @@ const oracleStatus = (iv) => {
   const paid = (iv.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   if (g > 0 && paid >= g) return 'Paid';
   if (paid > 0) return 'Partially Paid';
-  return iv.status === 'Draft' ? 'Draft' : 'Pending';
+  return iv.status === 'Draft' ? 'Draft' : 'Unpaid'; // PH22-03 — invoiceStatus now returns 'Unpaid', not 'Pending'
 };
 const forgedPaid = { status: 'Draft', isEstimate: false, lines: [{ kind: 'Labour', qty: 1, rate: 1000, disc: 0, gst: 0 }], payments: [{ amount: 1000 }] };
 ok('invoiceStatus ignores a forged status:"Draft" on a fully-paid invoice → "Paid"',

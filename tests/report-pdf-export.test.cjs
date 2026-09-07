@@ -77,7 +77,9 @@ ok('handles an empty report gracefully (explicit "No data" message, not a blank 
 ok('a raw Date object (from lib/exportSheet.js asDate(), reused as-is by several reports) is formatted as a readable date, not stringified as a full JS Date string',
   /function cellText\(v\) \{/.test(theme) && /v instanceof Date/.test(theme) && /toLocaleDateString\('en-IN'/.test(theme));
 ok('fitText routes every cell/header through cellText before measuring or truncating it',
-  /const t = String\(cellText\(text\)\);/.test(theme));
+  // PH22-04: the width-search body was extracted to the shared exported `truncW`; fitText
+  // is now the report-cell flavour that applies cellText first, then delegates.
+  /function fitText\(doc, text, maxW\) \{\s*\n\s*return truncW\(doc, cellText\(text\), maxW\);\s*\n\s*\}/.test(theme));
 
 // GENUINE BUG, found by actually rendering and reading a real Customer Report PDF (not
 // caught by any code-pattern check): money cells came through as "'0", "'8,984" — the

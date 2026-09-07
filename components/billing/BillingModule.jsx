@@ -8,7 +8,7 @@ import toast from '../../lib/toast';
 import { confirmDialog } from '../common/ConfirmDialog';
 import { lockBody, unlockBody } from '../Modal';
 import { buildQrPayload, makeQrDataUrl, QR_PT } from '../../lib/pdfQr';
-import { PDF_PAGE, PDF_RULE, SHOP, maskShop, liveShop, drawPdfHeader, drawPdfPageNumber } from '../../lib/pdfTheme';
+import { PDF_PAGE, PDF_RULE, SHOP, maskShop, liveShop, drawPdfHeader, drawPdfPageNumber, truncW } from '../../lib/pdfTheme';
 import { renderWorkshopInvoicePdf } from '../../lib/workshopInvoicePdf';
 import { tsToDate, localDateStr, displayDate , num, asArray, isIndianMobile, isValidEmail, MOBILE_ERROR, EMAIL_ERROR } from '../../lib/format';
 import SearchSelect from '../common/SearchSelect';
@@ -2628,9 +2628,10 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     });
     const qrDataUrl = await makeQrDataUrl(qrPayload);
     const docTypeLabel = iv.isEstimate ? 'ESTIMATE / QUOTATION' : (iv.gstNo ? 'TAX INVOICE' : 'INVOICE');
-    const partLines = (iv.lines || []).filter((l) => l.kind === 'Part' || l.kind === 'Other');
-    const svcLines = (iv.lines || []).filter((l) => l.kind === 'Labour' || l.kind === 'Service');
-    const otherLines = (iv.lines || []).filter((l) => !['Part', 'Other', 'Labour', 'Service'].includes(l.kind));
+    const ivLines = asArray(iv.lines); // PH22-02 — a wrong-type `lines` must not crash PDF generation
+    const partLines = ivLines.filter((l) => l.kind === 'Part' || l.kind === 'Other');
+    const svcLines = ivLines.filter((l) => l.kind === 'Labour' || l.kind === 'Service');
+    const otherLines = ivLines.filter((l) => !['Part', 'Other', 'Labour', 'Service'].includes(l.kind));
     // `page` is tracked so the shared footer/page-numbering pass at the end of this
     // function knows how many pages to stamp, regardless of which renderer below
     // produced them.
@@ -2638,7 +2639,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
 
     if (isWorkshop) {
       const cust = customers.find((c) => c.id === iv.customerId) || null;
-      const veh = cust ? (cust.vehicles || []).find((v) => v.id === iv.vehicleId) : null;
+      const veh = cust ? asArray(cust.vehicles).find((v) => v.id === iv.vehicleId) : null;
       const result = renderWorkshopInvoicePdf(doc, {
         iv, jc, cust, veh, shop, status: deriveStatus(iv), totals: t, money, qrDataUrl, docTypeLabel, partLines, svcLines, otherLines,
       });
@@ -2686,6 +2687,11 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
       // (it has a descender, "verify") with real margin before the header starts.
       let y = Math.max(by + 8, qrTop + QR_PT + 32);
       const cQty = W - M - 200, cRate = W - M - 120, cAmt = W - M - 6;
+      // PH22-04 — line description column: from the left margin to just short of the
+      // centered QTY column. Was a flat `.slice(0, 52)` (no ellipsis); now width-aware
+      // truncation shared with the workshop PDF and the report tables (pdfTheme.truncW).
+      const descW = cQty - (M + 6) - 16;
+      const lineDesc = (l) => truncW(doc, String(l.desc || '-'), descW);
       const lineAmt = (l) => num(l.qty) * num(l.rate) * (1 - (num(l.disc) || 0) / 100);
       // GLOBAL PDF FRAMEWORK (readability/print-quality pass): a long invoice's
       // continuation page previously had NO letterhead at all, and NO page had a
@@ -2714,7 +2720,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           const rowH = 23;
           if (y + rowH > 700) { doc.addPage(); page += 1; drawPdfHeader(doc, { W, M, shop, sub: `${docTypeLabel} — ${iv.invNo} (continued)` }); y = 78; drawPartsHeader(); }
           doc.setTextColor(30, 30, 30); doc.setFontSize(8.5);
-          doc.text(String(l.desc || '-').slice(0, 52), M + 6, y);
+          doc.text(lineDesc(l), M + 6, y);
           doc.text(String(num(l.qty)), cQty, y, { align: 'center' });
           doc.text(money(l.rate), cRate, y, { align: 'right' });
           doc.text(money(lineAmt(l)), cAmt, y, { align: 'right' });
@@ -2731,7 +2737,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           doc.setTextColor(30, 30, 30); doc.setFontSize(8.5);
           // A service is hourly if flagged, or (legacy data) if its qty isn't 1.
           const hourly = l.hourly === true || (l.hourly === undefined && num(l.qty) !== 1);
-          doc.text(String(l.desc || '-').slice(0, 52), M + 6, y);
+          doc.text(lineDesc(l), M + 6, y);
           if (hourly) {
             doc.setFontSize(7.5); doc.setTextColor(110, 110, 110);
             doc.text(`${num(l.qty)} hr x ${money(l.rate)}/hr`, cRate, y, { align: 'right' });
@@ -2749,7 +2755,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           const rowH = 23;
           if (y + rowH > 700) { doc.addPage(); page += 1; drawPdfHeader(doc, { W, M, shop, sub: `${docTypeLabel} — ${iv.invNo} (continued)` }); y = 78; drawOtherHeader(); }
           doc.setTextColor(30, 30, 30); doc.setFontSize(8.5);
-          doc.text(String(l.desc || '-').slice(0, 52), M + 6, y);
+          doc.text(lineDesc(l), M + 6, y);
           doc.text(String(num(l.qty)), cQty, y, { align: 'center' });
           doc.text(money(l.rate), cRate, y, { align: 'right' });
           doc.text(money(lineAmt(l)), cAmt, y, { align: 'right' });
@@ -2787,8 +2793,8 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
       doc.setDrawColor(...PDF_RULE.medium); doc.line(lx, y, cAmt, y);
       y += 12;
       row('Grand Total', t.grand, true); row('Paid', t.paid); row('Balance Due', t.balance, true);
-      const hasPayments = (iv.payments || []).length > 0;
-      if (hasPayments) { doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(120, 120, 120); doc.text(`Payments: ${iv.payments.map((p) => `${p.mode} ${money(p.amount)}`).join(',  ')}`.slice(0, 95), M, y + 6); }
+      const ivPayments = asArray(iv.payments); // PH22-02
+      if (ivPayments.length > 0) { doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(120, 120, 120); doc.text(`Payments: ${ivPayments.map((p) => `${p.mode} ${money(p.amount)}`).join(',  ')}`.slice(0, 95), M, y + 6); }
       // Settings QA fix: Settings -> Billing -> Bank/UPI Details & Invoice Terms
       // ("Printed on every invoice and estimate") saved but were never drawn
       // anywhere. The totals block above always reserves room up to y=700 before

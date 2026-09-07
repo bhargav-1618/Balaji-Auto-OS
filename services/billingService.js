@@ -56,16 +56,33 @@ export const toNum = (v) => {
  */
 export function invoiceTotals(iv) {
   const lines = asArray(iv?.lines); // PH21-D1 — a wrong-type `lines` must not throw here (the money path runs on every screen)
+  // PHASE 22 (PH22-01) — this now mirrors BillingModule.totalsOf's FULL model, not a
+  // simplified subset. It previously ignored the invoice-level discount, `gstMode`
+  // (exempt / IGST) and the per-line-GST-absent → `gstPct` fallback — so
+  // lib/vehicleStats.revenueOf (the Vehicle Report "Revenue" column and every Vehicles
+  // "Revenue" display) summed a grand total that disagreed with the invoice's own
+  // authoritative `grandTotal` whenever a contributing invoice carried a discount or
+  // was GST-exempt. The docstring above ("exactly one definition of the total") is now
+  // actually true; tests/financial-integrity.test.cjs checks this against the oracle.
   let sub = 0;
-  let gst = 0;
+  let lineGst = 0;
+  let cost = 0;
   lines.forEach((l) => {
     const gross = toNum(l.qty) * toNum(l.rate);
-    const net = Math.max(0, gross - gross * (toNum(l.disc) / 100));
+    const lineDisc = l.disc ? gross * (toNum(l.disc) / 100) : 0;
+    const net = Math.max(0, gross - lineDisc);
     sub += net;
-    gst += net * (toNum(l.gst) / 100);
+    const rate = l.gst != null ? toNum(l.gst) : toNum(iv?.gstPct);
+    lineGst += net * (rate / 100);
+    cost += toNum(l.purchasePrice) * toNum(l.qty);
   });
+  const invDisc = iv?.discountType === 'percent' ? sub * (toNum(iv?.discount) / 100) : toNum(iv?.discount);
+  const afterDisc = Math.max(0, sub - invDisc);
+  const anyLineGst = lines.some((l) => l.gst != null);
+  let gst = anyLineGst ? lineGst * (afterDisc / (sub || 1)) : afterDisc * (toNum(iv?.gstPct) / 100);
+  if (iv?.gstMode === 'exempt') gst = 0;
 
-  const computed = Math.round(sub + gst);
+  const computed = Math.round(afterDisc + gst);
   // Fall back to the stored value ONLY for legacy/imported invoices that carry no lines.
   const grand = lines.length ? computed : toNum(iv?.grandTotal);
 
@@ -75,10 +92,12 @@ export function invoiceTotals(iv) {
 
   return {
     sub: Math.round(sub),
+    afterDisc: Math.round(afterDisc),
     gst: Math.round(gst),
     grand,
     paid,
     balance: Math.max(0, grand - paid),
+    cost: Math.round(cost),
     parts: lines.filter((l) => l.kind === LINE_KIND.PART)
       .reduce((s, l) => s + toNum(l.qty) * toNum(l.rate), 0),
     labour: lines.filter((l) => l.kind === LINE_KIND.LABOUR)
