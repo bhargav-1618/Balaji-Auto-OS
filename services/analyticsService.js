@@ -6,6 +6,11 @@
 
 // --- internal helpers (self-contained so this module has no coupling) ---
 const safeLower = (val) => (val || '').toString().toLowerCase();
+// PH21-D1 — a nested record field (customer.vehicles, invoice.payments, part.suppliers)
+// is only an array by convention; `x || []` does not catch a wrong-type value, and a
+// throw here reaches the app-level ErrorBoundary. Same guard as VehiclesModule's
+// normalizeVehicle, kept local so this module stays dependency-free.
+const asArray = (v) => (Array.isArray(v) ? v : []);
 const tsToDate = (ts) => {
   if (!ts) return null;
   if (ts.toDate) return ts.toDate();
@@ -79,7 +84,9 @@ export function computeInventoryHealth(inventory) {
 export function computeWorkshopScore({ inventory, sales = [], suppliers = [], alertsCount = 0, invHealthScore }) {
   const ih = invHealthScore != null ? invHealthScore : computeInventoryHealth(inventory).score;
   const now = Date.now(); const d30 = 30 * 86400000;
-  const qtyOf = (s) => s.qty ?? s.quantity ?? 0;
+  // PH21-D1 — coerce, don't `??`: a forged/legacy sales row with `qty: "abc"` used to
+  // string-concat here and make the whole Workshop Score render "NaN/100".
+  const qtyOf = (s) => { const n = Number(s.qty ?? s.quantity ?? 0); return Number.isFinite(n) ? n : 0; };
   const recentSales = sales.filter((s) => { const d = tsToDate(s.createdAt); return d && now - d.getTime() < d30; }).reduce((a, s) => a + qtyOf(s), 0);
   const salesScore = Math.min(100, Math.round(recentSales / 2)); // ~200 units/30d => 100
   const withOt = suppliers.filter((s) => s.onTimePct != null);
@@ -123,7 +130,7 @@ export function computeAlerts(inventory, reorderRequests, connError, extra = {})
   const daysTo = (d) => { if (!d) return null; const t = new Date(d).getTime(); if (Number.isNaN(t)) return null; return Math.round((t - now) / 86400000); };
   const expBadge = (n) => (n < 0 ? 'Critical' : n <= 15 ? 'Warning' : 'Inventory');
   customers.forEach((c) => {
-    (c.vehicles || []).forEach((v) => {
+    asArray(c.vehicles).forEach((v) => {
       const label = `${v.regNo || v.model || v.vehicle || 'Vehicle'} · ${c.name}`;
       [['insuranceExpiry', 'Insurance'], ['pucExpiry', 'PUC'], ['rcExpiry', 'RC'], ['warrantyExpiry', 'Warranty']].forEach(([field, kind]) => {
         const n = daysTo(v[field]);
@@ -196,7 +203,7 @@ export function computeInsights({ inventory = [], sales = [], suppliers = [], pu
   const now = Date.now(); const d7 = 7 * 86400000;
   const sod = new Date(); sod.setHours(0, 0, 0, 0); const sodMs = sod.getTime();
   const isToday = (ts) => { const d = tsToDate(ts); return !!d && d.getTime() >= sodMs; };
-  const qtyOf = (s) => s.qty ?? s.quantity ?? 0;
+  const qtyOf = (s) => { const n = Number(s.qty ?? s.quantity ?? 0); return Number.isFinite(n) ? n : 0; }; // PH21-D1 — coerce, don't `??`
   const DONE = new Set(['Delivered', 'Closed', 'Cancelled']);
   const inr = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
   const list = [];
@@ -217,7 +224,7 @@ export function computeInsights({ inventory = [], sales = [], suppliers = [], pu
   // Revenue actually collected TODAY (each payment entry carries its own date).
   const todayStr = new Date().toISOString().slice(0, 10);
   const collectedToday = invoices.reduce(
-    (sum, iv) => sum + (iv.payments || []).filter((p) => p.date === todayStr).reduce((s, p) => s + (Number(p.amount) || 0), 0),
+    (sum, iv) => sum + asArray(iv.payments).filter((p) => p.date === todayStr).reduce((s, p) => s + (Number(p.amount) || 0), 0),
     0
   );
   if (collectedToday > 0) push('collected', 11, 'activity', 'positive', `${inr(collectedToday)} collected today`);
@@ -258,7 +265,7 @@ export function computeInsights({ inventory = [], sales = [], suppliers = [], pu
   const recvVal = restocks.filter((r) => { const d = tsToDate(r.createdAt); return d && now - d.getTime() < d7; }).reduce((a, r) => a + (r.total || (r.qty || 0) * (r.unitCost || 0) || 0), 0);
   if (recvVal > 0) push('received', 44, 'activity', 'positive', `${inr(recvVal)} of stock received this week`,
     { tab: 'inventory', opts: { subView: 'stock', stockFilter: { type: 'in', range: '7d' } } });
-  const linked = new Set(); active.forEach((p) => (p.suppliers || []).forEach((s) => linked.add(s?.id || s)));
+  const linked = new Set(); active.forEach((p) => asArray(p.suppliers).forEach((s) => linked.add(s?.id || s)));
   const inactiveSup = suppliers.filter((s) => !s.archived && !linked.has(s.id)).length;
   if (inactiveSup > 0) push('supplier', 45, 'state', 'info', `${inactiveSup} supplier${inactiveSup === 1 ? '' : 's'} have no linked parts`);
   const noImg = active.filter((p) => !(p.imageString || p.image)).length;
@@ -347,7 +354,7 @@ export function computeWorkshopProgress({ inventory = [], invoices = [], jobCard
 export function computeAchievements({ inventory = [], sales = [], suppliers = [], purchaseOrders = [], restocks = [] }) {
   const health = computeInventoryHealth(inventory).score;
   return [
-    { label: 'First Supplier', done: suppliers.some((s) => !s.archived) },
+    { label: 'First Supplier', done: asArray(suppliers).some((s) => !s.archived) },
     { label: 'First Sale', done: sales.length > 0 },
     { label: 'First Purchase Order', done: purchaseOrders.length > 0 },
     { label: 'First Stock In', done: restocks.length > 0 },

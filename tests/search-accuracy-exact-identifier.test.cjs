@@ -131,7 +131,7 @@ console.log('\nPart 2 — every module migrated to the shared exact-identifier f
   ok('Customers: linked Job Card No. and Invoice No. are NOT searchable — no refIds/refIdsFn wiring exists anywhere in this file',
     !/refIdsFn/.test(src) && !/cardsOf\(c\)\.map\(\(j\) => j\.jobNo\), \.\.\.invoicesOf/.test(src));
   ok('Customers: name/phone/email/city/company/vehicle make-model stay in the partial `hay` bucket',
-    /\(c\) => \[c\.name, c\.phone, c\.altPhone, \.\.\.\(c\.extraPhones \|\| \[\]\), c\.email, c\.city, c\.companyName, c\.referenceBy,/.test(src));
+    /\(c\) => \[c\.name, c\.phone, c\.altPhone, \.\.\.(?:\(c\.extraPhones \|\| \[\]\)|asArray\(c\.extraPhones\)), c\.email, c\.city, c\.companyName, c\.referenceBy,/.test(src));
   ok('Customers: filter + rank + sort goes through the single shared searchAndRank call', /searchAndRank\(prefiltered, searchIndex, \(c\) => c\.id, dq,/.test(src));
 }
 
@@ -160,7 +160,7 @@ console.log('\nPart 2 — every module migrated to the shared exact-identifier f
     /hay: \[jc\.customer, jc\.phone, jc\.vehicle, jc\.advisor, jc\.technician\]\.filter\(Boolean\)\.join\(' '\)\.toLowerCase\(\)/.test(src));
   ok('Job Cards (Saved list): filter calls matchIndexed', /matchIndexed\(entry, savedDq\)/.test(src));
   ok('Job Cards (CustomerSearch picker): Customer ID/Registration/VIN/Engine No. are exact-only',
-    /\(c\) => \[c\.code, \.\.\.\(c\.vehicles \|\| \[\]\)\.flatMap\(\(v\) => \[v\.regNo, v\.vin, v\.engineNo\]\)\]/.test(src));
+    /\(c\) => \[c\.code, \.\.\.(?:\(c\.vehicles \|\| \[\]\)|asArray\(c\.vehicles\))\.flatMap\(\(v\) => \[v\.regNo, v\.vin, v\.engineNo\]\)\]/.test(src));
   ok('Job Cards (parts picker): Part Number/OEM No./Part No./barcode are exact-only',
     /\(p\) => \[p\.sku, p\.oemNo, p\.partNo, p\.barcode\]/.test(src));
 }
@@ -223,9 +223,9 @@ console.log('\nPart 2 — every module migrated to the shared exact-identifier f
   ok('CommandPalette: part SKU is exact-only (via a memoized useSearchIndex, not rebuilt per keystroke)',
     /const partIndex = useSearchIndex\(activeParts, \(p\) => p\.id, \(p\) => \[p\.name\], \(p\) => \[p\.sku\]\);/.test(src));
   ok('CommandPalette: supplier Code + GST are exact-only',
-    /const supplierIndex = useSearchIndex\(suppliers, \(s\) => s\.id, \(s\) => \[s\.name, \.\.\.\(s\.altNames \|\| \[\]\)\], \(s\) => \[s\.code, s\.gst\]\);/.test(src));
+    /const supplierIndex = useSearchIndex\(suppliers, \(s\) => s\.id, \(s\) => \[s\.name, \.\.\.(?:\(s\.altNames \|\| \[\]\)|asArray\(s\.altNames\))\], \(s\) => \[s\.code, s\.gst\]\);/.test(src));
   ok('CommandPalette: customer Code + registrations are exact-only, name/phone stay partial',
-    /const customerIndex = useSearchIndex\(customers, \(c\) => c\.id, \(c\) => \[c\.name, c\.phone\], \(c\) => \[c\.code, \.\.\.\(c\.vehicles \|\| \[\]\)\.flatMap\(\(v\) => \[v\.regNo, v\.reg\]\)\]\);/.test(src));
+    /const customerIndex = useSearchIndex\(customers, \(c\) => c\.id, \(c\) => \[c\.name, c\.phone\], \(c\) => \[c\.code, \.\.\.(?:\(c\.vehicles \|\| \[\]\)|asArray\(c\.vehicles\))\.flatMap\(\(v\) => \[v\.regNo, v\.reg\]\)\]\);/.test(src));
   ok('CommandPalette: invoice No. + Registration No. are exact-only',
     /const invoiceIndex = useSearchIndex\(invoices, \(iv\) => iv\.id, \(iv\) => \[iv\.customer, iv\.vehicle\], \(iv\) => \[iv\.invNo, iv\.regNo\]\);/.test(src));
   ok('CommandPalette: Job Card No. (full + digits-only) + Registration No. are exact-only',
@@ -245,7 +245,7 @@ console.log('\nPart 2 — every module migrated to the shared exact-identifier f
 {
   const src = read('components/inventory/InventoryPurchaseOrders.jsx');
   ok('InventoryPurchaseOrders: PO Number + item Part Number are exact-only, supplier/item names stay partial',
-    /\(p\) => \[p\.poNumber, \.\.\.\(p\.items \|\| \[\]\)\.map\(\(it\) => it\.sku\)\]/.test(src));
+    /\(p\) => \[p\.poNumber, \.\.\.(?:\(p\.items \|\| \[\]\)|asArray\(p\.items\))\.map\(\(it\) => it\.sku\)\]/.test(src));
 }
 {
   const src = read('components/inventory/SupplierPOBuilder.jsx');

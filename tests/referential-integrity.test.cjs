@@ -148,7 +148,7 @@ ok('PH10-03 FIXED [fact]: Billing\'s inline "Add Vehicle" shortcut (saveNewVehic
   && /import \{ useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed, regKey(, phoneKey)? \} from '\.\.\/\.\.\/lib\/useSearch';/.test(billing));
 
 ok('PH10-03 FIXED [fact]: Job Card\'s inline "Register this vehicle to X" shortcut now checks every OTHER customer\'s vehicles too (not just the matched customer\'s own file) before offering to register — surfaces the true owner instead of silently creating a second ownership record',
-  /const elsewhere = customers\.find\(\(c\) => c\.id !== matched\.id && \(c\.vehicles \|\| \[\]\)\.some\(\(v\) => \(v\.regNo \|\| ''\)\.toUpperCase\(\) === card\.regNo\.toUpperCase\(\)\)\);/.test(jobcards)
+  /const elsewhere = customers\.find\(\(c\) => c\.id !== matched\.id && (?:\(c\.vehicles \|\| \[\]\)|asArray\(c\.vehicles\))\.some\(\(v\) => \(v\.regNo \|\| ''\)\.toUpperCase\(\) === card\.regNo\.toUpperCase\(\)\)\);/.test(jobcards)
   && /is already registered to \{elsewhere\.name\} — not \{matched\.name\}/.test(jobcards));
 
 // =====================================================================

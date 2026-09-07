@@ -37,7 +37,7 @@ import {
   Copy, Archive, MoreVertical, IndianRupee, Clock, Printer, MapPin,
 } from 'lucide-react';
 import { variantsFor, FUELS, TRANSMISSIONS, BODY_TYPES, DRIVE_TYPES, OWNERSHIP_TYPES } from '../../lib/vehicleCatalog';
-import { num, isIndianMobile, mobileInput, MOBILE_ERROR } from '../../lib/format';
+import { num, asArray, isIndianMobile, mobileInput, MOBILE_ERROR } from '../../lib/format';
 
 const inputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
@@ -178,7 +178,8 @@ const emptyVehicle = () => ({
 // (never overwriting real values with defaults) and coerce the known collections to
 // arrays and the known nested containers to objects. This is done ONCE at the edges
 // (wizard init, list mapping) so the UI can use the values directly and safely.
-const asArray = (v) => (Array.isArray(v) ? v : []);
+// PH21-D1 — `asArray` is now the shared guard in lib/format (this module's own copy is
+// where the pattern started); `asObject` stays local (only used here).
 const asObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 const normalizeVehicle = (v = {}) => {
   const base = emptyVehicle();
@@ -362,7 +363,7 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
   // string — this is the THIRD independent "search existing customer" implementation in
   // the app (alongside the Customers module's own list and Job Cards' CustomerSearch),
   // now sharing the same matching primitive as both of those.
-  const ownerSearchIndex = useSearchIndex(customers, (c) => c.id, (c) => [c.name, c.phone], (c) => [c.code, ...(c.vehicles || []).map((v) => v.regNo)]);
+  const ownerSearchIndex = useSearchIndex(customers, (c) => c.id, (c) => [c.name, c.phone], (c) => [c.code, ...asArray(c.vehicles).map((v) => v.regNo)]); // PH21-D1
   const custShown = useMemo(() => (custQ.trim() ? customers.filter((c) => matchIndexed(ownerSearchIndex.get(c.id), custQ)) : customers), [custQ, customers, ownerSearchIndex]);
   useEffect(() => { setCustHi(0); }, [custQ, custOpen]);
   const custListRef = useRef(null);
@@ -664,7 +665,7 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
 
   const rows = useMemo(() => {
     const out = [];
-    customers.forEach((c) => (c.vehicles || []).forEach((v) => out.push(normalizeVehicle({ ...v, ownerId: c.id, owner: c.name, ownerCode: c.code, ownerPhone: c.phone, ownerType: c.type }))));
+    customers.forEach((c) => asArray(c.vehicles).forEach((v) => out.push(normalizeVehicle({ ...v, ownerId: c.id, owner: c.name, ownerCode: c.code, ownerPhone: c.phone, ownerType: c.type })))); // PH21-D1
     return out;
   }, [customers]);
 
@@ -1488,7 +1489,7 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
                   {jcOf(selected).length ? [...jcOf(selected)].sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0)).map((j, i) => (
                     <button key={i} type="button" onClick={() => onOpenJobCard?.(j)} className="w-full text-left px-3 py-2 rounded-xl text-xs hover:bg-white/[0.06] transition" style={{ background: 'rgba(var(--fg-rgb),0.03)' }}>
                       <div className="flex justify-between"><span className="text-white/80 font-medium">{j.jobNo}</span><span className="text-white/45">{j.status}</span></div>
-                      <p className="text-[10px] text-white/45 mt-0.5">{(j.complaints || []).filter(Boolean)[0] || 'Service'} · {j.advisor || '—'}</p>
+                      <p className="text-[10px] text-white/45 mt-0.5">{asArray(j.complaints).filter(Boolean)[0] || 'Service'} · {j.advisor || '—'}</p>
                     </button>
                   )) : <p className="text-xs text-white/45 text-center py-4">No service history yet.</p>}
                 </div>

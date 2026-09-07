@@ -49,7 +49,7 @@ import { lockBody, unlockBody, assertBodyUnlockedIfNoModals } from './Modal';
 import BillingModule from './billing/BillingModule';
 import { getGarageSeed } from '../lib/demoGarageSeed';
 import { computeRange, ratingFor, computeInventoryHealth, computeWorkshopScore, computeAlerts, computeInsights, computeAchievements, computeWorkshopProgress } from '../services/analyticsService';
-import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, toIndianPhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, isSameDay, trendPct, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
+import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, toIndianPhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, isSameDay, trendPct, asArray, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
 import { buildPO, poCreateDoc, poAdvanceDoc, poReceiveDoc, poCancelDoc, nextPOStatus } from '../services/purchaseOrderService';
 import {
   catMatches, remapCatFields, renameCategoryDocs, deleteCategoryDocs,
@@ -5962,7 +5962,7 @@ function OverviewView({ inventory, sales, suppliers, auditLog, restocks, stockAd
     .filter((p) => (p.stock || 0) <= (p.minStock || 5))
     .map((p) => {
       const need = Math.max((p.minStock || 5) * 2 - (p.stock || 0), (p.minStock || 5));
-      const sup = (p.suppliers || []).find((s) => s.isPreferred) || (p.suppliers || [])[0];
+      const sup = asArray(p.suppliers).find((s) => s.isPreferred) || asArray(p.suppliers)[0]; // PH21-D1
       return { p, need, supplier: sup?.name || '—', cost: need * (p.purchasePrice || 0) };
     })
     .sort((a, b) => (a.p.stock || 0) - (b.p.stock || 0)), [active]);
@@ -5991,7 +5991,7 @@ function OverviewView({ inventory, sales, suppliers, auditLog, restocks, stockAd
 
   // --- Top suppliers (real: linked parts + purchase value of their stock) ---
   const topSuppliers = useMemo(() => suppliers.map((s) => {
-    const linked = active.filter((p) => (p.suppliers || []).some((sp) => sp.id === s.id || sp.name === s.name));
+    const linked = active.filter((p) => asArray(p.suppliers).some((sp) => sp.id === s.id || sp.name === s.name)); // PH21-D1
     const value = linked.reduce((sum, p) => sum + (p.purchasePrice || 0) * (p.stock || 0), 0);
     return { id: s.id, name: s.name, count: linked.length, value };
   }).filter((s) => s.count > 0).sort((a, b) => b.value - a.value).slice(0, 5), [suppliers, active]);
@@ -6390,8 +6390,8 @@ function CommandPalette({ open, onClose, inventory, suppliers, customers = [], i
   // BEST matches across all types, instead of parts (pushed first) silently crowding out
   // a genuinely closer customer/invoice/job-card match once ≥30 parts happen to match.
   const partIndex = useSearchIndex(activeParts, (p) => p.id, (p) => [p.name], (p) => [p.sku]);
-  const supplierIndex = useSearchIndex(suppliers, (s) => s.id, (s) => [s.name, ...(s.altNames || [])], (s) => [s.code, s.gst]);
-  const customerIndex = useSearchIndex(customers, (c) => c.id, (c) => [c.name, c.phone], (c) => [c.code, ...(c.vehicles || []).flatMap((v) => [v.regNo, v.reg])]);
+  const supplierIndex = useSearchIndex(suppliers, (s) => s.id, (s) => [s.name, ...asArray(s.altNames)], (s) => [s.code, s.gst]);
+  const customerIndex = useSearchIndex(customers, (c) => c.id, (c) => [c.name, c.phone], (c) => [c.code, ...asArray(c.vehicles).flatMap((v) => [v.regNo, v.reg])]); // PH21-D1 — a wrong-type `vehicles` must not crash the command palette
   const invoiceIndex = useSearchIndex(invoices, (iv) => iv.id, (iv) => [iv.customer, iv.vehicle], (iv) => [iv.invNo, iv.regNo]);
   const jobCardIndex = useSearchIndex(jobCards, (j) => j.jobNo, (j) => [j.customer, j.vehicle, j.status], (j) => [j.jobNo, String(j.jobNo || '').replace(/\D/g, ''), j.regNo]);
 
@@ -6418,7 +6418,7 @@ function CommandPalette({ open, onClose, inventory, suppliers, customers = [], i
     // 1,000 customers.
     if (needle) {
       customers.forEach((c) => {
-        const regs = (c.vehicles || []).map((v) => v.regNo || v.reg).filter(Boolean);
+        const regs = asArray(c.vehicles).map((v) => v.regNo || v.reg).filter(Boolean); // PH21-D1
         push({ type: 'customer', id: c.id, label: c.name,
           sub: `Customer · ${[c.phone, regs.join(', ')].filter(Boolean).join(' · ')}`, data: c },
           rankIndexed(customerIndex.get(c.id), needle));
@@ -6947,7 +6947,7 @@ function invTotals(iv) {
   //
   // Deriving from the lines means there is exactly ONE definition of the total, so no
   // upstream code path can ever desynchronise the engine's gate again.
-  const lines = iv.lines || [];
+  const lines = asArray(iv.lines); // PH21-D1 — a wrong-type `lines` (forged/corrupt doc) must not throw; this runs in Reports/Overview useMemos
   let sub = 0;
   let gst = 0;
   lines.forEach((l) => {
@@ -7259,7 +7259,7 @@ function ReportsView(props) {
   // E2E workflow QA fix: same gross-vs-net bug as invTotals' parts/labour and Billing's
   // own topParts — summed raw qty*rate with no line-discount adjustment, inflating a
   // discounted part's reported Reports/Analytics revenue above what was actually billed.
-  const topParts = useMemo(() => { const m = {}; invoices.forEach((iv) => (iv.lines || []).filter((l) => l.kind === 'Part').forEach((l) => { const gross = (Number(l.qty) || 0) * (Number(l.rate) || 0); const net = l.disc ? Math.max(0, gross - gross * ((Number(l.disc) || 0) / 100)) : gross; m[l.desc || '—'] = (m[l.desc || '—'] || 0) + net; })); return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([label, v]) => ({ label, v, display: money(v) })); }, [invoices]);
+  const topParts = useMemo(() => { const m = {}; invoices.forEach((iv) => asArray(iv.lines).filter((l) => l.kind === 'Part').forEach((l) => { const gross = (Number(l.qty) || 0) * (Number(l.rate) || 0); const net = l.disc ? Math.max(0, gross - gross * ((Number(l.disc) || 0) / 100)) : gross; m[l.desc || '—'] = (m[l.desc || '—'] || 0) + net; })); return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([label, v]) => ({ label, v, display: money(v) })); }, [invoices]);
   const brandMix = useMemo(() => topVehicleBrands(customers, 8).map((x, i) => ({ ...x, color: RPT_COLORS[i % RPT_COLORS.length] })), [customers]);
   // COLOR SYSTEM REVIEW: this is a SEVERITY gradient (older overdue money = more
   // concerning), not an arbitrary category breakdown — positional rainbow coloring
@@ -7275,7 +7275,7 @@ function ReportsView(props) {
   }, [invoices]);
   const technicianPerf = useMemo(() => {
     const m = {};
-    jobCards.forEach((j) => { const tech = j.technician || '—'; if (!m[tech]) m[tech] = { jobs: 0, labour: 0 }; m[tech].jobs += 1; m[tech].labour += (j.labour || []).reduce((s, l) => s + (Number(l.hours) || 0) * (Number(l.rate) || 0), 0); });
+    jobCards.forEach((j) => { const tech = j.technician || '—'; if (!m[tech]) m[tech] = { jobs: 0, labour: 0 }; m[tech].jobs += 1; m[tech].labour += asArray(j.labour).reduce((s, l) => s + (Number(l.hours) || 0) * (Number(l.rate) || 0), 0); }); // PH21-D1
     return Object.entries(m).filter(([k]) => k !== '—').sort((a, b) => b[1].labour - a[1].labour).slice(0, 8).map(([label, d]) => ({ label, jobs: d.jobs, labour: d.labour }));
   }, [jobCards]);
 
@@ -7312,10 +7312,10 @@ function ReportsView(props) {
   const serviceSaleRows = salesByCat(['Service']).map((s) => [s.name, s.invoiceNo || '—', s.customer || '—', s.vehicle || '—', s.technician || '—', String(s.qty ?? ''), money(s.unitPrice || 0), money(s.revenue || 0), saleDateStr(s)]);
   const labourSaleRows = salesByCat(['Labour']).map((s) => [s.name, s.invoiceNo || '—', s.customer || '—', s.vehicle || '—', s.technician || '—', String(s.qty ?? ''), money(s.unitPrice || 0), money(s.revenue || 0), saleDateStr(s)]);
   const outsideSaleRows = salesByCat(['Outside Purchase']).map((s) => [s.name, s.invoiceNo || '—', s.customer || '—', s.vehicle || '—', String(s.qty ?? ''), money(s.unitPrice || 0), money(s.revenue || 0), saleDateStr(s)]);
-  const billingRows = invoices.filter((iv) => inRange(iv.date)).map((iv) => { const t = invTotals(iv); return [iv.invNo, iv.date, iv.customer, money(t.grand), money(t.paid), money(t.balance), invStatus(iv), (iv.payments || []).map((p) => p.mode).join('/') || '—']; });
+  const billingRows = invoices.filter((iv) => inRange(iv.date)).map((iv) => { const t = invTotals(iv); return [iv.invNo, iv.date, iv.customer, money(t.grand), money(t.paid), money(t.balance), invStatus(iv), asArray(iv.payments).map((p) => p.mode).join('/') || '—']; });
   const inventoryRows = inventory.filter((p) => !p.archived).map((p) => [p.name, p.sku || '', p.stock || 0, money((Number(p.stock) || 0) * (Number(p.purchasePrice) || 0)), money(p.sellingPrice || p.defaultSellingPrice || 0), p.category || '', p.brand || '']);
   const customerRows = customers.map((c) => { const cInv = invoices.filter((iv) => (iv.phone || '') === (c.phone || '')); const rev = cInv.reduce((s, iv) => s + invTotals(iv).grand, 0); return [c.name, c.phone || '', c.city || '', (c.vehicles || []).length, cInv.length, money(rev), money(c.outstanding || 0)]; });
-  const vehicleRows = customers.flatMap((c) => (c.vehicles || []).map((v) => [v.regNo || '', v.make || (v.vehicle || '').split(' ')[0] || '', v.model || v.vehicle || '', v.fuel || '', c.name, v.insuranceExpiry || '', v.odometer || '']));
+  const vehicleRows = customers.flatMap((c) => asArray(c.vehicles).map((v) => [v.regNo || '', v.make || (v.vehicle || '').split(' ')[0] || '', v.model || v.vehicle || '', v.fuel || '', c.name, v.insuranceExpiry || '', v.odometer || ''])); // PH21-D1
   // E2E workflow QA fix: this passed the raw stored value straight through — for a Job
   // Card that's `j.dateIn` (a datetime-local input string, "2026-08-27T00:04"), never
   // `saleDateStr()`-style formatted like every other report's date column ("26/8/2026").

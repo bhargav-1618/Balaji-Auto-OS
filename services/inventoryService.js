@@ -4,7 +4,7 @@
 // toasts stay in the component; these functions own the persistence.
 import { doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { formatINR, tsToDate } from '../lib/format';
+import { formatINR, tsToDate, asArray } from '../lib/format';
 
 // ---------------------------------------------------------------------------
 // H-5A — pure inventory business logic extracted from InventoryDashboard.js.
@@ -97,7 +97,8 @@ export function cardReservedQtys(card) {
   if (!card || ['Cancelled', 'Closed', 'Delivered'].includes(card.status)) return map;
   // PH21-01 — nonNegInt (not Number(p.qty) || 0): the job-card parts field accepts a
   // pasted over-long digit string, and this feeds `reserved: increment(delta)`.
-  (card.parts || []).forEach((p) => { if (p.partId) map[p.partId] = (map[p.partId] || 0) + nonNegInt(p.qty); });
+  // PH21-D1 — asArray (not `|| []`): a wrong-type `parts` must not throw (this runs on job-card save).
+  asArray(card.parts).forEach((p) => { if (p.partId) map[p.partId] = (map[p.partId] || 0) + nonNegInt(p.qty); });
   return map;
 }
 

@@ -129,7 +129,7 @@ ok('no refIds/refIdsFn wiring remains — job-card/invoice numbers are not searc
 ok('CustomersModule imports searchAndRank (the shared filter+rank+sort entry point)',
   /useSearchIndex, searchAndRank/.test(src));
 ok('the search index configures ONLY this customer\'s own identifiers (code/gst/pan/vehicle regNo-vin-engineNo)',
-  /\(c\) => \[c\.code, c\.gst, c\.pan,\s*\n\s*\.\.\.\(c\.vehicles \|\| \[\]\)\.flatMap\(\(v\) => \[v\.regNo, v\.vin, v\.engineNo\]\)\],\s*\n\s*\[custIdx\],\s*\n\s*\);/.test(src));
+  /\(c\) => \[c\.code, c\.gst, c\.pan,\s*\n\s*\.\.\.(?:\(c\.vehicles \|\| \[\]\)|asArray\(c\.vehicles\))\.flatMap\(\(v\) => \[v\.regNo, v\.vin, v\.engineNo\]\)\],\s*\n\s*\[custIdx\],\s*\n\s*\);/.test(src));
 ok('filtering + ranking goes through the single shared searchAndRank call', /searchAndRank\(prefiltered, searchIndex, \(c\) => c\.id, dq,/.test(src));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);

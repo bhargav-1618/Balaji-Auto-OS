@@ -10,7 +10,7 @@ import { lockBody, unlockBody } from '../Modal';
 import { buildQrPayload, makeQrDataUrl, QR_PT } from '../../lib/pdfQr';
 import { PDF_PAGE, PDF_RULE, SHOP, maskShop, liveShop, drawPdfHeader, drawPdfPageNumber } from '../../lib/pdfTheme';
 import { renderWorkshopInvoicePdf } from '../../lib/workshopInvoicePdf';
-import { tsToDate, localDateStr, displayDate , num, isIndianMobile, isValidEmail, MOBILE_ERROR, EMAIL_ERROR } from '../../lib/format';
+import { tsToDate, localDateStr, displayDate , num, asArray, isIndianMobile, isValidEmail, MOBILE_ERROR, EMAIL_ERROR } from '../../lib/format';
 import SearchSelect from '../common/SearchSelect';
 import MiniSelect from '../common/MiniSelect';
 import VehicleMakeModelSelect from '../common/VehicleMakeModelSelect';
@@ -437,7 +437,7 @@ function Stat({ icon: Icon, label, value, color }) {
 }
 
 const totalsOf = (inv) => {
-  const lines = inv.lines || [];
+  const lines = asArray(inv.lines); // PH21-D1 — a wrong-type `lines` (forged/corrupt doc) must not throw; this drives the whole Billing list
   // Per-line: amount after line discount; GST computed per line when line.gst present,
   // else falls back to the invoice-level gstPct (backward compatible).
   let sub = 0, lineGst = 0, cost = 0;
@@ -2248,7 +2248,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
       // on a filter that agrees with the number that was promised.
       if (statusF === 'Outstanding') { if (!['Unpaid', 'Partially Paid'].includes(status)) return false; }
       else if (statusF !== 'All' && status !== statusF) return false;
-      if (payModeF !== 'All' && !(iv.payments || []).some((p) => p.mode === payModeF)) return false;
+      if (payModeF !== 'All' && !asArray(iv.payments).some((p) => p.mode === payModeF)) return false;
       if (!inDateRange(iv)) return false;
       return matchIndexed(entry, dq);
     });
@@ -2526,7 +2526,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
       if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) { monthRev += t.grand; monthProfit += t.profit; }
       if (st === 'Draft' || iv.isEstimate) draftCount += 1;
       if (t.balance > 0 && !iv.isEstimate) pendingCount += 1;
-      (iv.payments || []).forEach((p) => { modeSplit[p.mode] = (modeSplit[p.mode] || 0) + num(p.amount); });
+      asArray(iv.payments).forEach((p) => { modeSplit[p.mode] = (modeSplit[p.mode] || 0) + num(p.amount); });
     });
     const avgInv = invoices.length ? grand / invoices.length : 0;
     // --- chart series (dependency-free SVG) ---
@@ -2544,7 +2544,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     // actually billed for it. Reproduced live: a 10%-off line showed its pre-discount
     // gross here instead of the net figure the Invoice Summary/KPIs correctly show.
     const partMap = {};
-    invoices.forEach((iv) => { if (deriveStatus(iv) === 'Cancelled') return; (iv.lines || []).filter((l) => l.kind === 'Part').forEach((l) => { const k = l.desc || '—'; const gross = num(l.qty) * num(l.rate); const net = l.disc ? Math.max(0, gross - gross * (num(l.disc) / 100)) : gross; partMap[k] = (partMap[k] || 0) + net; }); });
+    invoices.forEach((iv) => { if (deriveStatus(iv) === 'Cancelled') return; asArray(iv.lines).filter((l) => l.kind === 'Part').forEach((l) => { const k = l.desc || '—'; const gross = num(l.qty) * num(l.rate); const net = l.disc ? Math.max(0, gross - gross * (num(l.disc) / 100)) : gross; partMap[k] = (partMap[k] || 0) + net; }); });
     const topParts = Object.entries(partMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
     return { count: invoices.length, grand, paid, outstanding, gstTotal, partsRev, labourRev, profitToday, revToday, invToday, draftCount, pendingCount, monthRev, monthProfit, avgInv, modeSplit, trend, topCustomers, topParts };
   }, [invoices]);

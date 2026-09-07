@@ -98,7 +98,7 @@ console.log('\nUniversal Search Boxes — cross-app identifier isolation + ranki
     /const dupVin = f\.vin && existingVehicles\.some\(\(v\) => v\.id !== f\.id && v\.vin && normId\(v\.vin\) === normId\(f\.vin\)\);/.test(src) &&
     /const dupEngine = f\.engineNo && existingVehicles\.some\(\(v\) => v\.id !== f\.id && v\.engineNo && normId\(v\.engineNo\) === normId\(f\.engineNo\)\);/.test(src));
   ok('Add Vehicle\'s owner (customer) picker: Customer ID + every owned vehicle\'s reg no. go through a proper search index — was a raw substring match mixing identifiers into one flat string, the third independent "search existing customer" implementation in the app',
-    /const ownerSearchIndex = useSearchIndex\(customers, \(c\) => c\.id, \(c\) => \[c\.name, c\.phone\], \(c\) => \[c\.code, \.\.\.\(c\.vehicles \|\| \[\]\)\.map\(\(v\) => v\.regNo\)\]\);/.test(src));
+    /const ownerSearchIndex = useSearchIndex\(customers, \(c\) => c\.id, \(c\) => \[c\.name, c\.phone\], \(c\) => \[c\.code, \.\.\.(?:\(c\.vehicles \|\| \[\]\)|asArray\(c\.vehicles\))\.map\(\(v\) => v\.regNo\)\]\);/.test(src));
 }
 
 // --- Part 5: regKey itself was strengthened to strip hyphens/slashes, not just spaces ---

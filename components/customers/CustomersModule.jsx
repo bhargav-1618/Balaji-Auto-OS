@@ -17,7 +17,7 @@ import DetailsPanel from '../common/DetailsPanel';
 import DetailHero from '../common/DetailHero';
 import { appScrollTo, appScrollY } from '../../lib/appScroll';
 import VehicleMakeModelSelect from '../common/VehicleMakeModelSelect';
-import { num, isIndianMobile, isValidEmail, mobileInput, MOBILE_ERROR, EMAIL_ERROR } from '../../lib/format';
+import { num, asArray, isIndianMobile, isValidEmail, mobileInput, MOBILE_ERROR, EMAIL_ERROR } from '../../lib/format';
 import { SEMANTIC } from '../../constants/ui';
 import { writeSheet, stamp } from '../../lib/exportSheet';
 import { exportReportPDF } from '../../lib/pdfTheme';
@@ -400,7 +400,7 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
     const m = new Map();
     existing.forEach((c) => {
       if (c.id === f.id) return;
-      (c.vehicles || []).forEach((v) => {
+      asArray(c.vehicles).forEach((v) => { // PH21-D1
         const norm = (v.regNo || '').toUpperCase().replace(/\s+/g, '');
         if (norm) m.set(norm, c.name);
       });
@@ -414,7 +414,7 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
     const m = new Map();
     existing.forEach((c) => {
       if (c.id === f.id) return;
-      (c.vehicles || []).forEach((v) => {
+      asArray(c.vehicles).forEach((v) => { // PH21-D1
         const norm = (v.vin || '').toUpperCase().replace(/\s+/g, '');
         if (norm) m.set(norm, c.name);
       });
@@ -1330,10 +1330,10 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
   const searchIndex = useSearchIndex(
     customers,
     (c) => c.id,
-    (c) => [c.name, c.phone, c.altPhone, ...(c.extraPhones || []), c.email, c.city, c.companyName, c.referenceBy,
-      ...(c.vehicles || []).flatMap((v) => [v.make, v.model])],
+    (c) => [c.name, c.phone, c.altPhone, ...asArray(c.extraPhones), c.email, c.city, c.companyName, c.referenceBy,
+      ...asArray(c.vehicles).flatMap((v) => [v.make, v.model])], // PH21-D1
     (c) => [c.code, c.gst, c.pan,
-      ...(c.vehicles || []).flatMap((v) => [v.regNo, v.vin, v.engineNo])],
+      ...asArray(c.vehicles).flatMap((v) => [v.regNo, v.vin, v.engineNo])],
     [custIdx],
   );
 

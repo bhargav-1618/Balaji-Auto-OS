@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 // H-5C — pure customer business logic extracted from InventoryDashboard.js.
 // ---------------------------------------------------------------------------
+import { asArray } from '../lib/format';
 
 /**
  * Next sequential customer code, "CUST-0001"-style, 4-digit zero-padded.
@@ -46,9 +47,9 @@ export function withCustomerDefaults(data = {}, customers = []) {
 export function countCustomerReminders(customers = [], now = Date.now()) {
   let n = 0;
   const daysUntil = (x) => (x ? Math.round((new Date(x).getTime() - now) / 86400000) : null);
-  (customers || []).forEach((c) => {
+  asArray(customers).forEach((c) => {
     if (Number(c.outstanding) > 0) n += 1;
-    (c.vehicles || []).forEach((v) => {
+    asArray(c.vehicles).forEach((v) => { // PH21-D1 — a wrong-type `vehicles` must not throw
       [v.insuranceExpiry, v.rcExpiry, v.pucExpiry].forEach((x) => {
         const k = daysUntil(x);
         if (k !== null && k <= 30) n += 1;

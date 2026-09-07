@@ -84,7 +84,7 @@ ok('MiniSelect has keyboard navigation (Arrow/Enter)', /const onKey = \(e\) => \
 ok('MiniSelect highlights the active option', /i === hi \? 'bg-white\/10/.test(miniSelect));
 ok('Vehicles no longer runs its own local MiniSelect (imports the shared one)',
   !/function MiniSelect\(/.test(veh) && /import MiniSelect from '\.\.\/common\/MiniSelect'/.test(veh));
-ok('customer selector searches by registration number too', /\.\.\.\(c\.vehicles \|\| \[\]\)\.map\(\(v\) => v\.regNo\)/.test(veh));
+ok('customer selector searches by registration number too', /\.\.\.(?:\(c\.vehicles \|\| \[\]\)|asArray\(c\.vehicles\))\.map\(\(v\) => v\.regNo\)/.test(veh));
 ok('customer selector has keyboard nav', /setCustHi\(\(h\) => Math\.min/.test(veh));
 
 // ── Issue 3: context-aware drawer footers + clickable records ────────────────

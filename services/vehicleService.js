@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 // H-5C — pure vehicle business logic extracted from InventoryDashboard.js.
 // ---------------------------------------------------------------------------
+import { asArray } from '../lib/format';
 
 /** A customer's primary (first-registered) vehicle, or {} if they have none. */
 export function primaryVehicle(customer = {}) {
@@ -65,7 +66,7 @@ export function buildVehicleHistoryUpdate(vehicle = {}, { invoiceNo = '', date, 
  */
 export function topVehicleBrands(customers = [], limit = 8) {
   const m = {};
-  (customers || []).forEach((c) => (c.vehicles || []).forEach((v) => {
+  asArray(customers).forEach((c) => asArray(c.vehicles).forEach((v) => { // PH21-D1 — wrong-type `vehicles` must not throw
     const b = (v.make || (v.vehicle || '').split(' ')[0] || 'Other');
     m[b] = (m[b] || 0) + 1;
   }));

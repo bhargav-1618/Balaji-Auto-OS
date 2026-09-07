@@ -48,7 +48,7 @@ import { statusColor, SEMANTIC, JOB_CARD_STATUSES, JOB_CARD_DRAFT_STATUS } from 
 import Badge from '../common/Badge';
 import { VEHICLES, FUELS } from '../../lib/vehicleCatalog';
 import notify from '../common/notify';
-import { num, isIndianMobile, MOBILE_ERROR } from '../../lib/format';
+import { num, asArray, isIndianMobile, MOBILE_ERROR } from '../../lib/format';
 import { nextJobCardNumber } from '../../services/jobCardService';
 
 /* ================= constants ================= */
@@ -87,7 +87,7 @@ function jobMatchesKpiBucket(jc, bucket, todayMs) {
   if (bucket === 'Repair') return s === 'Repair Started' || s === 'Repair Paused';
   if (bucket === 'DeliveredToday') {
     if (s !== 'Delivered') return false;
-    const dl = (jc.statusLog || []).filter((l) => l.status === 'Delivered').pop();
+    const dl = asArray(jc.statusLog).filter((l) => l.status === 'Delivered').pop(); // PH21-D1
     return !!(dl && dl.at >= todayMs);
   }
   return s === bucket; // Inspection / Waiting Parts / Ready / Cancelled — bucket name IS the status
@@ -227,8 +227,8 @@ function CustomerSearch({ customers, onFill }) {
   const searchIndex = useSearchIndex(
     customers,
     (c) => c.id,
-    (c) => [c.name, c.phone, c.altPhone, ...(c.vehicles || []).flatMap((v) => [v.model])],
-    (c) => [c.code, ...(c.vehicles || []).flatMap((v) => [v.regNo, v.vin, v.engineNo])],
+    (c) => [c.name, c.phone, c.altPhone, ...asArray(c.vehicles).flatMap((v) => [v.model])], // PH21-D1
+    (c) => [c.code, ...asArray(c.vehicles).flatMap((v) => [v.regNo, v.vin, v.engineNo])],
   );
   const shown = useMemo(() => {
     const l = q.trim();
@@ -1532,7 +1532,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             // with no link between the two. A reg no. is a real-world unique identifier —
             // check every customer, same invariant the Vehicles module's own wizard
             // (`dupReg`) already enforces.
-            const elsewhere = customers.find((c) => c.id !== matched.id && (c.vehicles || []).some((v) => (v.regNo || '').toUpperCase() === card.regNo.toUpperCase()));
+            const elsewhere = customers.find((c) => c.id !== matched.id && asArray(c.vehicles).some((v) => (v.regNo || '').toUpperCase() === card.regNo.toUpperCase())); // PH21-D1
             if (elsewhere) return <p className="text-[11px] text-amber-400/80 mt-2">{card.regNo.toUpperCase()} is already registered to {elsewhere.name} — not {matched.name}. Check the registration number, or use Vehicles to reassign it.</p>;
             return (
               <button type="button" onClick={() => { onRegisterVehicle?.(matched.id, { regNo: card.regNo.toUpperCase(), model: card.vehicle, vin: card.vin, engineNo: card.engineNo, fuel: card.fuel }); toast.success(`Vehicle saved to ${matched.name}`); }} className="mt-2 h-9 px-3 rounded-lg text-[11px] font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] inline-flex items-center gap-1.5"><Plus size={13} /> Register this vehicle to {matched.name}</button>

@@ -15,7 +15,7 @@ import LocalCapacityBanner from '../common/LocalCapacityBanner';
 import { getLocalCapacityStatus } from '../../services/localCapacityService';
 import { SEMANTIC } from '../../constants/ui';
 import { useTranslation } from '../../lib/i18n';
-import { isIndianMobile, MOBILE_ERROR } from '../../lib/format';
+import { asArray, isIndianMobile, MOBILE_ERROR } from '../../lib/format';
 
 const inputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
@@ -121,7 +121,7 @@ export default function RemindersModule({ customers = [], invoices = [], jobCard
     const out = [];
     customers.forEach((c) => {
       if (Number(c.outstanding) > 0) out.push({ id: `pay-${c.id}`, kind: 'Payment', title: 'Outstanding payment', detail: `₹${Number(c.outstanding).toLocaleString('en-IN')} pending`, due: null, priority: 2, customer: c.name, phone: c.phone });
-      (c.vehicles || []).forEach((v) => {
+      asArray(c.vehicles).forEach((v) => { // PH21-D1
         const label = `${v.regNo || ''} · ${v.model || v.vehicle || ''}`.trim();
         // Universal Search review: regNo exposed as its own field (not just baked into
         // `detail`) so it can be matched as an EXACT-then-partial identifier via

@@ -17,6 +17,7 @@ import { checkCapacityGuard } from '../../lib/useCapacity';
 import notify from '../common/notify';
 import { useSearchIndex, matchIndexed, rankIndexed, useDeferredSearch } from '../../lib/useSearch';
 import { pricesDiffer } from '../../services/inventoryService';
+import { asArray } from '../../lib/format';
 import { SEMANTIC } from '../../constants/ui';
 import {
   ClipboardList, Plus, Check, PackageCheck, XCircle, Trash2,
@@ -119,8 +120,8 @@ export default function InventoryPurchaseOrders({
   const poSearchIndex = useSearchIndex(
     purchaseOrders,
     (p) => p.id,
-    (p) => [p.supplierName, ...(p.items || []).map((it) => it.name)],
-    (p) => [p.poNumber, ...(p.items || []).map((it) => it.sku)],
+    (p) => [p.supplierName, ...asArray(p.items).map((it) => it.name)], // PH21-D1
+    (p) => [p.poNumber, ...asArray(p.items).map((it) => it.sku)],
   );
   const shown = useMemo(() => {
     let list = filter === 'archived'
@@ -200,9 +201,9 @@ export default function InventoryPurchaseOrders({
                 </div>
 
                 {/* items */}
-                {(po.items || []).length > 0 && (
+                {asArray(po.items).length > 0 && (
                   <div className="mt-3 pt-3 space-y-1" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.05)' }}>
-                    {(po.items || []).map((it, i) => (
+                    {asArray(po.items).map((it, i) => ( /* PH21-D1 */
                       <div key={i} className="flex items-center gap-2 text-xs">
                         <span className="flex-1 min-w-0 text-white/70 truncate">{it.name}</span>
                         <span className="text-white/45">{num(it.qty)} × {inr(it.unitCost)}</span>

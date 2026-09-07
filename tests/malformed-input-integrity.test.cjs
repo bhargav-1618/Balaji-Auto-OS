@@ -35,7 +35,11 @@ const {
 const { num, safeLower, isValidEmail, isIndianMobile, tsToDate, formatINR, normalizePhone } = require('../lib/format');
 const { normalizeText, tokenize } = require('../lib/search');
 const { matchTokens, rankIndexed, normId, phoneKey } = require('../lib/useSearch');
-const { toNum, invoiceTotals, invoiceStatus, stockDelta, ledgerDelta } = require('../services/billingService');
+const { toNum, invoiceTotals, invoiceStatus, isRealized, revenueLines, partQuantities, stockDelta, ledgerDelta } = require('../services/billingService');
+const { countCustomerReminders } = require('../services/customerService');
+const { topVehicleBrands } = require('../services/vehicleService');
+const { invTotals, invStatus } = require('../components/InventoryDashboard.js');
+const { deriveStatus } = require('../components/billing/BillingModule.jsx');
 const A = require('../services/analyticsService');
 
 let PASS = 0, FAIL = 0;
@@ -331,6 +335,66 @@ console.log('\n9  Workshop PDF — renders a real document from fully-malformed 
   ok('PH21-01 — with num() finite-guarded the PDF cannot embed a raw "Rs. Infinity" line',
     finite(num('9'.repeat(400))) && finite(num(Infinity)) && num(Infinity) === 0);
 }
+
+// =====================================================================
+// 10 — WRONG-TYPE PERSISTED FIELDS (Phase 21 deep validation — PH21-D1)
+// =====================================================================
+console.log('\n10  Wrong-type persisted fields — a forged/corrupt document must not throw in a shared calculator\n');
+
+// A Firestore document can hold ANY shape an authenticated client (Phase 20: signedIn
+// write) or a half-finished write puts there. `invoice.lines`, `customer.vehicles`,
+// `jobCard.parts` are arrays only by convention. `x || []` does NOT catch a truthy
+// non-array — `'oops'.forEach` throws, and there is ONE app-level ErrorBoundary, so
+// the whole app goes down until the bad doc is removed. Every shared calculator must
+// treat a wrong-type field as empty, not throw.
+const WRONG_TYPES = ['a string', { 0: { partId: 'p', qty: 1 } }, 42, true, null, undefined, '', NaN];
+for (const wt of WRONG_TYPES) {
+  const label = wt === undefined ? 'undefined' : JSON.stringify(wt);
+  const iv = { id: 'i', invNo: 'INV-1', customer: 'x', status: 'Unpaid', date: '2026-01-01', grandTotal: wt, paid: wt, lines: wt, payments: wt };
+  const cust = { id: 'c', name: 'x', phone: '9', outstanding: 0, vehicles: wt, history: wt, noteEntries: wt };
+  const card = { jobNo: 'j', status: 'In Progress', parts: wt, labour: wt };
+  const part = { id: 'p', name: 'x', archived: false, suppliers: wt, categories: wt, compatibleCars: wt };
+
+  let threw = null;
+  try {
+    // money path — 4 copies that Phase 11 keeps in sync
+    invoiceTotals(iv); invoiceStatus(iv); isRealized(iv); revenueLines(iv); partQuantities(iv);
+    stockDelta(null, iv); ledgerDelta(iv, iv);
+    invTotals(iv); invStatus(iv); deriveStatus(iv);
+    // dashboard analytics
+    A.computeAlerts([part], [], null, { invoices: [iv], customers: [cust], jobCards: [card], purchaseOrders: [], suppliers: [] });
+    A.computeInsights({ inventory: [part], sales: [{ qty: wt, createdAt: Date.now() }], invoices: [iv], jobCards: [card], purchaseOrders: [], restocks: [], stockAdjustments: [], customers: [cust] });
+    A.computeAchievements({ inventory: [part], sales: [], suppliers: wt, purchaseOrders: [], restocks: [] });
+    A.computeWorkshopProgress({ inventory: [part], invoices: [iv], jobCards: [card], vehicles: [], sales: [{ qty: wt, createdAt: Date.now() }] });
+    // reservations + cross-module rollups
+    cardReservedQtys(card); reserveDelta(card, { jobNo: 'j', status: 'In Progress', parts: [] });
+    countCustomerReminders([cust]); topVehicleBrands([cust]);
+  } catch (e) { threw = e; }
+  ok(`every shared calculator survives lines/payments/vehicles/parts = ${label}`, !threw, threw && threw.message);
+}
+
+// PH21-D1 (analytics NaN) — a forged sales row with a non-numeric qty must not make the
+// Workshop Score render "NaN/100".
+const scoreEvil = A.computeWorkshopScore({
+  inventory: [{ id: 'p', name: 'x', archived: false, sku: 'S', suppliers: [{ id: 'x' }], sellingPrice: 10, purchasePrice: 5, compatibleCars: ['c'], category: 'C', imageString: 'i', stock: 5, minStock: 2 }],
+  sales: [{ qty: 'abc', createdAt: Date.now() }, { qty: {}, createdAt: Date.now() }, { qty: '5', createdAt: Date.now() }],
+  suppliers: [],
+});
+ok('PH21-D1 — computeWorkshopScore stays a finite 0-100 number when a sales row has a non-numeric qty',
+  finite(scoreEvil.score) && scoreEvil.score >= 0 && scoreEvil.score <= 100, JSON.stringify(scoreEvil.score));
+
+// The guard is the shared asArray, not a bespoke check per call site.
+const { asArray } = require('../lib/format');
+ok('lib/format exports asArray, and it coerces every non-array to []',
+  Array.isArray(asArray('x')) && asArray('x').length === 0 && asArray({}).length === 0
+  && asArray(null).length === 0 && asArray(undefined).length === 0
+  && asArray([1, 2]).length === 2);
+
+// A legit invoice still computes correctly (the guard is transparent for real data).
+const legit = { lines: [{ kind: 'Part', partId: 'p1', qty: 2, rate: 100, gst: 18 }], payments: [{ amount: 236 }] };
+const lt = invoiceTotals(legit);
+ok('asArray guard is transparent — a normal invoice still totals correctly (grand 236, balance 0, Paid)',
+  lt.grand === 236 && lt.balance === 0 && invoiceStatus(legit) === 'Paid', JSON.stringify(lt));
 
 // =====================================================================
 console.log(`\n${PASS} passed, ${FAIL} failed\n`);

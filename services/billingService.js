@@ -39,6 +39,7 @@
 import {
   INVOICE_STATUS, NON_REALIZING_STATUSES, LINE_KIND, REVENUE_CATEGORY,
 } from '../constants/index';
+import { asArray } from '../lib/format';
 
 /** Coerce to a finite number. Accepts negatives — a refund is a negative delta. */
 export const toNum = (v) => {
@@ -54,7 +55,7 @@ export const toNum = (v) => {
  * engine skipped — silently. Deriving means no upstream code path can desynchronise it.
  */
 export function invoiceTotals(iv) {
-  const lines = iv?.lines || [];
+  const lines = asArray(iv?.lines); // PH21-D1 — a wrong-type `lines` must not throw here (the money path runs on every screen)
   let sub = 0;
   let gst = 0;
   lines.forEach((l) => {
@@ -120,7 +121,7 @@ export function lineCategory(l) {
 /** Quantities of each inventory part on an invoice — {partId: qty}. */
 export function partQuantities(iv) {
   const out = {};
-  (iv?.lines || []).forEach((l) => {
+  asArray(iv?.lines).forEach((l) => {
     if (l.partId && l.kind === LINE_KIND.PART) out[l.partId] = (out[l.partId] || 0) + toNum(l.qty);
   });
   return out;
@@ -153,7 +154,7 @@ export function stockDelta(prior, next) {
 export function revenueLines(iv) {
   const out = {};
   if (!isRealized(iv)) return out;
-  (iv.lines || []).forEach((l) => {
+  asArray(iv.lines).forEach((l) => {
     const qty = toNum(l.qty);
     const gross = qty * toNum(l.rate);
     const revenue = Math.max(0, gross - gross * (toNum(l.disc) / 100));
