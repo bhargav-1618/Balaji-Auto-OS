@@ -45,12 +45,21 @@ export function useEditLease(collectionName, docId) {
   const [mine, setMine] = useState(false);
   const heldRef = useRef(null);   // { collectionName, docId } we currently hold
   const hbRef = useRef(null);
+  // PHASE 28 (PH28-01) — the docId the CONSUMER currently wants a lease on. `acquire`
+  // is async: between calling it and its Firestore round-trip resolving, the user can
+  // close the editor, switch to a different record, or Back out of the module. Without
+  // this, a resolved-too-late acquire still installed `heldRef` + a renewing heartbeat,
+  // leaving a record edit-locked with nobody editing it (another user then sees a false
+  // "🔒 …is editing"). Now every acquire checks, on resolve, that its target is still
+  // the one wanted — if not, it hands the lease straight back.
+  const wantRef = useRef(null);
 
   const stopHeartbeat = useCallback(() => {
     if (hbRef.current) { clearInterval(hbRef.current); hbRef.current = null; }
   }, []);
 
   const release = useCallback(async () => {
+    wantRef.current = null;          // any in-flight acquire is now unwanted
     stopHeartbeat();
     const held = heldRef.current;
     heldRef.current = null;
@@ -62,8 +71,17 @@ export function useEditLease(collectionName, docId) {
     const c = collectionName;
     const d = targetId || docId;
     if (!canLease || !d) return { ok: true };   // demo / no record → editing unrestricted
+    wantRef.current = d;
     try {
       await acquireLease(c, d, { uid, email, sessionId });
+      // PH28-01 — the consumer moved on (released, or asked for a different record)
+      // while this request was in flight. Give the lease back instead of installing a
+      // heartbeat on a record no one is editing; `superseded` tells the caller to
+      // abandon whatever it was about to open with the now-stale target.
+      if (wantRef.current !== d) {
+        releaseLease(c, d, { uid, sessionId });
+        return { ok: true, superseded: true };
+      }
       heldRef.current = { collectionName: c, docId: d };
       setMine(true);
       stopHeartbeat();
@@ -73,6 +91,7 @@ export function useEditLease(collectionName, docId) {
       return { ok: true };
     } catch (e) {
       if (e && e.code === 'lease/held') return { ok: false, heldBy: e.heldBy || 'another user' };
+      if (wantRef.current !== d) return { ok: true, superseded: true };  // PH28-01 — consumer moved on
       // Any other failure (offline, or a clock outside the rules' expiry window):
       // don't block the edit — the Phase 1a `_rev` transaction still protects the
       // save. The user just doesn't get the coordination lock this time.

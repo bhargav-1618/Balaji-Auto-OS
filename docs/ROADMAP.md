@@ -970,6 +970,43 @@ current release.
     **2/2**, lint 0, build ✓. No `firestore.rules` change; 0 production writes.
   Report: `docs/testing/PHASE_27_BROWSER_VIEWPORT_INTEGRITY_REPORT.md`.
 
+- ~~**Phase 28 — double-navigation / stale-route / rapid-selection integrity.**~~ **DONE —
+  three found + fixed (2 MEDIUM, 1 LOW).** Two-stage. Hunts "correct action → rapid
+  nav/selection → an older async op resolves later → stale result overwrites current
+  state". Architecture is mostly immune: list data is long-lived InventoryDashboard-
+  level `onSnapshot`; selected record is a pure `useMemo(list.find(selId))` with NO
+  per-selection fetch (rapid A→B→C→D → last click wins, verified live); search is
+  `useDeferredValue` not a debounce; per-record listeners are `docId`-keyed with
+  cleanup; modules unmount on tab switch. Rapid module switching, Back/Forward, and
+  record selection all verified sound (live + model), 0 leaked timers/listeners over
+  5×6 module cycles. Three defects:
+  - **PH28-01 (MEDIUM).** `hooks/useEditLease.js` `acquire()` is async; a resolved-
+    too-late acquire still installed `heldRef` + a renewing heartbeat → a record
+    edit-locked with nobody editing it (false "🔒 …is editing"). It also let
+    `CustomersModule.openCustomerEditor` and `JobCardModule.loadCard` (which commit the
+    displayed record AFTER `await acquire`) open the WRONG record on out-of-order
+    resolution. Fixed: a `wantRef` tracks the docId the consumer currently wants; a
+    late acquire whose target changed hands the lease back and returns
+    `{superseded:true}`; the two consumers `return` on `superseded`.
+  - **PH28-02 (LOW).** The Part/Supplier/Checkout/Restock/Stock-Adjust modals render
+    OUTSIDE the `activeTab === …` conditionals. Browser Back while one was open swapped
+    the module behind it and moved the URL. Fixed: `onPop` keeps Back inert (snaps the
+    hash back) while `blockingModalRef` is set.
+  - **PH28-03 (MEDIUM).** The hashchange handler (`onPop`, Back/Forward) called
+    `setActiveTabRaw` directly, bypassing the unsaved-changes confirm that a sidebar
+    click (`setActiveTab`) enforces via `moduleDirtyRef`/`settingsDirtyRef`. Back out
+    of a dirty editor discarded the edits with no prompt. Fixed: `onPop` runs the
+    identical two `window.confirm`s and snaps the hash back on cancel.
+  **+59 / −4 production (net +55), 4 files, 0 new component/dependency** — every guard
+  reuses an existing pattern (`releaseLease`, the demo-blocked `replaceState` revert,
+  `setActiveTab`'s confirms). NEW `tests/navigation-race-integrity.test.cjs` (36
+  assertions — pure acquire/release + onPop + out-of-order models, before/after, plus
+  shipped patterns and no-regression). PH28-04 (Next.js `Cancel rendering route`
+  rejection noise on rapid Back/Forward — dev-overlay only, navigation always correct)
+  documented as INFO, NOT fixed. Gates: `npm test` **149/149**, `npm run test:rules`
+  **2/2**, lint 0, build ✓. No `firestore.rules` change; 0 production writes.
+  Report: `docs/testing/PHASE_28_NAVIGATION_RACE_INTEGRITY_REPORT.md`.
+
 ## Scale — before large datasets
 
 *(Phase 25 measured the current behaviour of these items — all still accurate; see the

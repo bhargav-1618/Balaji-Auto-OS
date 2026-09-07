@@ -9234,6 +9234,15 @@ export default function InventoryDashboard() {
   const moduleDirtyRef = useRef(false);
   const handleModuleDirtyChange = useCallback((v) => { moduleDirtyRef.current = !!v; }, []);
 
+  // PHASE 28 (PH28-02) — the Part / Supplier / Checkout / Restock / Stock-Adjust modals
+  // render OUTSIDE the `activeTab === …` conditionals (so they can open over any
+  // module). A browser Back while one is open used to fire the hashchange handler and
+  // silently swap the module BEHIND the modal — leaving the address bar pointing at a
+  // tab the user can't see. `onPop` reads this ref to keep Back inert while such a
+  // modal owns the screen (the modal has its own close control). Updated in an effect
+  // below, once those state vars are declared.
+  const blockingModalRef = useRef(false);
+
   // Restore the tab from the URL on first paint (and honour Back/Forward). Also handle
   // deep-links opened in a NEW BROWSER TAB via ?open=<tab>:<query> — e.g. a job card or
   // invoice opened from the Customers drawer opens here, on the right module, pre-searched.
@@ -9352,11 +9361,24 @@ export default function InventoryDashboard() {
     const onPop = () => {
       const t = fromHash();
       if (!t) return;
-      if (demoBlockedTabRef.current(t)) {
-        protectedDemoToast(true);
+      // Snap the address bar back to the tab actually on screen. Used by every branch
+      // that refuses the navigation, so the hash never lies about where the user is.
+      const snapBack = () => {
         try { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${activeTabRef.current}`); } catch {}
-        return;
-      }
+      };
+      if (demoBlockedTabRef.current(t)) { protectedDemoToast(true); snapBack(); return; }
+      if (t === activeTabRef.current) return;
+      // PHASE 28 (PH28-02) — a Part/Supplier/Checkout/Restock/Adjust modal is open over
+      // the current module. Back does not tear the module out from under it; the modal
+      // stays and Back is a no-op (close it with its own control).
+      if (blockingModalRef.current) { snapBack(); return; }
+      // PHASE 28 (PH28-03) — Back/Forward must honour the SAME unsaved-changes guard a
+      // sidebar click goes through (setActiveTab). Without this, backing out of a dirty
+      // Settings page or entity editor discarded the edits with no prompt.
+      if (settingsDirtyRef.current && typeof window !== 'undefined'
+          && !window.confirm('You have unsaved settings. Leave without saving?')) { snapBack(); return; }
+      if (moduleDirtyRef.current && typeof window !== 'undefined'
+          && !window.confirm('You have unsaved changes. Leave without saving?')) { snapBack(); return; }
       setActiveTabRaw(t);
     };
     window.addEventListener('hashchange', onPop);
@@ -11200,6 +11222,12 @@ export default function InventoryDashboard() {
   // the tab changes or any modal/drawer/palette opens, so it can never linger over
   // another surface.
   useEffect(() => { setActionsOpen(false); }, [activeTab, showModal, showImport, showSupplierModal, restoreConfirm, cmdkOpen, sidebarMobileOpen]);
+  // PHASE 28 (PH28-02) — keep blockingModalRef in step with the tab-independent modals
+  // so the hashchange handler (registered once, high above) can read it. Runs every
+  // render; a ref write is cheap and never triggers one.
+  useEffect(() => {
+    blockingModalRef.current = !!(showModal || showSupplierModal || checkoutPart || restockTarget || adjustTarget);
+  });
   // FIX 2: WhatsApp purchase-order router
   const [reorderTarget, setReorderTarget] = useState(null); // { part, supplierName, contacts, block }
   // Feature 5: out-of-stock alternative suggester

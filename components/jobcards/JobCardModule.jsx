@@ -655,6 +655,10 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     if (isSaved) {
       jcSync.markSynced(revOf(jc));
       const r = await jcLease.acquire(jc.jobNo);
+      // PHASE 28 (PH28-01) — acquire resolved late; the user has since clicked a
+      // different card. Abandon this load so `applyCard` below doesn't overwrite the
+      // card they actually chose with this stale one.
+      if (r.superseded) return;
       setJcViewOnly(!r.ok);
       if (!r.ok) toast.error(`🔒 ${r.heldBy} is editing job card ${jc.jobNo}. You can view it once they finish.`, { duration: 6000 });
       setLeasedJobNo(jc.jobNo);

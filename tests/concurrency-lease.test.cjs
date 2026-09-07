@@ -151,7 +151,11 @@ ok('Invoices: an EXISTING invoice editor acquires; lost race keeps the popup ope
 ok('Job Cards: loading a SAVED card acquires; a lost race loads it read-only (not refused); save/clear releases',
   /const jcLease = useEditLease\('jobCards', leasedJobNo\)/.test(jc)
   && /const isSaved = !!\(jc && jc\.jobNo && \(savedRef\.current \|\| \[\]\)\.some\(\(c\) => c\.jobNo === jc\.jobNo\)\)/.test(jc)
-  && /const r = await jcLease\.acquire\(jc\.jobNo\);\s*\n\s*setJcViewOnly\(!r\.ok\);/.test(jc)
+  // Phase 28 (PH28-01) inserted a `if (r.superseded) return;` guard between the acquire
+  // and setJcViewOnly — a late acquire for a card the user already navigated past must
+  // not load it. The acquire → read-only-on-lost-race behaviour is otherwise unchanged.
+  && /const r = await jcLease\.acquire\(jc\.jobNo\);[\s\S]{0,400}setJcViewOnly\(!r\.ok\);/.test(jc)
+  && /await jcLease\.acquire\(jc\.jobNo\);[\s\S]{0,320}if \(r\.superseded\) return;/.test(jc)
   && /jcLease\.release\(\); setLeasedJobNo\(null\); setJcViewOnly\(false\);\s+\/\/ Phase 1b/.test(jc));
 
 // ── separation of concerns: the lease is NOT the data-integrity layer ─────

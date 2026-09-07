@@ -967,6 +967,26 @@ dimensions, labelled controls, tiny bundle), but confirming them is a runtime ta
     the `asPage` forms rely on the scroll region. Not a regression — strictly better
     than before — but not verified on a real iPhone.
 
+  **Phase 28 — navigation-race / stale-route / rapid-selection integrity (three found
+  + fixed; see `docs/testing/PHASE_28_NAVIGATION_RACE_INTEGRITY_REPORT.md`).** Rapid
+  module switching, Back/Forward, and rapid record selection all verified sound —
+  selection is a pure `useMemo` derivation (no per-selection fetch), search is
+  `useDeferredValue` (no stale-result race), modules unmount on tab switch, 0 leaked
+  timers/listeners. Fixed: PH28-01 (`useEditLease.acquire` phantom edit-lock + two
+  consumers opening the wrong record on out-of-order resolution), PH28-02 (inventory
+  modals survived Back with a URL/module desync), PH28-03 (Back/Forward bypassed the
+  unsaved-changes confirm a sidebar click enforces).
+  - **PH28-04 (INFO, NOT fixed):** rapid programmatic/user Back-Forward can log a
+    Next.js-internal `Cancel rendering route` unhandled promise rejection (its router
+    aborting a superseded popstate render). Navigation results are always correct; the
+    rejection is dev-error-overlay-only and clears on any hard load. A blanket
+    `unhandledrejection` swallow was judged a worse trade than the noise (it could
+    mask a real error), so this is documented rather than fixed.
+  - **Real-Firestore edit-lease / listener counts not measured** — demo mode has no
+    leases or server listeners; PH28-01's phantom-lock was proven by an execution-flow
+    model, not a live two-session reproduction (production is read-only navigation
+    only in these audits).
+
 ## UI consistency (partial)
 
 The design-system foundation exists (`constants/ui.js`, shared `Badge`, one dropdown

@@ -1118,6 +1118,10 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
   const openCustomerEditor = useCallback(async (c) => {
     if (!c || !c.id) { setEditCust(c); return; }          // new customer — no lease
     const r = await lease.acquire(c.id);
+    // PHASE 28 (PH28-01) — the acquire round-trip resolved LATE: the user clicked Edit
+    // on a different customer (or closed this one) while it was in flight. Don't open a
+    // stale editor over the record they actually chose.
+    if (r.superseded) return;
     if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this customer. You can view it, but editing is unavailable right now.`, { duration: 6000 }); return; }
     recordSync.markSynced(revOf(c));   // acknowledge the revision we're opening with
     setEditCust(c);
