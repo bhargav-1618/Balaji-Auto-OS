@@ -134,7 +134,9 @@ export default function SupplierPOBuilder({ inventory = [], suppliers = [], rest
   }, [selectedSupplier?.id]);
 
   const toggle = (p) => setSel((s) => { const n = { ...s }; if (n[p.id] != null) delete n[p.id]; else n[p.id] = suggested(p); return n; });
-  const setQty = (id, v) => setSel((s) => ({ ...s, [id]: Math.max(1, Math.round(v) || 1) }));
+  // PH21-01 — a pasted over-long digit string makes Number(v) Infinity; keep the PO
+  // line qty a real, bounded integer so the PO total / GST summary can't read "₹∞".
+  const setQty = (id, v) => setSel((s) => { const q = Math.round(Number(v)); return { ...s, [id]: Number.isFinite(q) && q >= 1 ? Math.min(q, Number.MAX_SAFE_INTEGER) : 1 }; });
   const clearAll = () => setSel({});
   useEffect(() => { setVisibleSupplied(30); setVisibleOther(30); }, [q, filter, selectedSupplier?.id]);
   // Search-result caps: while actively searching, both sections show up to 100 matches

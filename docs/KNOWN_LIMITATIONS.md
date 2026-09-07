@@ -631,6 +631,34 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   no money/stock/ledger invariant is touched; contrast invoice numbering
   and PO receive, which *are* closed at the transaction layer).
 
+- **Malformed / extreme / hostile-looking input stays contained** (PHASE 21 —
+  audited, one HIGH defect fixed; see
+  `docs/testing/PHASE_21_MALFORMED_INPUT_INTEGRITY_REPORT.md`). HTML/script-like
+  strings are stored and rendered as **text** (zero `dangerouslySetInnerHTML` /
+  `innerHTML` / `eval` in app code; CSP with no prod `unsafe-eval`; React escapes
+  every string child). Unicode / emoji / RTL / zero-width / 10 000-char round-trip
+  (keystroke `.slice()` caps + Firestore UTF-8). Search is pure substring/token with
+  no user-compiled `RegExp`. The Workshop PDF renders from fully-malformed data
+  without throwing. **PH21-01 (HIGH, fixed):** `<input type="number">` retains a
+  pasted 309-digit string (still a finite double), but `parseInt`/`parseFloat`
+  overflow it to `Infinity`, and the write-boundary clamps
+  (`nonNegInt`/`nonNegNum`/`sanitizeStock` + inline copies) passed it through — via
+  Receive Stock (no upper bound) that reached `stock: increment(Infinity)`, leaving a
+  part's authoritative `stock` permanently `Infinity`/`NaN` and unrecoverable from
+  the UI (Edit Part's stock is read-only). A pasted `1e308` overflowed the Inventory
+  Valuation report's totals to `₹∞`/`NaN`. The money/ledger engine
+  (`billingService.toNum`, already `Number.isFinite`-guarded) was unaffected. Fixed
+  by finite-guarding + `MAX_SAFE_INTEGER`-clamping the shared coercers and
+  `lib/format.num`, then routing the drifted inline copies through them. No rules
+  change. **Documented, not fixed:** (1) a part whose price was set to a finite huge
+  value (`1e308`) *before* this fix and never re-saved would still overflow the
+  Valuation report — `num()` is finite-guarded but not magnitude-clamped (it must
+  pass large legitimate aggregates and negative deltas); self-heals on the next edit
+  of that part; no such data in production; (2) an authenticated client can still
+  forge a Firestore document with a `NaN`/`Infinity`/wrong-typed field directly —
+  `num()`/`toNum()` neutralise it in every read path, and this is an authorization
+  concern already in Phase 19/20's scope, not an input surface.
+
 ## 🟡 Performance (fine at current scale)
 
 - The main dashboard is one large component; a keystroke re-renders it. This is made

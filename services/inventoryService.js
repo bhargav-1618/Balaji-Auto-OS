@@ -14,11 +14,24 @@ import { formatINR, tsToDate } from '../lib/format';
 // these functions only compute values from the inputs they're given.
 // ---------------------------------------------------------------------------
 
-/** Coerce to a non-negative integer. Guards against NaN, floats, negatives, pasted junk. */
-export const nonNegInt = (v) => Math.max(0, parseInt(v, 10) || 0);
+// PHASE 21 (PH21-01) — these run at the write boundary (part save, restock,
+// adjustment), so a value that is not a real, finite magnitude must NEVER reach
+// Firestore. `<input type="number">` accepts a pasted 309-digit string as a valid
+// value, but `parseInt`/`parseFloat` of it overflow to `Infinity`, and the old
+// `Math.max(0, x || 0)` let that `Infinity` straight through — one `increment()`
+// later a part's `stock` is permanently `Infinity`/`NaN` and can't be fixed from
+// the UI. Now: reject non-finite outright, and clamp any real-but-absurd magnitude
+// (a 1e308 paste) to MAX_SAFE_INTEGER so no downstream `stock * price` sum can
+// overflow to `Infinity` either. Same `Number.isFinite` discipline billingService's
+// `toNum` already uses for the money path.
+const SANE_MAX = Number.MAX_SAFE_INTEGER;
+const clampNonNeg = (n) => (Number.isFinite(n) && n > 0 ? Math.min(n, SANE_MAX) : 0);
+
+/** Coerce to a non-negative integer. Guards against NaN, Infinity, floats, negatives, pasted junk. */
+export const nonNegInt = (v) => clampNonNeg(parseInt(v, 10));
 
 /** Coerce to a non-negative number (decimals allowed — prices, weights, etc.). */
-export const nonNegNum = (v) => Math.max(0, parseFloat(v) || 0);
+export const nonNegNum = (v) => clampNonNeg(parseFloat(v));
 
 // Issue 7.4 (Stock Operations review) — ONE definition of "did the price change",
 // rounded to the nearest paisa so float noise (e.g. 480.1 - 480.10000000001) never
@@ -26,8 +39,9 @@ export const nonNegNum = (v) => Math.max(0, parseFloat(v) || 0);
 // exact comparison (same logic, different rounding phrasing) — consolidated here.
 export const pricesDiffer = (a, b) => Math.round((Number(a) || 0) * 100) !== Math.round((Number(b) || 0) * 100);
 
-/** Sanitize a stock value before it reaches state or Firestore: integer, never negative. */
-export const sanitizeStock = (v) => Math.max(0, Math.floor(Number(v) || 0));
+/** Sanitize a stock value before it reaches state or Firestore: integer, never negative,
+ *  never non-finite (see nonNegInt/nonNegNum above for why that matters here). */
+export const sanitizeStock = (v) => clampNonNeg(Math.floor(Number(v)));
 
 /**
  * Classify a part's stock level against its reorder threshold.
@@ -81,7 +95,9 @@ export const isFastMover = (p) => (p?.salesCount || 0) >= getFastMoverMin();
 export function cardReservedQtys(card) {
   const map = {};
   if (!card || ['Cancelled', 'Closed', 'Delivered'].includes(card.status)) return map;
-  (card.parts || []).forEach((p) => { if (p.partId) map[p.partId] = (map[p.partId] || 0) + (Number(p.qty) || 0); });
+  // PH21-01 — nonNegInt (not Number(p.qty) || 0): the job-card parts field accepts a
+  // pasted over-long digit string, and this feeds `reserved: increment(delta)`.
+  (card.parts || []).forEach((p) => { if (p.partId) map[p.partId] = (map[p.partId] || 0) + nonNegInt(p.qty); });
   return map;
 }
 
@@ -132,8 +148,8 @@ export function computeStockAdjustment({ currentStock, qty, direction = 'reduce'
  * included when the caller passes one, matching the two original shapes.
  */
 export function buildRestockRecord({ id, partId, name, sku, qty, unitCost, supplierName, supplierId, poNumber, reference, purchaseDate, notes, byEmail, createdAt } = {}) {
-  const q = Number(qty) || 0;
-  const cost = Number(unitCost) || 0;
+  const q = nonNegNum(qty);      // PH21-01 — finite-guarded (feeds stock += q and total = q * cost)
+  const cost = nonNegNum(unitCost);
   return {
     id, partId,
     name: name || '', partName: name || '', sku: sku || '',

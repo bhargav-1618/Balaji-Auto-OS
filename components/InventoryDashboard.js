@@ -993,8 +993,10 @@ function RestockModal({ part, suppliers = [], onConfirm, onClose, asPage = false
   // + retry recovers the same id and `restocks/{opId}` de-duplicates.
   const { opId: restockOpId, hadPending: restockPending } = useDurableOpId(`restock:${part.id}`, 'rs');
 
-  const n = Math.max(0, parseInt(qty, 10) || 0);
-  const cost = Math.max(0, parseFloat(unitCost) || 0);
+  // PH21-01 — nonNegInt/nonNegNum (not a bare Math.max(0, parseInt/parseFloat)) so a
+  // pasted over-long digit string can't reach the receive-stock increment as Infinity.
+  const n = nonNegInt(qty);
+  const cost = nonNegNum(unitCost);
   // A receipt at a different price/supplier is a normal, everyday event (rate
   // change, discount, emergency alternate vendor) — it must NOT silently rewrite
   // the part's master record. These two flags only turn true once the user has
@@ -1192,8 +1194,8 @@ function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPage = fal
   const blockKeys = (e) => ['e', 'E', '+', '-', '.'].includes(e.key) && e.preventDefault();
 
   function confirm(override = false) {
-    const rawQ = parseInt(qty, 10) || 0;
-    const p = parseFloat(price);
+    const rawQ = nonNegInt(qty);
+    const p = nonNegNum(price); // PH21-01 — finite-guarded: feeds salesRollups revenue via increment()
     if (rawQ < 1) {
       setError('Enter a quantity of at least 1.');
       return;
@@ -1222,10 +1224,10 @@ function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPage = fal
   const fieldInput =
     'w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/60 transition';
 
-  const rawQty = parseInt(qty, 10) || 0;
+  const rawQty = nonNegInt(qty);
   const qtyInvalid = rawQty < 1 || rawQty > maxQty; // Issue 2
   const q = Math.max(1, Math.min(rawQty, maxQty || 1));
-  const p = parseFloat(price) || 0;
+  const p = nonNegNum(price); // PH21-01
   const belowFloor = floor > 0 && p > 0 && p < floor; // Fix 4: bargain lock
 
   return (
@@ -1437,7 +1439,7 @@ function StockAdjustModal({ part, history = [], onConfirm, onClose, asPage = fal
   useEffect(() => { if (!isCorrection) setCorrectsId(''); }, [isCorrection]);
 
   async function confirm() {
-    const q = parseInt(qty, 10) || 0;
+    const q = nonNegInt(qty); // PH21-01 — a 'correction' has no upper bound; must not pass Infinity to increment()
     if (q <= 0) { setError('Enter a quantity of 1 or more.'); return; }
     if (!isCorrection && q > maxQty) { setError(`Only ${maxQty} in stock.`); return; }
     if (saving) return;
@@ -1455,7 +1457,7 @@ function StockAdjustModal({ part, history = [], onConfirm, onClose, asPage = fal
 
   const fieldLabel = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1.5';
   const fieldInput = 'w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 transition';
-  const q = parseInt(qty, 10) || 0;
+  const q = nonNegInt(qty); // PH21-01
   const after = isCorrection ? maxQty + q : maxQty - q;
 
   const inner = (
@@ -5635,9 +5637,11 @@ function BulkReceiveModal({ inventory, suppliers = [], onSubmit, onClose }) {
   const updateLine = (partId, patch) => setLines((prev) => prev.map((l) => (l.part.id === partId ? { ...l, ...patch } : l)));
   const removeLine = (partId) => setLines((prev) => prev.filter((l) => l.part.id !== partId));
 
-  const totalUnits = lines.reduce((s, l) => s + (parseInt(l.qty, 10) || 0), 0);
-  const totalCost = lines.reduce((s, l) => s + (parseInt(l.qty, 10) || 0) * (parseFloat(l.unitCost) || 0), 0);
-  const canSubmit = lines.length > 0 && lines.every((l) => (parseInt(l.qty, 10) || 0) > 0);
+  // PH21-01 — nonNegInt/nonNegNum: a bulk-receive line feeds the unbounded receive-stock
+  // increment, so a pasted over-long digit string must not survive as Infinity.
+  const totalUnits = lines.reduce((s, l) => s + nonNegInt(l.qty), 0);
+  const totalCost = lines.reduce((s, l) => s + nonNegInt(l.qty) * nonNegNum(l.unitCost), 0);
+  const canSubmit = lines.length > 0 && lines.every((l) => nonNegInt(l.qty) > 0);
 
   const fld = 'w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/60 transition';
   const lbl = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1';
@@ -5726,7 +5730,7 @@ function BulkReceiveModal({ inventory, suppliers = [], onSubmit, onClose }) {
                       // decision stays in the focused single-item Receive Stock flow;
                       // a bulk shipment form offering it per row would bury the one
                       // thing this screen exists to make fast).
-                      const priceDiffers = (parseFloat(l.unitCost) || 0) !== (l.part.purchasePrice || 0) && (l.part.purchasePrice || 0) > 0;
+                      const priceDiffers = nonNegNum(l.unitCost) !== (l.part.purchasePrice || 0) && (l.part.purchasePrice || 0) > 0;
                       return (
                         <tr key={l.part.id} style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.05)' }}>
                           <td className="px-3 py-2">
@@ -5762,7 +5766,7 @@ function BulkReceiveModal({ inventory, suppliers = [], onSubmit, onClose }) {
           <div className="flex-shrink-0 flex gap-2.5 px-5 py-4 safe-bottom-pad" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.08)' }}>
             <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Cancel</button>
             <button
-              onClick={() => onSubmit({ supplierName, invoiceNumber, purchaseDate, lines: lines.map((l) => ({ part: l.part, qty: parseInt(l.qty, 10) || 0, unitCost: parseFloat(l.unitCost) || 0, opId: l.opId })) })}
+              onClick={() => onSubmit({ supplierName, invoiceNumber, purchaseDate, lines: lines.map((l) => ({ part: l.part, qty: nonNegInt(l.qty), unitCost: nonNegNum(l.unitCost), opId: l.opId })) })}
               disabled={!canSubmit}
               className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition ${canSubmit ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110' : 'bg-white/5 text-white/45 cursor-not-allowed'}`}
             >
@@ -12523,11 +12527,13 @@ export default function InventoryDashboard() {
         ...formData,
         id: formData.id || ('demo-part-' + now.getTime()),
         name: formData.name.trim(),
-        stock: Math.max(0, Math.floor(Number(formData.stock) || 0)),
-        minStock: Math.max(0, Math.floor(Number(formData.minStock) || 5)),
-        purchasePrice: Number(formData.purchasePrice) || 0,
-        sellingPrice: Number(formData.sellingPrice) || 0,
-        minSellingPrice: Number(formData.minSellingPrice) || 0,
+        // PH21-01 — same finite-guarded clamps as the production payload below
+        // (nonNegInt/nonNegNum), so demo and prod normalise a pasted extreme value identically.
+        stock: sanitizeStock(formData.stock),
+        minStock: nonNegInt(formData.minStock) || 5,
+        purchasePrice: nonNegNum(formData.purchasePrice),
+        sellingPrice: nonNegNum(formData.sellingPrice),
+        minSellingPrice: nonNegNum(formData.minSellingPrice),
         salesCount: formData.salesCount || 0,
         suppliers: sup,
         archived: !!formData.archived,

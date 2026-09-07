@@ -298,15 +298,22 @@ ok('VehiclesModule quick-customer also blocks a duplicate phone (source)',
 // 5. NUMERIC / TYPE clamps at the service layer (independent oracle)
 // ---------------------------------------------------------------------
 console.log('\n5. Numeric clamps — paste / keyboard cannot persist a negative or junk value\n');
-const clampInt = (raw) => { const n = parseInt(raw, 10); return Number.isFinite(n) ? Math.max(0, n) : 0; };
-const clampNum = (raw) => { const n = parseFloat(raw); return Number.isFinite(n) ? Math.max(0, n) : 0; };
-for (const raw of ['-5', '  -12 ', 'abc', '', '3.9', '1e5', '99999999', '-0']) {
-  ok(`nonNegInt(${JSON.stringify(raw)}) === oracle (${clampInt(raw)})`, nonNegInt(raw) === clampInt(raw), `got ${nonNegInt(raw)}`);
+// PH21-01 — the oracle also rejects non-finite (a pasted 309-digit string overflows
+// parseInt/parseFloat to Infinity) and caps an absurd-but-finite magnitude, matching
+// the hardened service clamp. Normal inputs are unaffected.
+const clampInt = (raw) => { const n = parseInt(raw, 10); return Number.isFinite(n) && n > 0 ? Math.min(n, Number.MAX_SAFE_INTEGER) : 0; };
+const clampNum = (raw) => { const n = parseFloat(raw); return Number.isFinite(n) && n > 0 ? Math.min(n, Number.MAX_SAFE_INTEGER) : 0; };
+for (const raw of ['-5', '  -12 ', 'abc', '', '3.9', '1e5', '99999999', '-0', '9'.repeat(309), '1e308', 'Infinity']) {
+  ok(`nonNegInt(${JSON.stringify(raw.length > 20 ? `${raw.slice(0, 6)}…(${raw.length})` : raw)}) === oracle (${clampInt(raw)})`, nonNegInt(raw) === clampInt(raw), `got ${nonNegInt(raw)}`);
 }
-for (const raw of ['-500.5', 'junk', '', '480.10', '-0.001']) {
-  ok(`nonNegNum(${JSON.stringify(raw)}) === oracle (${clampNum(raw)})`, nonNegNum(raw) === clampNum(raw), `got ${nonNegNum(raw)}`);
+for (const raw of ['-500.5', 'junk', '', '480.10', '-0.001', '9'.repeat(400), '1e308', 'Infinity']) {
+  ok(`nonNegNum(${JSON.stringify(raw.length > 20 ? `${raw.slice(0, 6)}…(${raw.length})` : raw)}) === oracle (${clampNum(raw)})`, nonNegNum(raw) === clampNum(raw), `got ${nonNegNum(raw)}`);
 }
 ok('sanitizeStock floors + clamps negative to 0', sanitizeStock(-3.7) === 0 && sanitizeStock('5.9') === 5 && sanitizeStock('bad') === 0);
+ok('PH21-01 — sanitizeStock/nonNegInt/nonNegNum reject a pasted Infinity-overflow string (→ 0), not pass it through',
+  sanitizeStock('9'.repeat(309)) === 0 && nonNegInt('9'.repeat(309)) === 0 && nonNegNum('9'.repeat(400)) === 0);
+ok('PH21-01 — an absurd-but-finite magnitude (1e308) is clamped to MAX_SAFE_INTEGER so a downstream stock×price sum stays finite',
+  nonNegNum('1e308') === Number.MAX_SAFE_INTEGER && sanitizeStock('1e308') === Number.MAX_SAFE_INTEGER);
 // a reduce adjustment can never drive stock negative or reduce by more than on-hand
 const adj = computeStockAdjustment({ currentStock: 2, qty: 10, direction: 'reduce' });
 ok('computeStockAdjustment: reduce is clamped to on-hand (after >= 0, delta <= stock)',

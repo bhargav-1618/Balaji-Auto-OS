@@ -611,6 +611,36 @@ current release.
     pre-Phase-15 form. **OWNER must run `npx firebase deploy --only
     firestore:rules --project balaji-auto-os-7`.** No Firebase credentials in
     this environment; the client already writes the correct actor values.
+- ~~**Malformed-input / data-corruption audit.**~~ **DONE — PHASE 21, one HIGH
+  defect fixed.** "When malformed / extreme / hostile-looking data reaches the app,
+  does it stay stable and keep its data intact through persistence → read → search →
+  calculations → PDF → analytics?" HTML/script-like input is SAFE (zero
+  `dangerouslySetInnerHTML`/`innerHTML`/`eval`; CSP; React escapes every string
+  child). Unicode/emoji/RTL/zero-width/10 000-char all round-trip (input `.slice()`
+  caps + Firestore UTF-8). Search is pure substring/token, no user-compiled `RegExp`.
+  The Workshop PDF was **rendered in-process from fully-malformed data** (400-char
+  Japanese + `<script>` + emoji in every field, `rate: Infinity`, `totals` all `NaN`)
+  — 2-page PDF, no throw. One HIGH defect:
+  - **PH21-01.** `<input type="number">` keeps a pasted **309-digit** string (it
+    still parses to a *finite* double), but `parseInt`/`parseFloat` overflow it to
+    `Infinity`, and the write-boundary clamps
+    (`nonNegInt = Math.max(0, parseInt(v,10) || 0)` etc., plus inline copies in
+    `RestockModal`/`BulkReceiveModal`/`CheckoutModal`/demo part-save/`SupplierPOBuilder`)
+    passed that `Infinity` through. Via **Receive Stock** (no upper bound) →
+    `stock: increment(Infinity)` → part `stock` permanently `Infinity`/`NaN`,
+    unrecoverable from the UI (Edit Part's stock is read-only). Emulator-verified:
+    `increment(NaN)` then `increment(5)` stays `NaN`. A pasted `1e308` (finite,
+    retained) overflowed the Inventory Valuation report's category + grand totals to
+    `₹∞`/`NaN` and broke its CSV/PDF export (reproduced end-to-end). The money/ledger
+    engine (`billingService.toNum`, already `Number.isFinite`-guarded) was unaffected.
+    Fixed by finite-guarding + `MAX_SAFE_INTEGER`-clamping the three shared coercers
+    (`nonNegInt`/`nonNegNum`/`sanitizeStock`) and `lib/format.num`, then routing the
+    5 drifted inline copies back through them. No new file/function/abstraction —
+    net −5 divergent parse expressions.
+  Gates: `npm test` **142/142** (+1 new `tests/malformed-input-integrity.test.cjs`,
+  227 assertions incl. an in-process malformed-PDF render), `npm run test:rules`
+  **261/261** (no rules change), lint 0, build ✓. Production: ~+14 lines (mostly
+  comments) across 4 files.
 
 ## Scale — before large datasets
 
