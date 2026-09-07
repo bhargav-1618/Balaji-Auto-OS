@@ -425,8 +425,8 @@ PRODUCTION MUTATIONS:       0
 QA CLEANUP:                 done (draft key cleared, dev stopped, viewport reset)
 PRODUCTION CODE CHANGE:     yes
 NET PRODUCTION LINES:       +59 / −4  (net +55; 4 files, 0 new component/dependency)
-COMMIT:                     <pending>
-DEPLOYMENT:                 <pending>
+COMMIT:                     ced2c6f
+DEPLOYMENT:                 Vercel build 3xNJkDOdtqoT7eLOKbR6I (live; bundle verified: superseded ×4, onPop dirty-confirms ×2)
 
 REMAINING LIMITATIONS:
   - PH28-04 Next.js Cancel-rendering-route rejection noise on rapid Back/Forward
