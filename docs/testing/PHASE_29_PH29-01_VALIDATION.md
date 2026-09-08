@@ -220,11 +220,11 @@ further production change during validation.
 ## 10. Regression gates (re-run, this validation)
 
 ```
-npm test           → 150/150 test files
+npm test           → 151/151 test files  (+1: tests/durableopid-collision-execution.test.cjs)
 npm run test:rules → 2/2  (150 + 111 assertions)
 npm run lint       → exit 0
 npm run build      → ✓
-git status         → clean (no production code changed during validation)
+git status         → clean (no production code / no test-logic change; docs + 1 new execution test only)
 ```
 
 ## 11. Recommendation
@@ -249,6 +249,85 @@ not classify the fix as a CONFIRMED FIX, on the current evidence.**
 
 ---
 
+## 12. FINAL EXTERNAL BROWSER CHECK (attempted)
+
+Goal: settle the one unverified antecedent — does a real Chrome "Duplicate tab"
+carry `window.name` into the new tab? Requested steps: open a page, set
+`window.name = "PROBE123"`, use the real tab context-menu "Duplicate", read
+`window.name` in the duplicate.
+
+### Result: **BLOCKED — the gesture cannot be triggered with the tooling available in this environment.**
+
+| Surface | Outcome |
+|---|---|
+| **Claude-in-Chrome extension** (would drive the user's real Chrome) | `list_connected_browsers` → `[]`. No browser paired. Same as every prior phase (7, 23). |
+| **In-app Browser pane** | Embedded Chromium **148.0.7778.280** webview inside the Claude desktop app (`Claude/1.46388.4 … Chrome/148.0.7778.280 … MSIX`). It has **no tab strip and no "Duplicate tab" affordance**; `computer` acts only on the page viewport, not browser chrome. Browser-level keyboard shortcuts are **not routed** to it — `ctrl+t` was a confirmed no-op (tab count unchanged). No `ctrl+shift+t` / session-restore path either. `tabs_create` explicitly makes a *fresh blank* tab, not a clone. External origins are blocked (`example.com` denied); files outside the project become opaque `data:` snapshots with storage disabled. |
+
+### What the in-app pane *could* confirm (real `http://localhost:3000` origin)
+
+```
+window.name = "PROBE123"           set — window.name === "PROBE123"  ✓
+location.reload()                  → window.name still "PROBE123", sessionStorage kept   ✓  (same-tab reload preserves both — the Phase 5b case)
+tabs_create + navigate (new tab)   → window.name === ""  ✓ , sessionStorage NOT inherited  ✓  (the plain-new-tab case Phase 7b was verified against)
+BroadcastChannel                   available  ✓
+```
+
+Neither of these is the Duplicate-tab gesture. The clone antecedent stays **not observed**.
+
+### Corroborating public evidence (web research, not a live observation)
+
+Multiple independent practitioner write-ups describe a widely-used technique that
+detects a duplicated tab **by relying on `window.name` being EMPTY in the
+duplicate** — "if `window.name` is empty, it means this is a duplicate tab
+(because `window.name` is not shared between tabs)" — while treating
+`sessionStorage` as the thing that *is* cloned. If accurate for current Chrome,
+this points **against** the PH29-01 antecedent: Chrome would **not** carry
+`window.name` into a duplicated tab, `sessionStorage` clone notwithstanding.
+
+This is weaker than a direct observation (blog/library authors, various Chrome
+versions, no cited version matrix) and it contradicts the Chromium `PageState`
+code-reading, which points the other way. The two inferences disagree; the
+question genuinely needs one real-browser observation to close.
+
+Sources:
+- <https://github.com/mdn/content/issues/3688> (sessionStorage IS copied on Duplicate tab — confirmed, MDN)
+- <https://dev.to/bharathvaj_ganesan/what-happens-to-sessionstorage-when-you-duplicate-a-tab-431h> (sessionStorage clone; silent on window.name)
+- <https://medium.com/@moizrauf03/mechanism-to-uniquely-identify-and-prevent-duplicate-tabs-07a642cc3181> (detection technique: `window.name` empty ⇒ duplicate tab)
+- <https://github.com/flamestro/is-tab-duplicated>
+
+### Decision tree — where this lands
+
+The user's A/B tree keys on the *observed* `window.name` value in a real
+duplicate. That observation could not be made here, so **neither branch is
+entered**. The single 30-second probe below, run on any normal Chrome/Edge on a
+real machine, resolves it:
+
+```
+1. open any page (e.g. https://example.com) — DevTools console
+2. window.name = "PROBE123"        → confirm it returns "PROBE123"
+3. right-click the tab → Duplicate
+4. in the duplicated tab's console:  window.name
+   • "PROBE123"      → Branch A: PH29-01 confirmed for Chrome. Keep cc8a2e8.
+                       Then apply the §9 owned-scope-migration refinement for residual 8a.
+   • "" (or other)   → Branch B: PH29-01 NOT confirmed for Chrome. Recommend
+                       reverting cc8a2e8; keep tests/model as a documented
+                       hypothetical threat model.
+   (also note: Chrome version, OS, and whether sessionStorage was also cloned)
+```
+
+**Current lean, on indirect evidence only:** the public
+duplicate-tab-detection practice (relying on `window.name` being empty in the
+duplicate) tilts toward **Branch B (revert)** — but this is explicitly *not* the
+real-browser observation the user asked for, and the Chromium `PageState`
+reading still points the other way. Hold for the user's probe result before any
+production change.
+
+Environment for this attempt: Windows 11, Claude desktop app, in-app Chromium
+148.0.7778.280 webview; not a standalone Chrome; not an actual Duplicate-tab
+gesture; `window.name` before/after not measurable across the gesture.
+
+---
+
 ### FINAL
 
 ```
@@ -257,6 +336,17 @@ PH29-01 VALIDATION:            PARTIALLY CONFIRMED
 VULNERABILITY REPRODUCED?      NO — inferred from Chromium PageState internals;
                               never observed on a real browser (no paired browser,
                               no way to trigger a real "Duplicate tab" gesture)
+
+EXTERNAL BROWSER CHECK:        BLOCKED — Claude-in-Chrome: 0 browsers paired.
+                              In-app pane: embedded Chromium 148 webview, no tab
+                              strip, no Duplicate-tab gesture, ignores ctrl+t.
+                              Could confirm only: window.name survives reload;
+                              empty in a plain new tab; sessionStorage not
+                              inherited by a new tab. NOT the Duplicate gesture.
+                              Public duplicate-tab-detection practice (window.name
+                              empty ⇒ duplicate) LEANS toward Branch B (revert),
+                              but that is indirect, not the asked-for observation.
+                              User must run the 30-second real-Chrome probe (§12).
 OLD impl vs SIMULATED attack:  FAILS (executed real source + live simulation)
 NEW impl vs SIMULATED attack:  DEFEATS it (executed real source + live 2-tab simulation)
 SAME-TAB RELOAD NON-REGRESSION: PASS (executed + observed live)
@@ -276,6 +366,9 @@ CHANGE NECESSARY?              Defensible, not proven (threat unverified). A min
                               re-mint) but was not applied per the no-further-change
                               instruction.
 
-REGRESSION:                   npm test 150/150 · test:rules 2/2 · lint 0 · build ✓
+REGRESSION:                   npm test 151/151 · test:rules 2/2 · lint 0 · build ✓
 PRODUCTION CODE CHANGED IN VALIDATION: no
+NEXT ACTION:                   user runs the §12 real-Chrome probe → Branch A (keep
+                              cc8a2e8 + apply §9 refinement) or Branch B (revert
+                              cc8a2e8). No production change until then. No Phase 30.
 ```
