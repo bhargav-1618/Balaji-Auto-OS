@@ -514,8 +514,8 @@ QA CLEANUP:                 done (all test keys removed from both tabs, window.n
                                  dev server stopped)
 PRODUCTION CODE CHANGE:     yes
 NET PRODUCTION LINES:       +65 / −7  (net +58; 1 file, 0 new dependency, 0 rules change)
-COMMIT:                     <pending>
-DEPLOYMENT:                 <pending>
+COMMIT:                     cc8a2e8
+DEPLOYMENT:                 Vercel build HDGTpEhUGV1PPjaTAx7uI (live; bundle verified: BroadcastChannel ph7b:pi present)
 
 REMAINING LIMITATIONS:
   - PH29-02 (INFO) demo mode is a single-client sandbox — two demo tabs don't sync
