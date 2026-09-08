@@ -33,17 +33,27 @@ not assumed correct.
 > any operation modal can read it. Degrades to the `window.name`-only check where
 > `BroadcastChannel` is unavailable (no worse than Phase 7b).
 >
-> **+65 / −7 production (net +58), 1 file, no new dependency.** Verified live in the
-> Browser pane by simulating Chrome's Duplicate Tab (cloning `window.name` +
-> `sessionStorage` into a second tab): the "duplicate" re-minted its id and stopped
-> reusing the inherited opId; a clean same-tab reload with no sibling did **not**
-> re-mint.
+> **+65 / −7 production (net +58), 1 file, no new dependency.** Verified against the
+> **simulated** Duplicate Tab (cloning `window.name` + `sessionStorage` into a
+> second tab — executed against the real source AND live in the Browser pane): the
+> "duplicate" re-minted its id and stopped reusing the inherited opId; a clean
+> same-tab reload with no sibling did **not** re-mint.
 >
 > `npm test` **150/150** (+1 file) · `npm run test:rules` **2/2** (150 + 111) ·
 > lint **0** · build **✓** · **no `firestore.rules` change** · **0 production
 > mutations**.
 >
-> **FINAL ASSESSMENT: PASS** (after the fix).
+> **FINAL ASSESSMENT: PASS for the audited PASS-areas; PH29-01 fix →
+> PARTIALLY CONFIRMED** (see `docs/testing/PHASE_29_PH29-01_VALIDATION.md`).
+> The vulnerability was **not reproduced on a real browser** — it is inferred from
+> Chromium `PageState` internals and was only demonstrated against a *simulated*
+> clone. The fix defeats that simulated attack and preserves same-tab-reload
+> refresh-safety, but **introduces a new, narrower double-apply residual (8a)**:
+> after a collision re-mint, the *original* tab loses its own in-flight opId
+> continuity — a modal reopen there yields a fresh opId with no `hadPending`
+> banner. Same rarity class as PH29-01; the old (Phase 7b) impl did not have it.
+> Do **not** call PH29-01 a confirmed production-browser vulnerability, and do
+> **not** call the fix a CONFIRMED FIX, on the current evidence.
 
 ---
 
@@ -462,15 +472,28 @@ existing `window.name` tag, the existing `pi`-check in `readOrCreateOpId` /
 
 ## 37. Final assessment
 
-**PASS (after fix).** The multi-tab / multi-session surface is one of the most
-heavily hardened parts of this codebase (Phases 1a–1c, 2, 3b, 4b, 5b, 6b, 7b, 28).
-This deep re-audit confirmed session-id isolation, edit-lease identity + rules,
-`_rev`, backend idempotency markers, `persistentMultipleTabManager`, cross-tab
-settings sync, navigation isolation, and listener cleanup are all sound — and found
-**one** real defect: the tab-duplication opId protection depended on an unverified,
-probably-false assumption about `window.name` and Chrome's "Duplicate tab". Fixed
-with a browser-independent `BroadcastChannel` liveness check, +58 net production
-lines, no rules change, 0 production mutations.
+**The audited PASS-areas are PASS. The PH29-01 fix is PARTIALLY CONFIRMED** — see
+`docs/testing/PHASE_29_PH29-01_VALIDATION.md` for the targeted validation.
+
+The multi-tab / multi-session surface is one of the most heavily hardened parts of
+this codebase (Phases 1a–1c, 2, 3b, 4b, 5b, 6b, 7b, 28). This deep re-audit
+confirmed session-id isolation, edit-lease identity + rules, `_rev`, backend
+idempotency markers, `persistentMultipleTabManager`, cross-tab settings sync,
+navigation isolation, and listener cleanup are all sound.
+
+**PH29-01 is a plausible but UNVERIFIED vulnerability** — it depends on Chrome's
+"Duplicate tab" copying `window.name`, which is inferred from Chromium `PageState`
+internals but was **never observed on a real browser** (no paired browser, no way
+to trigger the gesture). The fix (a `BroadcastChannel` collision check) defeats the
+*simulated* attack (executed against the real source + live), and preserves
+same-tab-reload refresh-safety — **but it introduces a new narrow residual (8a)**:
+after a collision re-mint, the *original* tab loses its own in-flight opId
+continuity (a modal reopen → fresh opId, no `hadPending` banner → double-apply if
+the original op had committed). Same rarity class as PH29-01; Phase 7b did not have
+this. A minimal-risk refinement (migrate owned opId entries on re-mint) is
+available but was not applied. Recommendation: verify the `window.name`-clone
+behaviour on a real Chrome, then either revert (if not cloned) or refine (if
+cloned). +58 net production lines shipped, no rules change, 0 production mutations.
 
 ---
 
@@ -499,13 +522,15 @@ SLEEP / WAKE:               NOT TESTED (Phase 7 emulator proofs stand; no regres
 
 CRITICAL:                   0
 HIGH:                       0
-MEDIUM:                     1   (PH29-01)
+MEDIUM:                     1   (PH29-01 — UNVERIFIED on a real browser; fix PARTIALLY CONFIRMED)
 LOW:                        1   (PH29-03 — cross-tab logout drops unsaved edits; by design)
 INFO:                       1   (PH29-02 — demo mode is a single-client sandbox)
 
-NEW DEFECTS:                1   (PH29-01)
-FIXES:                      1
-AUTOMATED TESTS:            tests/multitab-session-integrity.test.cjs — 47/47
+NEW DEFECTS:                1   (PH29-01 — inferred, not reproduced)
+FIXES:                      1   (PARTIALLY CONFIRMED — defeats the simulated attack; adds
+                                 a new narrow residual 8a; threat unverified)
+AUTOMATED TESTS:            tests/multitab-session-integrity.test.cjs — 47/47;
+                            targeted validation harness (executes real OLD+NEW source) — 28/28
 REGRESSION:                 npm test 150/150 · test:rules 2/2 (150+111) · lint 0 · build ✓
 LIVE DEMO:                  PASS (2-tab: window.name lifecycle, simulated Duplicate Tab,
                                   storage-event sync, nav isolation, storage-scope model)
@@ -518,16 +543,26 @@ COMMIT:                     cc8a2e8
 DEPLOYMENT:                 Vercel build HDGTpEhUGV1PPjaTAx7uI (live; bundle verified: BroadcastChannel ph7b:pi present)
 
 REMAINING LIMITATIONS:
+  - PH29-01 is UNVERIFIED on a real browser — inferred from Chromium PageState
+    internals; the real "Duplicate tab" gesture could not be triggered (no paired
+    browser). The fix is PARTIALLY CONFIRMED: it defeats the SIMULATED attack and
+    keeps same-tab-reload refresh-safety, but introduces residual 8a (the ORIGINAL
+    tab loses its own in-flight opId continuity after a collision re-mint → a modal
+    reopen there → fresh opId, no hadPending → double-apply if the original op had
+    committed). Same rarity class as PH29-01. See PHASE_29_PH29-01_VALIDATION.md.
+    Recommendation: verify window.name-clone on a real Chrome, then revert (if not
+    cloned) or refine with owned-scope migration on re-mint (if cloned).
   - PH29-02 (INFO) demo mode is a single-client sandbox — two demo tabs don't sync
     business data; production uses Firestore live sync
   - PH29-03 (LOW, by design) a cross-tab logout / idle-timeout redirect isn't gated
     by the unsaved-changes guard — a dirty editor's edits are dropped silently
-  - real Chrome "Duplicate Tab" gesture and authenticated production multi-tab not
-    exercised (no paired browser / no credentials); PH29-01 fix verified by exact
-    simulation + model + clone-independent design
+  - authenticated production multi-tab not exercised (no credentials)
   - sleep/wake not re-tested (Phase 7 emulator proofs stand)
 
-FINAL ASSESSMENT:  PASS  (after fix; evidence: 47 model/source assertions + 150/150
-                          regression + live 2-tab validation incl. a faithful
-                          Duplicate-Tab simulation and the Phase-5b non-regression)
+FINAL ASSESSMENT:  audited PASS-areas: PASS.
+                   PH29-01 fix: PARTIALLY CONFIRMED — defeats the SIMULATED
+                   Duplicate-Tab attack (real source executed + live) and keeps
+                   Phase-5b refresh-safety, but the vulnerability itself is
+                   UNVERIFIED on a real browser and the fix adds residual 8a.
+                   See docs/testing/PHASE_29_PH29-01_VALIDATION.md.
 ```

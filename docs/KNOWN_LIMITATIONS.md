@@ -258,21 +258,27 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
     production verification of both halves independently (a value written to
     `window.name` survives a same-tab reload; a genuinely new browser tab starts
     with an empty `window.name`).
-    **PHASE 29 UPDATE (PH29-01, MEDIUM — fixed):** the Phase 7b claim that
-    "Duplicate tab" never clones `window.name` was NOT actually verified for the
-    Duplicate-tab gesture, and Chromium serialises the frame name into the tab's
-    navigation `PageState` (which Duplicate tab / session restore copy) — so a
-    real Chrome/Edge duplicate CAN inherit `window.name` alongside its cloned
-    `sessionStorage`, and the page-instance tag would then match on both sides
-    (PH7-01 re-opens). `lib/durableOpId.js` now ALSO cross-checks a
-    `BroadcastChannel`: if any other LIVE context is already using the same
-    page-instance id, both re-mint a fresh one, so an inherited opId is never
-    reused for a new intent — regardless of `window.name` clone behaviour. A
-    same-tab reload has no live sibling, so nothing re-mints and the Phase 5b/6b
-    refresh-safety guarantee is untouched. Verified live by an exact simulation
-    (cloning both `window.name` and `sessionStorage` into a 2nd tab). Real Chrome
-    Duplicate Tab and authenticated production multi-tab still not exercised (no
-    paired browser / no credentials).
+    **PHASE 29 UPDATE (PH29-01, MEDIUM — fix PARTIALLY CONFIRMED, commit `cc8a2e8`):**
+    the Phase 7b claim that "Duplicate tab" never clones `window.name` was NOT
+    verified for the Duplicate-tab gesture. Chromium serialises the frame name into
+    the tab's navigation `PageState` (which Duplicate tab / session restore copy),
+    which strongly suggests a real Chrome/Edge duplicate CAN inherit `window.name`
+    alongside its cloned `sessionStorage` — but this was **not observed** (no paired
+    browser, no way to trigger the gesture). `lib/durableOpId.js` now ALSO
+    cross-checks a `BroadcastChannel`: if any other LIVE context holds the same
+    page-instance id, both re-mint. This **defeats the SIMULATED attack** (cloning
+    both `window.name` + `sessionStorage` into a 2nd tab — executed against the real
+    source AND live) and **preserves same-tab-reload refresh-safety**. It
+    **introduces residual 8a**: after a collision re-mint, the ORIGINAL tab loses
+    its OWN in-flight opId continuity — a modal reopen there yields a fresh opId
+    with no "check the record first" banner, so a retry double-applies IF the
+    original op had committed. Same rarity class as PH29-01 (both need
+    `window.name`-cloned + a tab duplicated during an in-flight operation); the OLD
+    (Phase 7b) impl did NOT have residual 8a. See
+    `docs/testing/PHASE_29_PH29-01_VALIDATION.md`. **Recommended:** verify the
+    `window.name`-clone behaviour on a real Chrome, then revert (if not cloned) or
+    refine with owned-scope migration on re-mint (if cloned). Do not treat PH29-01
+    as a confirmed production-browser vulnerability on the current evidence.
   - The edit-lease rules fix only affects `editLocks`, a UX-only coordination
     collection — no change to any business-data collection's rules.
   - The dirty-state guard covers in-app tab switches (the gap this phase closes).
@@ -1000,15 +1006,20 @@ dimensions, labelled controls, tiny bundle), but confirming them is a runtime ta
     only in these audits).
 
   **Phase 29 — multi-tab / multi-session / cross-tab consistency (deep adversarial
-  audit; one MEDIUM found + fixed — see
-  `docs/testing/PHASE_29_MULTITAB_SESSION_INTEGRITY_REPORT.md`).** Re-audited the
-  whole multi-tab surface without assuming Phases 1–28 proved it. PASS, no change:
-  session-id isolation, edit-lease identity + `sameSession()` rules + 90 s expiry,
-  `_rev` guarded transaction, backend idempotency markers inside the tx, overpay
-  re-check, `persistentMultipleTabManager`, cross-tab settings/prefs/language sync
-  via the `storage` event, per-tab navigation isolation. Fixed **PH29-01** (the
-  tab-duplication opId protection depended on an unverified `window.name`-clone
-  assumption — see the Phase 7b entry above for the fix).
+  audit; one MEDIUM — fix PARTIALLY CONFIRMED — see
+  `docs/testing/PHASE_29_MULTITAB_SESSION_INTEGRITY_REPORT.md` and
+  `docs/testing/PHASE_29_PH29-01_VALIDATION.md`).** Re-audited the whole multi-tab
+  surface without assuming Phases 1–28 proved it. PASS, no change: session-id
+  isolation, edit-lease identity + `sameSession()` rules + 90 s expiry, `_rev`
+  guarded transaction, backend idempotency markers inside the tx, overpay re-check,
+  `persistentMultipleTabManager`, cross-tab settings/prefs/language sync via the
+  `storage` event, per-tab navigation isolation. **PH29-01** — the tab-duplication
+  opId protection depended on an unverified `window.name`-clone assumption; the
+  `BroadcastChannel` fix (commit `cc8a2e8`) defeats the SIMULATED attack and keeps
+  refresh-safety but the vulnerability itself is UNVERIFIED on a real browser and
+  the fix adds residual 8a (the original tab loses its own in-flight opId
+  continuity after a collision re-mint). See the Phase 7b entry above and the
+  validation doc.
   - **PH29-02 (INFO — demo only):** two demo tabs do not sync business data (demo
     customers / invoices / job cards live in shared `localStorage` with no
     `storage` listener; demo inventory / suppliers / sales / adjustments / POs live
