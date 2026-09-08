@@ -1007,6 +1007,47 @@ current release.
   **2/2**, lint 0, build ✓. No `firestore.rules` change; 0 production writes.
   Report: `docs/testing/PHASE_28_NAVIGATION_RACE_INTEGRITY_REPORT.md`.
 
+- ~~**Phase 29 — multi-tab / multi-session / cross-tab consistency (deep adversarial
+  audit).**~~ **DONE — one MEDIUM found + fixed.** Re-audited the whole multi-tab
+  surface (session id, edit lease, `_rev`, durable opId, `recordSync`,
+  `persistentMultipleTabManager`, browser storage) WITHOUT assuming Phases 1–28
+  proved it correct. PASS, no change: `sessionId` (in-memory `useRef`, fresh per
+  React mount — immune to every storage-clone path), edit lease ((uid,sessionId)
+  keyed + rules `sameSession()` for a write vs an active lease + 90s expiry +
+  PH28-01 guard; crashed-tab lease expires, no phantom lock forever), `_rev`
+  guarded tx (stale cross-tab save rejected, re-read inside tx), backend idempotency
+  markers read before any write inside the same tx (payments/quick-sell/adjust/PO-
+  receive), overpay re-checked inside the payment tx, realisation diffed vs tx
+  pre-image, `persistentMultipleTabManager` (SDK-managed shared cache+queue),
+  cross-tab settings/prefs/language sync via `storage` event (verified live),
+  per-tab nav isolation, listener cleanup. One defect:
+  - **PH29-01 (MEDIUM).** The Phase 7b tab-duplication opId protection
+    (`lib/durableOpId.js`) tags stored opIds with a page-instance id from
+    `window.name`, assuming a duplicated tab starts with an EMPTY `window.name`.
+    That was verified for a plain new tab + a same-tab reload, NEVER for the actual
+    "Duplicate tab" gesture — and Chromium serialises the frame name into the tab's
+    navigation PageState, which Duplicate Tab / session-restore copy. So on
+    Chrome/Edge a duplicate can inherit `window.name` alongside its cloned
+    `sessionStorage`, the pi tag matches on both sides, and PH7-01 re-opens (a
+    genuinely different operation in the duplicate swallowed as a retry of the
+    original's in-flight one, false-success toast). Fixed: `getPageInstanceId()`
+    now cross-checks a `BroadcastChannel` — if any OTHER live context holds the
+    same page-instance id, both re-mint a fresh one (echo→mint→re-announce,
+    converges, can't loop), so an inherited opId is never reused for a new intent.
+    A same-tab reload has NO live sibling → nothing re-mints → Phase 5b/6b
+    refresh-safety untouched. Derived eagerly at import. Degrades to the
+    window.name check where BroadcastChannel is unavailable. **+65 / −7 production
+    (net +58), 1 file, 0 new dependency, 0 rules change.** Verified live (simulated
+    Chrome Duplicate Tab by cloning window.name + sessionStorage into a 2nd Browser
+    tab: the "duplicate" re-minted its id; a clean same-tab reload did NOT).
+  NEW `tests/multitab-session-integrity.test.cjs` (47 assertions — async-queue
+  model of the collision watch + source patterns + lease/rev/opId/convergence
+  models). PH29-02 (INFO — demo mode is a single-client sandbox, two demo tabs
+  don't sync business data) and PH29-03 (LOW/by-design — a cross-tab logout / idle
+  redirect isn't gated by the unsaved-changes guard) documented, NOT fixed. Gates:
+  `npm test` **150/150**, `npm run test:rules` **2/2** (150+111), lint 0, build ✓.
+  Report: `docs/testing/PHASE_29_MULTITAB_SESSION_INTEGRITY_REPORT.md`.
+
 ## Scale — before large datasets
 
 *(Phase 25 measured the current behaviour of these items — all still accurate; see the

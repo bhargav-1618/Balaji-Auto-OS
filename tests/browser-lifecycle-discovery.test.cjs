@@ -180,10 +180,15 @@ const X_afterRefresh = mockReadOrCreateOpId(tabA.session, tabA.name, 'payment:IN
 ok('MANDATORY IDENTITY MODEL: same-tab refresh -> same operation id (X unchanged)', X_afterRefresh === X);
 
 // Tab A is DUPLICATED into Tab B: sessionStorage is CLONED (same content,
-// independent object per the spec) but window.name is NOT (fresh browsing
-// context -> starts empty). Tab B independently starts a genuinely different
-// payment on the SAME invoice/scope.
-const tabB = { session: { ...tabA.session }, name: {} }; // sessionStorage cloned; window.name fresh (empty)
+// independent object per the spec). This model assumes window.name is NOT carried
+// over — which holds for a plain new tab but was NEVER verified for the actual
+// "Duplicate tab" gesture. PHASE 29 (PH29-01) found that Chromium DOES serialise
+// window.name into the tab's navigation PageState (so a real duplicate can inherit
+// it), and added a BroadcastChannel sibling check to `lib/durableOpId.js` that
+// re-mints the page-instance id on a live collision — closing this regardless of
+// window.name clone behaviour. See tests/multitab-session-integrity.test.cjs §1
+// for the window.name-CLONED model. This assertion is the window.name-empty half.
+const tabB = { session: { ...tabA.session }, name: {} }; // sessionStorage cloned; window.name empty (plain-new-tab case)
 const Y = mockReadOrCreateOpId(tabB.session, tabB.name, 'payment:INV-1');
 ok('MANDATORY IDENTITY MODEL: duplicated tab + a NEW legitimate action -> a DIFFERENT operation id (Y != X), even on the identical scope string, because the inherited sessionStorage entry is tagged with A\'s page-instance id, not B\'s', Y !== X);
 ok('MANDATORY IDENTITY MODEL: X != Y demonstrated directly', X !== Y);

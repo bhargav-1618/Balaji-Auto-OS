@@ -257,10 +257,22 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
     against the documented HTML Living Standard clone semantics, and (b) live
     production verification of both halves independently (a value written to
     `window.name` survives a same-tab reload; a genuinely new browser tab starts
-    with an empty `window.name`). It has not been re-verified against every
-    browser engine — Chromium-family behavior is what was checked live; Firefox
-    and Safari are expected (per spec) to behave identically but were not
-    independently confirmed this session.
+    with an empty `window.name`).
+    **PHASE 29 UPDATE (PH29-01, MEDIUM — fixed):** the Phase 7b claim that
+    "Duplicate tab" never clones `window.name` was NOT actually verified for the
+    Duplicate-tab gesture, and Chromium serialises the frame name into the tab's
+    navigation `PageState` (which Duplicate tab / session restore copy) — so a
+    real Chrome/Edge duplicate CAN inherit `window.name` alongside its cloned
+    `sessionStorage`, and the page-instance tag would then match on both sides
+    (PH7-01 re-opens). `lib/durableOpId.js` now ALSO cross-checks a
+    `BroadcastChannel`: if any other LIVE context is already using the same
+    page-instance id, both re-mint a fresh one, so an inherited opId is never
+    reused for a new intent — regardless of `window.name` clone behaviour. A
+    same-tab reload has no live sibling, so nothing re-mints and the Phase 5b/6b
+    refresh-safety guarantee is untouched. Verified live by an exact simulation
+    (cloning both `window.name` and `sessionStorage` into a 2nd tab). Real Chrome
+    Duplicate Tab and authenticated production multi-tab still not exercised (no
+    paired browser / no credentials).
   - The edit-lease rules fix only affects `editLocks`, a UX-only coordination
     collection — no change to any business-data collection's rules.
   - The dirty-state guard covers in-app tab switches (the gap this phase closes).
@@ -986,6 +998,33 @@ dimensions, labelled controls, tiny bundle), but confirming them is a runtime ta
     leases or server listeners; PH28-01's phantom-lock was proven by an execution-flow
     model, not a live two-session reproduction (production is read-only navigation
     only in these audits).
+
+  **Phase 29 — multi-tab / multi-session / cross-tab consistency (deep adversarial
+  audit; one MEDIUM found + fixed — see
+  `docs/testing/PHASE_29_MULTITAB_SESSION_INTEGRITY_REPORT.md`).** Re-audited the
+  whole multi-tab surface without assuming Phases 1–28 proved it. PASS, no change:
+  session-id isolation, edit-lease identity + `sameSession()` rules + 90 s expiry,
+  `_rev` guarded transaction, backend idempotency markers inside the tx, overpay
+  re-check, `persistentMultipleTabManager`, cross-tab settings/prefs/language sync
+  via the `storage` event, per-tab navigation isolation. Fixed **PH29-01** (the
+  tab-duplication opId protection depended on an unverified `window.name`-clone
+  assumption — see the Phase 7b entry above for the fix).
+  - **PH29-02 (INFO — demo only):** two demo tabs do not sync business data (demo
+    customers / invoices / job cards live in shared `localStorage` with no
+    `storage` listener; demo inventory / suppliers / sales / adjustments / POs live
+    in per-tab `sessionStorage`). Demo mode is an eval sandbox, not a multi-user
+    workspace. Production uses Firestore live sync. Not fixed.
+  - **PH29-03 (LOW, by design):** a cross-tab logout or idle-timeout redirect
+    (`pages/index.js` → `router.push('/login')` on `onAuthStateChanged(null)` /
+    idle expiry) is a client-side nav, so it is gated by neither the Phase 28
+    `moduleDirtyRef` prompt nor the editor's `beforeunload` — a dirty editor's
+    unsaved edits are dropped silently. Edge case (logging out elsewhere while
+    editing here); logout is a deliberate session-ending action; the idle timeout
+    already behaves this way. Documented, not fixed.
+  - Real Chrome "Duplicate tab" and authenticated production multi-tab Firestore
+    were not exercised (no paired browser / no credentials); PH29-01's fix is
+    verified by an exact simulation + async-queue model + a design that does not
+    depend on browser clone behaviour.
 
 ## UI consistency (partial)
 
