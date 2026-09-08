@@ -50,6 +50,11 @@ const ok = (n, c, d = '') => {
 const read = (p) => fs.readFileSync(path.resolve(__dirname, '..', p), 'utf8');
 
 const dash = read('components/InventoryDashboard.js');
+// Refactor Phase 2 — MobileFormPage + CheckoutModal (with their PH27-01 asPage-scroll
+// fixes and comments) were extracted verbatim. Definition checks read the new files;
+// the "misleading claim is gone / PartModal asPage" checks still read `dash`.
+const mfpSrc = read('components/inventory/ui/MobileFormPage.jsx');
+const coSrc = read('components/inventory/modals/StockModals.jsx');
 const css = read('styles/globals.css');
 const cust = read('components/customers/CustomersModule.jsx');
 const veh = read('components/vehicles/VehiclesModule.jsx');
@@ -113,15 +118,15 @@ ok('InventoryDashboard has NO `min-h-screen` className left (the un-scrollable r
 ok('the misleading "the BODY scrolls natively" claim is no longer stated as fact',
   !/\* [^\n]*the BODY scrolls natively/i.test(dash) && /It does NOT|the app shell pins/.test(dash));
 ok('the asPage comments now name the shell-pin as the reason a scroll region is needed',
-  (dash.match(/PH27-01/g) || []).length >= 3
-  && /position: fixed; (inset: 0; )?overflow: hidden; height: 100dvh/.test(dash));
+  ((dash + mfpSrc + coSrc).match(/PH27-01/g) || []).length >= 3
+  && /position: fixed; (inset: 0; )?overflow: hidden; height: 100dvh/.test(dash + mfpSrc));
 
 // ───────────────────────────────────────────────────────────────────────────
 // 3. PH27-01 — the SHIPPED fix, per wrapper
 // ───────────────────────────────────────────────────────────────────────────
 
 // -- <MobileFormPage> (Receive Stock / Adjust Stock / Supplier) -----------
-const mfp = dash.slice(dash.indexOf('function MobileFormPage'), dash.indexOf('function MobileFormPage') + 2400);
+const mfp = mfpSrc.slice(mfpSrc.indexOf('function MobileFormPage'), mfpSrc.indexOf('function MobileFormPage') + 2400);
 ok('MobileFormPage root is viewport-capped, not min-h-screen',
   /return \(\s*<div className="h-\[100dvh\] flex flex-col overflow-hidden"/.test(mfp));
 ok('MobileFormPage header is a non-shrinking flex row (flex-shrink-0), not sticky-in-a-non-scroller',
@@ -130,7 +135,7 @@ ok('MobileFormPage wraps {children} in ONE real scroll region',
   /<div className="flex-1 min-h-0 overflow-y-auto dark-scroll">\s*\{children\}\s*<\/div>/.test(mfp));
 
 // -- <CheckoutModal> asPage (the Sell flow) --------------------------------
-const co = dash.slice(dash.indexOf('function CheckoutModal'), dash.indexOf('function CheckoutModal') + 6000);
+const co = coSrc.slice(coSrc.indexOf('function CheckoutModal'), coSrc.indexOf('function CheckoutModal') + 6000);
 ok('CheckoutModal asPage root is viewport-capped',
   /asPage \? 'h-\[100dvh\] flex flex-col overflow-hidden'/.test(co));
 ok('CheckoutModal asPage inner wrapper is a min-h-0 flex column (so the body can flex-scroll)',

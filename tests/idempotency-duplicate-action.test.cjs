@@ -36,6 +36,11 @@ const ok = (name, cond, detail = '') => {
 };
 const read = (p) => fs.readFileSync(path.resolve(__dirname, p), 'utf8');
 const dash = read('../components/InventoryDashboard.js');
+// Refactor Phase 2 — CheckoutModal / StockAdjustModal / BulkAdjustModal / BulkReceiveModal
+// extracted verbatim to ./inventory/modals/StockModals. The durable-opId contract each
+// modal owns is checked against that file; the container-side clears + the <CheckoutModal>
+// key= wiring still read `dash`. RestockModal stays in `dash`.
+const stockModals = read('../components/inventory/modals/StockModals.jsx');
 const bill = read('../components/billing/BillingModule.jsx');
 const po = read('../services/purchaseOrderService.js');
 const poLib = read('../lib/poReceive.js');
@@ -194,8 +199,8 @@ const sellBlock = slice(dash, 'async function handleSellInner', 'async function 
 ok('[OK] handleSell has a synchronous in-flight guard (sellLockRef)',
   /const sellLockRef = useRef\(false\)/.test(dash) && /if \(sellLockRef\.current\) return;/.test(dash));
 ok('CheckoutModal owns ONE stable sale-op id, passed as the 4th confirm arg (Phase 5b: DURABLE)',
-  /useDurableOpId\(`sell:\$\{part\.id\}`, 'sale'\)/.test(dash)
-  && /onConfirm\(q, p, floor > 0 && p < floor, saleOpId\)/.test(dash));
+  /useDurableOpId\(`sell:\$\{part\.id\}`, 'sale'\)/.test(stockModals)
+  && /onConfirm\(q, p, floor > 0 && p < floor, saleOpId\)/.test(stockModals));
 ok('the CheckoutModal render is keyed per part so a new sale remounts (fresh opId)',
   /<CheckoutModal key=\{`co:\$\{checkoutPart\.id\}`\}/.test(dash));
 // PHASE 8B (PH8-05) — runQuickSaleTx (extracted, shared by the live click and
@@ -273,10 +278,10 @@ ok('adjust/restock reads (marker + part) both happen before any write',
   /const adjSnap = await tx\.get\(adjRef\);\s*\n\s*const partSnap = await tx\.get\(partRef\);/.test(adjBlock)
   && /const rsSnap = await tx\.get\(rsRef\);\s*\n\s*const partSnap = await tx\.get\(partRef\);/.test(rsBlock));
 ok('the modals own stable op ids (StockAdjustModal / RestockModal) — Phase 5b: DURABLE',
-  /useDurableOpId\(`adjust:\$\{part\.id\}`, 'adj'\)/.test(dash) && /useDurableOpId\(`restock:\$\{part\.id\}`, 'rs'\)/.test(dash));
+  /useDurableOpId\(`adjust:\$\{part\.id\}`, 'adj'\)/.test(stockModals) && /useDurableOpId\(`restock:\$\{part\.id\}`, 'rs'\)/.test(dash));
 ok('bulk adjust / bulk receive use ONE DURABLE op id per row, recovered on a refresh',
-  /opId: readOrCreateOpId\(`bulk-adjust:\$\{p\.id\}`, 'adj'\)/.test(dash)
-  && /opId: readOrCreateOpId\(`bulk-restock:\$\{part\.id\}`, 'rs'\)/.test(dash));
+  /opId: readOrCreateOpId\(`bulk-adjust:\$\{p\.id\}`, 'adj'\)/.test(stockModals)
+  && /opId: readOrCreateOpId\(`bulk-restock:\$\{part\.id\}`, 'rs'\)/.test(stockModals));
 ok('the adjust/restock error messages admit uncertainty',
   /press Record adjustment again \(a repeat is safe\)/.test(dash)
   && /press Receive again \(a repeat is safe\)/.test(dash));

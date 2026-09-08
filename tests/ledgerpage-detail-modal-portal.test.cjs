@@ -51,7 +51,10 @@ ok('the modal keeps its own backdrop, centering, and close-on-backdrop-click beh
 ok('LedgerPage is confirmed shared by Sales/Services/Stock In/Stock Out (one fix, four modules)',
   (dashSrc.match(/<LedgerPage/g) || []).length === 4);
 ok('LedgerDetailDrawer is confirmed shared by the Inventory Stock tab + per-part Movement History too (one portal fix, six consumers total)',
-  /<LedgerDetailDrawer /.test(dashSrc) && /<LedgerDetailDrawer /.test(fs.readFileSync(path.resolve(__dirname, '../components/inventory/InventoryStock.jsx'), 'utf8')));
+  // Refactor Phase 2 — the per-part Movement History (ProductLedgerModal) moved verbatim
+  // to ./inventory/modals/UtilityModals; it still renders <LedgerDetailDrawer>.
+  /<LedgerDetailDrawer /.test(fs.readFileSync(path.resolve(__dirname, '../components/inventory/modals/UtilityModals.jsx'), 'utf8'))
+  && /<LedgerDetailDrawer /.test(fs.readFileSync(path.resolve(__dirname, '../components/inventory/InventoryStock.jsx'), 'utf8')));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

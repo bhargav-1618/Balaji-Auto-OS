@@ -34,6 +34,11 @@ const ok = (name, cond, detail = '') => {
 };
 const read = (p) => fs.readFileSync(path.resolve(__dirname, p), 'utf8');
 const dash = read('../components/InventoryDashboard.js');
+// Refactor Phase 2 — CheckoutModal / StockAdjustModal extracted verbatim to
+// ./inventory/modals/StockModals; each still owns its useDurableOpId(scope) call and the
+// container still owns the matching clearOpId. Modal-side check → stockModals, container
+// clear → dash. RestockModal stays in dash.
+const stockModals = read('../components/inventory/modals/StockModals.jsx');
 const bill = read('../components/billing/BillingModule.jsx');
 const cust = read('../components/customers/CustomersModule.jsx');
 const jc = read('../components/jobcards/JobCardModule.jsx');
@@ -123,10 +128,10 @@ ok('PO receive: ReceivePOForm uses useDurableOpId(`receive:${po.id}`); receivePO
   /useDurableOpId\(`receive:\$\{po\?\.id \|\| 'po'\}`, 'rcpt'\)/.test(poUI)
   && /clearOpId\(`receive:\$\{po\.id\}`\)/.test(dash));
 ok('quick sell: CheckoutModal uses useDurableOpId(`sell:${part.id}`); handleSell clears it only when online-confirmed',
-  /useDurableOpId\(`sell:\$\{part\.id\}`, 'sale'\)/.test(dash)
+  /useDurableOpId\(`sell:\$\{part\.id\}`, 'sale'\)/.test(stockModals)
   && /if \(online\) clearOpId\(`sell:\$\{part\.id\}`\);/.test(dash));
 ok('stock adjust: StockAdjustModal uses useDurableOpId(`adjust:${part.id}`); handleAdjustStock clears on confirm',
-  /useDurableOpId\(`adjust:\$\{part\.id\}`, 'adj'\)/.test(dash)
+  /useDurableOpId\(`adjust:\$\{part\.id\}`, 'adj'\)/.test(stockModals)
   && /clearOpId\(`adjust:\$\{part\.id\}`\); \/\/ Phase 5b — server-confirmed/.test(dash));
 ok('ad-hoc restock: RestockModal uses useDurableOpId(`restock:${part.id}`); handleReceiveStock clears on confirm',
   /useDurableOpId\(`restock:\$\{part\.id\}`, 'rs'\)/.test(dash)
@@ -165,8 +170,8 @@ ok('the create doc write still targets the client-stable id with setDoc merge (a
   && /await setDoc\(doc\(db, COLLECTIONS\.SUPPLIERS, newId\), \{ \.\.\.payload, createdAt: serverTimestamp\(\) \}, \{ merge: true \}\)/.test(dash)
   && /if \(poId\) return setDoc\(doc\(db, 'purchaseOrders', String\(poId\)\), data, \{ merge: true \}\)/.test(poSvc));
 ok('bulk adjust / bulk receive rows use durable per-part ids too',
-  /opId: readOrCreateOpId\(`bulk-adjust:\$\{p\.id\}`, 'adj'\)/.test(dash)
-  && /opId: readOrCreateOpId\(`bulk-restock:\$\{part\.id\}`, 'rs'\)/.test(dash));
+  /opId: readOrCreateOpId\(`bulk-adjust:\$\{p\.id\}`, 'adj'\)/.test(stockModals)
+  && /opId: readOrCreateOpId\(`bulk-restock:\$\{part\.id\}`, 'rs'\)/.test(stockModals));
 
 // pure model: setDoc to a stable, recovered id never duplicates
 const docs = {};

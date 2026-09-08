@@ -51,8 +51,10 @@ ok('old sticky-top header replaced (no "sticky top-0 flex items-center justify-b
 // Issue 7.7 — is genuinely reused (not re-implemented) by the two new consumers.
 const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
 const stockPage = fs.readFileSync(path.resolve(__dirname, '../components/inventory/InventoryStock.jsx'), 'utf8');
+// Refactor Phase 2 — ProductLedgerModal extracted verbatim to ./inventory/modals/UtilityModals.
+const utilityModals = fs.readFileSync(path.resolve(__dirname, '../components/inventory/modals/UtilityModals.jsx'), 'utf8');
 ok('ProductLedgerModal (per-part movement history) reuses LedgerDetailDrawer instead of its own drawer',
-  /<LedgerDetailDrawer title="Movement" icon=\{History\} detail=\{detail\} onClose=\{\(\) => setDetail\(null\)\}/.test(dash));
+  /<LedgerDetailDrawer title="Movement" icon=\{History\} detail=\{detail\} onClose=\{\(\) => setDetail\(null\)\}/.test(utilityModals));
 ok('Inventory Stock tab movement timeline reuses LedgerDetailDrawer',
   /<LedgerDetailDrawer title="Movement" icon=\{History\} detail=\{detail\} onClose=\{\(\) => setDetail\(null\)\}/.test(stockPage));
 
