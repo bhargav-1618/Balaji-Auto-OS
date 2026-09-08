@@ -138,6 +138,10 @@ pending and what it means until published.
   (a frozen tag), not a running scoreboard. This program's convention
   keeps CHANGELOG/RELEASE_NOTES frozen at v1.0.0 and uses ROADMAP.md +
   KNOWN_LIMITATIONS.md as the living per-phase status docs.
+  *(Superseded in Phase 30 Stage 2: RELEASE_NOTES was updated to 151/151 and
+  CHANGELOG gained a summary of the post-release reliability & integrity
+  program, so the release-facing docs no longer understate the shipped work.
+  See `docs/testing/PHASE_30_PRODUCTION_READINESS_REPORT.md`.)*
 - Every `docs/testing/PHASE_*.md` report's own test/rules counts — each is
   correct as of its own phase; the progression (131→132→…→137,
   133→…→138) is internally consistent across the reports and ROADMAP.md.

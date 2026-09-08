@@ -8796,12 +8796,6 @@ export default function InventoryDashboard() {
   // alerts, etc.) while production-account features stay gated on real isAdmin.
   const canManageData = isAdmin || demoAdmin;
   const canExport = isAdmin || !!perms?.exports;
-  // In Guest Demo mode the app is strictly read-only: any write is intercepted
-  // here with a friendly message so the sample data is never modified.
-  function demoGuard() {
-    if (demoMode) { notify.permissionDenied('This is a read-only demo — sign in to make changes.'); return true; }
-    return false;
-  }
   // Demo permission map (owner-configured). Live-updates when Settings saves it.
   const [demoPerms, setDemoPerms] = useState(() => loadDemoPerms());
   useEffect(() => {

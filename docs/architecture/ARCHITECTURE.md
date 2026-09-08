@@ -340,8 +340,10 @@ suites; wiring is covered by source assertions and the static scanners.
 
 ## Known boundaries
 
-See `docs/KNOWN_LIMITATIONS.md`. In brief: single-location concurrency (invoice numbering
-is not yet transaction-safe), no list virtualisation (pagination covers current scale), the
-shell is a large composition root (post-1.0 split), and all browser-only behaviour (render,
-print/PDF, live Firestore) requires manual QA. Publishing the Firestore rules and setting a
-strong owner password are deployment-time operational tasks.
+See `docs/KNOWN_LIMITATIONS.md`. In brief: the money, stock, invoice-numbering and
+duplicate-action paths are transaction-safe and were verified with concurrent clients
+(post-1.0 reliability program) — what remains under concurrency is a few low-severity
+field-level last-writer-wins races; no list virtualisation (pagination covers current
+scale); the shell is a large composition root (post-1.0 split); and all browser-only
+behaviour (render, print/PDF, live Firestore) requires manual QA. Publishing the Firestore
+rules and setting a strong owner password are deployment-time operational tasks.

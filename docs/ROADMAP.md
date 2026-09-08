@@ -1076,10 +1076,12 @@ report for the numbers.)*
 
 ## Code health
 
-- **Split `components/InventoryDashboard.js`.** It is the ~8,600-line composition root
-  (live subscriptions, tab model, deep-link router, most reads/writes). Add unit tests
-  for the pure logic still inline, then extract domain hooks (`useInventory`,
-  `useSuppliers`, `useSales`) and per-tab route chunks. Tests must come first.
+- **Split `components/InventoryDashboard.js`.** It is the 16,259-line composition root
+  (live subscriptions, tab model, deep-link router, most reads/writes) — it roughly
+  doubled over the post-1.0 reliability program, which is exactly why the split now
+  matters. Add unit tests for the pure logic still inline, then extract domain hooks
+  (`useInventory`, `useSuppliers`, `useSales`) and per-tab route chunks. Tests must
+  come first.
 - **Finish the persistence-adapter migration.** `services/persistenceStore.js` is
   partially adopted; the rest of the shell still calls Firestore directly.
 - **Accessibility polish.** A document-level focus trap (`lib/focusTrap.js`) and
@@ -1090,6 +1092,13 @@ report for the numbers.)*
 - **Types.** TypeScript, or at least JSDoc typedefs on the `services/` boundary.
 - **E2E + automated accessibility suite.** The current suite is Node/jsdom (logic and
   wiring only); add browser-level end-to-end and a11y checks.
+- **Run `test:rules` in CI.** `.github/workflows/ci.yml` runs lint + build + `npm test`
+  on every push but not `npm run test:rules` — the Firestore-rules suite (261 emulator
+  assertions) is a local/manual gate today because it needs the Firestore emulator plus
+  a JDK in the runner. Adding an `actions/setup-java` step + `firebase emulators:exec`
+  would close the loop; deferred as a low-risk follow-up (the extra toolchain download
+  is a mild flakiness surface, and the suite already runs locally before every rules
+  change).
 
 ## Product & compliance
 

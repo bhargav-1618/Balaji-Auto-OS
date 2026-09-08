@@ -29,10 +29,17 @@ const makeSessionId = () => {
 // removes them by mistake. This guarantees the owner can never be locked out of
 // their own shop. Manage everyone else from Settings → Staff & Access.
 //
-// Security note: Firestore rules use `request.auth != null` (single-trusted-shop
-// model), so this role controls what the UI exposes (cost prices, deletes,
-// exports, Settings powers) — it is access control at the app level, not a
-// cryptographic guarantee. Appropriate for a small trusted team.
+// Security note: `firestore.rules` is the authoritative boundary. Reads and
+// ordinary business writes are `signedIn()` (single-trusted-shop model), but the
+// hardened ruleset also enforces server-side: hard delete on parts / suppliers /
+// categories / vehicles and on the ledgers is `isAdmin()` only; `appSettings`
+// (the role list) is admin-only; the ledgers are append-only (`update: if false`);
+// invoice counters are monotonic; and actor identity is pinned on `auditLog` /
+// `pendingSales` / `editLocks` (see the header of `firestore.rules`). This
+// client-side role still governs what the UI EXPOSES — cost prices, export
+// buttons, the delete affordances, Settings powers — for the parts the rules
+// leave to any signed-in user. It is app-level access control layered on top of
+// the rules, not a substitute for them. Appropriate for a small trusted team.
 // ---------------------------------------------------------------------------
 const BOOTSTRAP_ADMINS = [
   'konabhargav2003@gmail.com', // owner — permanent admin, never removable from UI

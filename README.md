@@ -170,8 +170,13 @@ react-hot-toast · jsPDF · qrcode · SheetJS (xlsx).
 ## Status & Version History
 
 Current version: **1.0.0** — first production release, targeting single-location
-workshops. The transaction/billing engine is covered by an executable test suite;
-multi-terminal concurrency and a few operational items are open and tracked in
+workshops. The transaction/billing engine and the multi-terminal concurrency paths
+(invoice numbering, cross-workflow races, duplicate-action idempotency, refresh/offline
+recovery, tab-lifecycle safety) are covered by executable test suites and were verified
+with concurrent clients against the emulator and production during a post-release
+reliability program (see [docs/CHANGELOG.md](docs/CHANGELOG.md)). The remaining open
+items — a few low-severity field-level last-writer-wins races, the browser-only
+verification ceiling, and two operator deployment steps — are tracked in
 [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) and
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -180,17 +185,20 @@ See [docs/CHANGELOG.md](docs/CHANGELOG.md) and
 
 ## Browser Support
 
-Targets current evergreen desktop and mobile browsers:
+Targets current evergreen desktop and mobile browsers. The table below states what has
+actually been exercised, not what is merely intended:
 
-| Browser | Support |
-|---------|---------|
-| Chrome / Edge (Chromium) | Fully supported (primary target) |
-| Firefox | Supported |
-| Safari (desktop & iOS) | Supported |
+| Browser | Status |
+|---------|--------|
+| Chrome / Chromium — desktop | **Verified** — Chrome/Chromium 148 desktop (automated Node/jsdom suite + manual passes) |
+| Chrome — Android | **Partially verified** — Chrome mobile *device-emulation* only (375–414 px, touch, Android UA); not a physical device |
+| Edge — desktop | **Expected (engine-compatible)** — same Chromium/Blink engine as the verified Chrome build; not separately tested |
+| Firefox — desktop | **Not yet verified** — no engine-specific code paths (standard flexbox/grid, `100dvh`, scrollbar fallbacks present); needs a real-browser QA pass |
+| Safari — desktop & iOS | **Not yet verified** — iOS in particular (`100dvh`, on-screen keyboard, `visualViewport`) needs a real-device pass; see `docs/KNOWN_LIMITATIONS.md` |
 
 The UI is responsive across desktop, laptop, tablet, and mobile, and preserves pinch-zoom
-for accessibility (WCAG 1.4.4). Rendering, print/PDF output, and download behaviour should
-be validated in-browser as part of release QA.
+for accessibility (WCAG 1.4.4). Rendering, print/PDF output, download behaviour, and the
+"Not yet verified" browsers above must be validated on real devices as part of release QA.
 
 ## Troubleshooting
 
@@ -216,11 +224,13 @@ be validated in-browser as part of release QA.
 ## Known Limitations
 
 Known boundaries are documented honestly in
-**[docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)** — including single-location
-concurrency (invoice numbering is not yet transaction-safe), the absence of list
-virtualisation (pagination covers current scale), and the browser-only verification ceiling.
-Two deployment-time operational tasks (publishing the Firestore rules and setting a strong
-owner password) must be completed before go-live.
+**[docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)** — including a few
+low-severity field-level last-writer-wins races under concurrent multi-terminal edits
+(the money, stock, invoice-numbering and idempotency paths are transaction-safe and
+were verified with concurrent clients), the absence of list virtualisation (pagination
+covers current scale), and the browser-only verification ceiling. Two deployment-time
+operational tasks (publishing the Firestore rules and setting a strong owner password)
+must be completed before go-live.
 
 ## Author
 

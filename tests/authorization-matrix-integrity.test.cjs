@@ -83,8 +83,12 @@ ok('Settings "Users & Roles" and "Backup & Data" tabs are isAdmin-gated (not in 
   && /\.\.\.\(isAdmin \? \[\['backup', 'Backup & Data'\]\] : \[\]\)/.test(dash));
 ok('Settings sections themselves re-check isAdmin (section === "users" && isAdmin, etc.)',
   /section === 'users' && isAdmin/.test(dash) && /section === 'backup' && isAdmin/.test(dash) && /section === 'demoperms' && isAdmin/.test(dash));
-ok('demo mode is strictly read-only for real writes — demoGuard() intercepts every mutation',
-  /function demoGuard\(\)\s*\{\s*if \(demoMode\) \{ notify\.permissionDenied/.test(dash));
+ok('demo mode never starts a business-data Firestore listener (every live onSnapshot effect returns early when demoMode)',
+  (dash.match(/if \(demoMode\) return;\s*\n\s*const unsub = onSnapshot\(/g) || []).length >= 3);
+ok('destructive / admin actions for a demo user are intercepted (protectedDemoToast), not written',
+  /function protectedDemoToast\(/.test(dash)
+  && /disabled by the administrator|Protected Demo Environment/.test(dash)
+  && (dash.match(/protectedDemoToast\(/g) || []).length >= 15);
 ok('route protection: an unauthenticated, non-demo visitor is redirected to /login',
   /if \(!loading && !user && !demoMode\) router\.push\('\/login'\)/.test(idx)
   && /if \(!user && !demoMode\) return <BootSplash label="Redirecting/.test(idx));

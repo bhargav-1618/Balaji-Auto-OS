@@ -331,8 +331,9 @@ ok('logout in one tab propagates to every tab (onAuthStateChanged fires with nul
 ok('role/perms are recomputed live from the Firestore roles snapshot — a role change propagates to all tabs',
   /useEffect\(\(\) => \{\s*\n\s*if \(demoMode\) return; \/\/ guest perms fixed above[\s\S]{0,400}setRole\('admin'\)/.test(auth)
   && /onSnapshot\(\s*\n\s*doc\(db, 'appSettings', 'roles'\)/.test(auth));
-ok('role gating is app-level only (single-trusted-shop model) — documented, not claimed as a cryptographic boundary',
-  /it is access control at the app level, not a\s*\n\/\/ cryptographic guarantee/.test(auth));
+ok('role gating is documented as app-level UI exposure layered on firestore.rules — not claimed as the security boundary itself',
+  /app-level access control layered on top of\s*\n\/\/ the rules, not a substitute for them/.test(auth)
+  && /`firestore\.rules` is the authoritative boundary/.test(auth));
 ok('cross-tab settings / prefs / language changes propagate via the storage event',
   (dash.match(/window\.addEventListener\('storage', reload\)/g) || []).length >= 2);
 
