@@ -36,6 +36,10 @@ const defect = (name, isFixed, detail = '') => {
 };
 const read = (p) => fs.readFileSync(path.resolve(__dirname, p), 'utf8');
 const dash = read('../components/InventoryDashboard.js');
+// Refactor Phase 1 — StockStepper (the [-] [input] [+] control) was extracted verbatim
+// to ./inventory/ui/StockStepper. Its "+ button only ever calls step(1) / typing a
+// lower number is blocked" contract is checked against that file now.
+const stepper = read('../components/inventory/ui/StockStepper.jsx');
 const poService = read('../services/purchaseOrderService.js');
 const slice = (src, a, b) => {
   const s = src.indexOf(a); if (s < 0) return '';
@@ -105,9 +109,9 @@ ok('MOVEMENT: quick restock stepper (commitStock, delta > 0) — restocks ledger
   && /tx\.set\(restockRef, \{/.test(commitStockFn));
 
 ok('[fact] commitStock\'s delta<=0 branch (a bare stock overwrite with NO ledger entry) is UNREACHABLE from the UI: StockStepper\'s "+" button only ever calls step(1) (positive), and typing a lower number is explicitly blocked before onCommit is ever called',
-  /function step\(delta\) \{[\s\S]{0,200}onCommit\(part\.id, next\);/.test(dash)
-  && /onClick=\{\(\) => step\(1\)\}/.test(dash)
-  && /if \(next < current\) \{\s*\n\s*toast\.error\('To reduce stock, use the red Sell button/.test(dash));
+  /function step\(delta\) \{[\s\S]{0,200}onCommit\(part\.id, next\);/.test(stepper)
+  && /onClick=\{\(\) => step\(1\)\}/.test(stepper)
+  && /if \(next < current\) \{\s*\n\s*toast\.error\('To reduce stock, use the red Sell button/.test(stepper));
 
 ok('MOVEMENT: Stock Adjustment (adjustStockLineInner) — stockAdjustments ledger (before/after/signedQty/reason/correctsId) + stock increment inside ONE transaction, keyed by adjId, reads BOTH the op marker and the part before any write',
   /const adjSnap = await tx\.get\(adjRef\);/.test(adjustStockFn)

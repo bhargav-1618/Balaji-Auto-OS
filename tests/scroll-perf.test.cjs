@@ -16,8 +16,8 @@ const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDas
 
 console.log('\nScroll-handler performance\n');
 
-// ScrollToTop
-const st = dash.slice(dash.indexOf('function ScrollToTop'), dash.indexOf('function ScrollToTop') + 900);
+// ScrollToTop — extracted verbatim to ./inventory/ui/ScrollToTop (Refactor Phase 1).
+const st = fs.readFileSync(path.resolve(__dirname, '../components/inventory/ui/ScrollToTop.jsx'), 'utf8');
 ok('ScrollToTop rAF-throttles scroll events', /requestAnimationFrame\(evaluate\)/.test(st) && /if \(!ticking\)/.test(st));
 ok('ScrollToTop only setState when the threshold boolean flips', /if \(next !== shown\) \{ shown = next; setShow\(next\); \}/.test(st));
 ok('ScrollToTop listens on the content container, not window', /onAppScroll\(onScroll\)/.test(st) && !/window\.addEventListener\('scroll'/.test(st));

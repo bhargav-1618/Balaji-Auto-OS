@@ -70,13 +70,17 @@ ok('price_change entries carry a from → to detail',
   JSON.stringify(pc[0]));
 
 // AuditRow's labelMap and OverviewView's ACT_LABEL must both map every action used.
+// Refactor Phase 1 — AuditRow was extracted verbatim to ./inventory/ui/AuditRow; its
+// labelMap lives there now, OverviewView's ACT_LABEL still lives in InventoryDashboard.js.
 const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+const auditRowSrc = fs.readFileSync(path.resolve(__dirname, '../components/inventory/ui/AuditRow.jsx'), 'utf8');
+const labelMaps = dash + '\n' + auditRowSrc;
 const used = [...new Set(auditLog.map((e) => e.action))];
 ok('AuditRow labelMap covers create_part / sell_part / create_supplier',
-  /create_part: 'Created part'/.test(dash) && /sell_part: 'Recorded sale'/.test(dash) && /create_supplier: 'Added supplier'/.test(dash));
-ok('every demo action key appears in InventoryDashboard\'s label maps',
-  used.every((a) => new RegExp(`${a}:`).test(dash)),
-  used.filter((a) => !new RegExp(`${a}:`).test(dash)).join(', '));
+  /create_part: 'Created part'/.test(auditRowSrc) && /sell_part: 'Recorded sale'/.test(auditRowSrc) && /create_supplier: 'Added supplier'/.test(auditRowSrc));
+ok('every demo action key appears in a label map (AuditRow.labelMap or OverviewView.ACT_LABEL)',
+  used.every((a) => new RegExp(`${a}:`).test(labelMaps)),
+  used.filter((a) => !new RegExp(`${a}:`).test(labelMaps)).join(', '));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

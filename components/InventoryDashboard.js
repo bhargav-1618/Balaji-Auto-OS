@@ -14,6 +14,14 @@ import SupplierPerformance from './inventory/SupplierPerformance';
 import InventoryPurchaseOrders, { STATUS as PO_STATUS } from './inventory/InventoryPurchaseOrders';
 import SupplierPOBuilder from './inventory/SupplierPOBuilder';
 import SupplierDirectory from './inventory/SupplierDirectory';
+import StatusBadge from './inventory/ui/StatusBadge';
+import StockStepper from './inventory/ui/StockStepper';
+import DateRangeControl from './inventory/ui/DateRangeControl';
+import ScrollToTop from './inventory/ui/ScrollToTop';
+import AuditRow from './inventory/ui/AuditRow';
+import SidebarTheme from './inventory/ui/SidebarTheme';
+import { ACard, OverviewCard, DashEmpty, ScoreCard, RptCard } from './inventory/ui/DashboardCards';
+import { SetSeg, SetSel, SetTxt, SetCard, BrandingLogoField, SET_CARD_STYLE } from './inventory/ui/SettingsControls';
 import JobCardModule from './jobcards/JobCardModule';
 import CustomersModule from './customers/CustomersModule';
 import VehiclesModule from './vehicles/VehiclesModule';
@@ -48,12 +56,12 @@ import { useTranslation, LOCALES } from '../lib/i18n';
 import { lockBody, unlockBody, assertBodyUnlockedIfNoModals } from './Modal';
 import BillingModule from './billing/BillingModule';
 import { getGarageSeed } from '../lib/demoGarageSeed';
-import { computeRange, ratingFor, computeInventoryHealth, computeWorkshopScore, computeAlerts, computeInsights, computeAchievements, computeWorkshopProgress } from '../services/analyticsService';
+import { computeRange, computeInventoryHealth, computeWorkshopScore, computeAlerts, computeInsights, computeAchievements, computeWorkshopProgress } from '../services/analyticsService';
 import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, toIndianPhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, isSameDay, trendPct, asArray, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
 import { buildPO, poCreateDoc, poAdvanceDoc, poReceiveDoc, poCancelDoc, nextPOStatus } from '../services/purchaseOrderService';
 import {
   catMatches, remapCatFields, renameCategoryDocs, deleteCategoryDocs,
-  nonNegInt, nonNegNum, sanitizeStock, classifyStockLevel,
+  nonNegInt, nonNegNum, sanitizeStock,
   cardReservedQtys, reserveDelta, computeStockAdjustment, buildRestockRecord,
   getFastMoverMin, isFastMover, buildMovementDetailSections, pricesDiffer,
 } from '../services/inventoryService';
@@ -112,12 +120,10 @@ import {
   Search,
   Mic,
   Plus,
-  Minus,
   Edit3,
   Trash2,
   X,
   Upload,
-  ImageOff,
   PackageSearch,
   AlertTriangle, Bell, Receipt,
   PackageX,
@@ -149,7 +155,6 @@ import {
   Filter,
   ChevronDown,
   ChevronLeft,
-  ChevronUp,
   Settings,
   Wrench,
   FileText,
@@ -157,7 +162,6 @@ import {
   MoreHorizontal,
   MoreVertical,
   ChevronRight,
-  Calendar,
   Check,
   Sparkles,
   Trophy,
@@ -699,143 +703,6 @@ function PartImageThumb({ src, alt, onHover, onMove, onLeave }) {
         </div>
       )}
     </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Status badge
-// ---------------------------------------------------------------------------
-// Parts review (Issue 6.2) — a separate "Reorder" button used to sit next to this
-// badge on every low/out row, always visible and independently labeled, so the same
-// fact ("this needs reordering") was said twice: once by the badge's colour/text,
-// once by the button's own presence. Folding the reorder trigger INTO the badge —
-// only for the two states it actually applies to — turns two adjacent controls
-// making the same claim into one. `onReorder` is optional so every other call site
-// (or a future one with nothing to reorder into) keeps the badge exactly as before.
-function StatusBadge({ stock, minStock, onReorder }) {
-  // H-5A: the out/low/ok threshold decision is now classifyStockLevel (pure, in
-  // inventoryService) — same conditions, single source of truth. Only the DECISION
-  // moved; the JSX/classes below are unchanged (H-10 deliberately left this component's
-  // rendering as-is, since it's Tailwind-class-based rather than hex+Badge-based).
-  const level = classifyStockLevel({ stock, minStock });
-  const reorderBtn = onReorder && (level === 'out' || level === 'low') && (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onReorder(); }}
-      title="Generate a WhatsApp purchase order"
-      className="flex items-center justify-center w-4 h-4 -mr-0.5 rounded-full hover:bg-black/15 active:scale-90 transition"
-    >
-      <MessageCircle size={10} />
-    </button>
-  );
-  if (level === 'out') {
-    return (
-      <span className="inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-red-500/15 text-red-400 border border-red-500/30">
-        Out{reorderBtn}
-      </span>
-    );
-  }
-  if (level === 'low') {
-    return (
-      <span
-        className="inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-400 border border-amber-500/30 whitespace-nowrap"
-        title={`Current stock: ${stock} · Minimum stock: ${minStock || 5}`}
-      >
-        Low ({stock}/{minStock || 5}){reorderBtn}
-      </span>
-    );
-  }
-  return (
-    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
-      OK
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Stock stepper: [-] [input] [+] — Requirement 2
-// ---------------------------------------------------------------------------
-function StockStepper({ part, onCommit, onSell, big, canChangeStock = true, onBlocked }) {
-  const [value, setValue] = useState(String(part.stock ?? 0));
-  const editingRef = useRef(false);
-  const btn = big ? 'w-11 h-11' : 'w-7 h-7';
-  const inp = big ? 'flex-1 text-base py-2.5' : 'w-14 text-sm py-1';
-  const ic = big ? 16 : 13;
-
-  useEffect(() => {
-    if (!editingRef.current) setValue(String(part.stock ?? 0));
-  }, [part.stock]);
-
-  function clamp(n) {
-    return Math.max(0, parseInt(n, 10) || 0);
-  }
-
-  // Settings QA fix: the demo "Change Stock" permission gated onCommit/onSell
-  // themselves, but this stepper applies its own value OPTIMISTICALLY before
-  // that ever runs — a blocked commit still left the input showing the
-  // incremented number, with nothing re-syncing it back (the resync effect
-  // above only fires when part.stock itself changes, which a blocked commit
-  // never does). Checking here, before the optimistic setValue, is the only
-  // place that avoids the stuck-wrong-number state.
-  function step(delta) {
-    if (!canChangeStock) { onBlocked?.(); return; }
-    const next = clamp((parseInt(value, 10) || 0) + delta);
-    setValue(String(next)); // optimistic, instant
-    onCommit(part.id, next); // async Firestore sync in background
-  }
-
-  function commitTyped() {
-    editingRef.current = false;
-    const next = clamp(value);
-    const current = part.stock ?? 0;
-    if (next !== current && !canChangeStock) { onBlocked?.(); setValue(String(current)); return; }
-    // FIX-01: typing a LOWER number must not silently reduce stock — that bypasses
-    // the sale record, the price-floor check, and every analytics report. Reducing
-    // stock has to go through the Sell button (Checkout). Manual edits restock only.
-    if (next < current) {
-      toast.error('To reduce stock, use the red Sell button — it records the sale. Typing a lower number is disabled.');
-      setValue(String(current));
-      return;
-    }
-    setValue(String(next));
-    if (next !== current) onCommit(part.id, next);
-  }
-
-  return (
-    <div className="flex items-center gap-1.5">
-      {/* Issue 3 + Feature 5: deduction = SALE. At 0 stock it opens the
-          alternative-part suggester instead of a dead error. */}
-      <button
-        onClick={() => onSell(part)}
-        title="Sell / deduct stock"
-        className={`${btn} rounded-lg flex items-center justify-center transition active:scale-90 bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20`}
-      >
-        <Minus size={ic} />
-      </button>
-
-      <input
-        type="number"
-        min="0"
-        value={value}
-        onFocus={() => (editingRef.current = true)}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={commitTyped}
-        onKeyDown={(e) => {
-          if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault();
-          if (e.key === 'Enter') e.currentTarget.blur();
-        }}
-        className={`${inp} text-center font-semibold rounded-lg outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 transition`}
-        style={{ MozAppearance: 'textfield' }}
-      />
-
-      <button
-        onClick={() => step(1)}
-        title="Add stock (restock)"
-        className={`${btn} rounded-lg flex items-center justify-center transition active:scale-90 bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/20`}
-      >
-        <Plus size={ic} />
-      </button>
-    </div>
   );
 }
 
@@ -4188,18 +4055,6 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
 // H-5E: useViewMore (progressive "View More" pager) moved to hooks/useViewMore.js
 // — a pure React concern, no business logic.
 
-function ACard({ title, icon: Icon, right, children }) {
-  return (
-    <div className="rounded-2xl p-4 sm:p-5 backdrop-blur-sm" style={{ background: 'rgba(var(--fg-rgb),0.02)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
-      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">{Icon && <Icon size={15} className="text-[#d4af37]" />}{title}</h3>
-        {right}
-      </div>
-      {children}
-    </div>
-  );
-}
-
 const ASearch = ({ value, onChange, placeholder }) => (
   <div className="relative">
     <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/45" />
@@ -4238,80 +4093,6 @@ const brandsOf = (p) => {
   }
   return p.vehicle ? [p.vehicle] : [];
 };
-
-// Issue 10/13: a single audit entry — collapsed summary that expands to the
-// full record (reason, qty, before→after, notes, user, timestamp).
-function AuditRow({ e }) {
-  const [open, setOpen] = useState(false);
-  const labelMap = {
-    delete_part: 'Deleted part', delete_supplier: 'Deleted supplier', price_change: 'Price change',
-    below_floor_sale: 'Below-floor sale', stock_adjustment: 'Stock adjustment',
-    archive_part: 'Archived part', restore_part: 'Restored part',
-    // BUG-LIVE-006: the real audit writers (writeAudit / pushAudit) also emit these
-    // machine keys — without a mapping they rendered as raw "create_part" etc.
-    create_part: 'Created part', update_part: 'Updated part', sell_part: 'Recorded sale',
-    quick_restock: 'Received stock', create_supplier: 'Added supplier', update_supplier: 'Updated supplier',
-    archive_supplier: 'Archived supplier', restore_supplier: 'Restored supplier',
-    po_create: 'Purchase order created', po_status: 'Purchase order updated',
-    category_rename: 'Category renamed', category_delete: 'Category deleted',
-  };
-  const label = labelMap[e.action] || e.action;
-  const color = e.action === 'price_change' ? '#d4af37'
-    : e.action === 'below_floor_sale' ? '#fb923c'
-    : e.action === 'stock_adjustment' ? '#f59e0b'
-    : e.action === 'archive_part' || e.action === 'restore_part' ? '#9ca3af'
-    : '#f87171';
-  const d = tsToDate(e.createdAt);
-  const det = e.details || {};
-  const summary = e.action === 'price_change'
-    ? Object.entries(det).map(([f, v]) => `${f}: ${formatINR(v.from)}→${formatINR(v.to)}`).join(', ')
-    : e.action === 'below_floor_sale'
-    ? `floor ${formatINR(det.floor)} → ${formatINR(det.actual)}${det.qty ? ` ×${det.qty}` : ''}`
-    : e.action === 'stock_adjustment'
-    ? (() => {
-        const d = (det.stockAfter != null && det.stockBefore != null) ? (det.stockAfter - det.stockBefore) : (det.qty || 0);
-        return `${det.reason || ''} ${d < 0 ? '−' : '+'}${Math.abs(d)}${det.stockBefore != null ? ` (${det.stockBefore}→${det.stockAfter})` : ''}`;
-      })()
-    : e.action === 'delete_supplier' && det.unlinkedParts != null
-    ? `unlinked ${det.unlinkedParts} part(s)` : '';
-  const rows = [];
-  if (e.action === 'stock_adjustment') {
-    const d = (det.stockAfter != null && det.stockBefore != null) ? (det.stockAfter - det.stockBefore) : (det.qty || 0);
-    rows.push(['Reason', det.reason || '—'], ['Quantity', `${d < 0 ? '−' : '+'}${Math.abs(d)}`], ['Stock', det.stockBefore != null ? `${det.stockBefore} → ${det.stockAfter}` : '—'], ['Notes', det.notes || '—']);
-  } else if (e.action === 'below_floor_sale') {
-    rows.push(['Floor price', formatINR(det.floor)], ['Actual price', formatINR(det.actual)], ['Quantity', det.qty ?? '—'], ['Override', 'Yes']);
-  } else if (e.action === 'price_change') {
-    Object.entries(det).forEach(([f, v]) => rows.push([f, `${formatINR(v.from)} → ${formatINR(v.to)}`]));
-  }
-  rows.push(['User', e.performedByEmail || 'unknown'], ['When', d ? d.toLocaleString('en-IN') : '—']);
-
-  return (
-    <div className="rounded-lg" style={{ background: 'rgba(var(--fg-rgb),0.02)', border: '1px solid rgba(var(--fg-rgb),0.05)' }}>
-      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-start gap-2 text-xs px-2.5 py-2 text-left">
-        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0" style={{ background: `${color}22`, color }}>{label}</span>
-        <div className="min-w-0 flex-1">
-          <div className="text-white truncate">{e.name || e.partId || e.supplierId || '—'}{summary && <span className="text-white/45"> · {summary}</span>}</div>
-          <div className="text-white/45 text-[10px]">{e.performedByEmail || 'unknown'}{d ? ` · ${d.toLocaleString('en-IN')}` : ''}</div>
-        </div>
-        <span className={`text-white/45 transition-transform flex-shrink-0 ${open ? 'rotate-90' : ''}`}>▶</span>
-      </button>
-      {open && (
-        <div className="px-2.5 pb-2.5 pt-0.5 border-t border-white/5">
-          <table className="w-full text-[11px]">
-            <tbody>
-              {rows.map(([k, v], i) => (
-                <tr key={i}>
-                  <td className="py-0.5 pr-3 text-white/45 align-top whitespace-nowrap">{k}</td>
-                  <td className="py-0.5 text-white/80 break-words">{v}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // Issues 6/7/8: audit log with search, filter, and Load-More pagination so the
 // panel stays fast as entries grow. (The live subscription caps the loaded set;
@@ -5493,35 +5274,9 @@ function ProductLedgerModal({ part, sales, restocks, stockAdjustments, onClose }
 // 5-record Low Stock Alerts card sitting next to it, without either one's OWN styling
 // needing to know about the other.
 //
-// DASH_CARD_MIN_H is only a BACKSTOP for the case stretch can't help with: every card in
-// a row being short/empty at once (e.g. a quiet day with nothing in Low Stock, Recent
-// Activity, OR Top Selling) — nothing tall to stretch against, so without a floor the
-// whole row could still look thin. It never fights stretch; whichever is taller wins.
-// `flex flex-col` lets DashEmpty (below) claim the remaining space with `flex-1` and
-// center itself in it, instead of sitting orphaned at the card's top-left — and lets a
-// SHORTER card's real content (fewer rows, not empty) stay naturally positioned at the
-// top once its outer box is stretched taller, rather than being force-stretched itself.
-const DASH_CARD_MIN_H = 'min-h-[260px]';
-function OverviewCard({ children, className = '' }) {
-  return (
-    <div className={`rounded-2xl p-4 backdrop-blur-sm ${DASH_CARD_MIN_H} flex flex-col ${className}`} style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' }}>
-      {children}
-    </div>
-  );
-}
-// Shared empty-state body for every Dashboard widget — centered in whatever space the
-// card's DASH_CARD_MIN_H floor gives it (via the parent's flex flex-col + this being
-// flex-1), rather than each widget hand-rolling its own top-left `<p>`. `hint` is
-// optional: only pass one where it adds real explanation, not just to fill space.
-function DashEmpty({ icon: Icon, title, hint }) {
-  return (
-    <div className="flex-1 flex flex-col items-center justify-center text-center gap-1.5 py-4">
-      {Icon && <Icon size={20} className="text-white/15" />}
-      <p className="text-sm text-white/45">{title}</p>
-      {hint && <p className="text-[11px] text-white/45 max-w-[240px]">{hint}</p>}
-    </div>
-  );
-}
+// The card primitives OverviewCard / DashEmpty / ScoreCard / ACard / RptCard (and the
+// DASH_CARD_MIN_H backstop) now live in ./inventory/ui/DashboardCards — pure
+// presentational shells, extracted verbatim (Refactor Phase 1).
 function QuickPickModal({ mode, inventory, purchaseOrders = [], onPick, onPickPO, onClose }) {
   useBodyScrollLock();
   const [q, setQ] = useState('');
@@ -5803,73 +5558,6 @@ function BulkReceiveModal({ inventory, suppliers = [], onSubmit, onClose }) {
     </div>
   );
 }
-function DateRangeControl({ value, onChange, custom, onCustomChange, label }) {
-  const [open, setOpen] = useState(false);
-  const anchorRef = useRef(null);
-  const presets = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['year', 'This year'], ['custom', 'Custom range']];
-  const short = presets.find((p) => p[0] === value)?.[1] || 'Today';
-  return (
-    <div className="relative">
-      <button ref={anchorRef} onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} className="flex items-center gap-2 h-10 px-3.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white/85 hover:bg-white/10 active:scale-95 transition">
-        <Calendar size={15} className="text-[#d4af37]" /> {value === 'custom' ? label : short} <ChevronDown size={15} className={`text-white/45 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && (
-        <DropdownPanel anchorRef={anchorRef} open onClose={() => setOpen(false)} scroll={false} width={224}
-          className="p-1.5 shadow-2xl" style={{ background: 'var(--surface-2)', border: '1px solid rgba(var(--fg-rgb),0.1)' }}>
-          <div role="menu">
-            {presets.map(([k, l]) => (
-              <button key={k} role="menuitem" onClick={() => { onChange(k); if (k !== 'custom') setOpen(false); }} className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${value === k ? 'bg-[#d4af37]/15 text-[#d4af37] font-semibold' : 'text-white/70 hover:bg-white/5'}`}>{l}</button>
-            ))}
-            {value === 'custom' && (
-              <div className="p-2 space-y-2 mt-1" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.1)' }}>
-                <label className="block text-[10px] uppercase tracking-wide text-white/45">From</label>
-                <input type="date" value={custom?.start || ''} onChange={(e) => onCustomChange({ ...custom, start: e.target.value })} className="w-full px-2 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-white" />
-                <label className="block text-[10px] uppercase tracking-wide text-white/45">To</label>
-                <input type="date" value={custom?.end || ''} onChange={(e) => onCustomChange({ ...custom, end: e.target.value })} className="w-full px-2 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-white" />
-                <button onClick={() => setOpen(false)} className="w-full py-1.5 rounded-lg text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]">Apply</button>
-              </div>
-            )}
-          </div>
-        </DropdownPanel>
-      )}
-    </div>
-  );
-}
-
-function ScoreCard({ title, icon: Icon, score, suffix = '%', factors, note }) {
-  const r = ratingFor(score);
-  return (
-    <OverviewCard>
-      <h3 className="text-xs uppercase tracking-wider text-white/45 mb-2 flex items-center gap-2"><Icon size={14} className="text-[#d4af37]" /> {title}</h3>
-      <div className="flex items-end gap-2">
-        <span className="text-3xl font-bold leading-none" style={{ color: r.color }}>{score}<span className="text-lg">{suffix}</span></span>
-        <span className="text-sm font-semibold mb-0.5" style={{ color: r.color }}>{r.label}</span>
-      </div>
-      <div className="h-2 rounded-full mt-2.5 overflow-hidden" style={{ background: 'rgba(var(--fg-rgb),0.08)' }}>
-        <div className="h-full rounded-full transition-all duration-700 ease-out" style={{ width: `${score}%`, background: `linear-gradient(90deg, ${r.color}, ${r.color}aa)` }} />
-      </div>
-      {note && <p className="text-[11px] text-white/45 mt-2">{note}</p>}
-      {factors && (
-        <div className="mt-3 space-y-1.5">
-          {factors.map((f) => {
-            const noData = f.pct == null;
-            return (
-              <div key={f.label} className="flex items-center gap-2">
-                <span className="text-[11px] text-white/50 w-24 flex-shrink-0">{f.label}</span>
-                <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(var(--fg-rgb),0.06)' }}>
-                  {!noData && <div className="h-full rounded-full transition-all duration-700 ease-out" style={{ width: `${f.pct}%`, background: f.pct >= 75 ? '#34d399' : f.pct >= 50 ? '#d4af37' : '#fb923c' }} />}
-                </div>
-                {/* A factor with no underlying data shows 'N/A', never a fabricated number. */}
-                <span className="text-[10px] text-white/45 w-8 text-right" title={noData ? 'Not enough data to measure this yet' : undefined}>{noData ? 'N/A' : `${f.pct}%`}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </OverviewCard>
-  );
-}
-
 // Rich, reassuring save confirmation (Priority 8 — smart notifications).
 function smartSaveToast(name, { isEdit = false, hasSupplier = false } = {}) {
   toast.custom((t) => (
@@ -7187,14 +6875,7 @@ function ReportTable({ head, rows, exportName, exportHead, q, csv, demoMode, dem
 // Reports-view charts live INSIDE ReportsView as `RptBars` / `RptDonut` (below).
 // Earlier module-level copies (`RSpark` / `RDonut` / `RBars`) were dead duplicates
 // and have been removed — don't re-add a second, unwired set here.
-function RptCard({ title, right, children, className = '' }) {
-  return (
-    <div className={`rounded-2xl p-4 ${className}`} style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' }}>
-      <div className="flex items-center justify-between mb-3"><p className="text-xs font-bold uppercase tracking-wide text-white/55">{title}</p>{right}</div>
-      {children}
-    </div>
-  );
-}
+// RptCard (the card shell) now lives in ./inventory/ui/DashboardCards (Refactor Phase 1).
 
 // Module-scoped view state — a plain JS-module-level object, NOT sessionStorage-backed
 // (Navigation State + Data Freshness review — this used to mirror into sessionStorage
@@ -7788,123 +7469,15 @@ function AlertsView({ alerts, readIds, archivedIds, onMarkRead, onMarkAllRead, o
     </PageHeader>
   );
 }
-// clears the mobile bottom-nav, never overlaps modals (z below them).
-function ScrollToTop() {
-  const [show, setShow] = useState(false);
-  useEffect(() => {
-    // rAF-throttle: coalesce a burst of scroll events into one read per frame, and only
-    // call setState when the boolean crosses the 400px threshold — not on every event.
-    let ticking = false;
-    let shown = false;
-    const evaluate = () => {
-      ticking = false;
-      const next = appScrollY() > 400;
-      if (next !== shown) { shown = next; setShow(next); }
-    };
-    const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(evaluate); } };
-    const off = onAppScroll(onScroll);
-    evaluate();
-    return off;
-  }, []);
-  return (
-    <button
-      onClick={() => appScrollTo({ top: 0, behavior: 'smooth' })}
-      aria-label="Back to top"
-      className={`fixed z-[80] bottom-24 md:bottom-6 right-4 md:right-6 w-11 h-11 rounded-full flex items-center justify-center shadow-xl transition-all duration-300 ${show ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-3 pointer-events-none'}`}
-      style={{ background: 'linear-gradient(135deg,#d4af37,#aa801e)', color: '#1a1a1a' }}
-    >
-      <ChevronUp size={20} />
-    </button>
-  );
-}
-
 // Path B — real, non-color preferences (font size, motion, compact sidebar,
 // region/format). No theme-color faking; the working subset only.
 
-// ---- Settings field primitives (HOISTED) --------------------------------
-// These MUST live at module scope. When they were declared inside SettingsView,
-// every keystroke re-created them, React treated each as a brand-new component
-// type, and the input was unmounted + remounted — so the field lost focus after
-// one character. At module scope their identity is stable and focus is retained.
-const SET_CARD_STYLE = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
-function SetSeg({ value, onChange, options }) {
-  return (
-    <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'rgba(var(--fg-rgb),0.04)' }}>
-      {options.map((o) => (<button key={o.value} type="button" onClick={() => onChange(o.value)} className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-semibold transition ${value === o.value ? 'bg-[#d4af37] text-black' : 'text-white/60 hover:text-white/90'}`}>{o.label}</button>))}
-    </div>
-  );
-}
-function SetSel({ label, value, onChange, options }) {
-  return (
-    <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">{label}</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white outline-none focus:border-[#d4af37]/60">{options.map((o) => <option key={o.value} value={o.value} style={{ background: 'var(--surface-2)' }}>{o.label}</option>)}</select>
-    </div>
-  );
-}
-function SetTxt({ label, k, placeholder, optional, biz, bset, error, upper }) {
-  return (
-    <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">{label}{optional && <span className="text-white/45 normal-case"> (optional)</span>}</label>
-      <input
-        value={biz[k] || ''}
-        onChange={(e) => bset({ [k]: upper ? e.target.value.toUpperCase() : e.target.value })}
-        placeholder={placeholder}
-        className={`w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border text-white placeholder-white/25 outline-none transition ${error ? 'border-red-500/60 focus:border-red-500/80' : 'border-white/10 focus:border-[#d4af37]/60'}`}
-      />
-      {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}
-    </div>
-  );
-}
-function SetCard({ title, desc, children }) {
-  return (
-    <div className="rounded-2xl p-5" style={SET_CARD_STYLE}>
-      <h3 className="text-sm font-bold text-white/90 mb-1">{title}</h3>{desc && <p className="text-xs text-white/45 mb-4">{desc}</p>}
-      {children}
-    </div>
-  );
-}
-
-// Business Logo — Branding card. Hoisted to module scope for the same reason
-// Seg/Sel/Txt/Card are (see the comment above them): defining it inline inside
-// SettingsView's render would give it a fresh component identity every render,
-// remounting the preview <img>/file <input> on every keystroke elsewhere on the
-// page. Upload/Replace/Remove are three states of ONE control, not three separate
-// components, matching how the Part-photo uploader above reads as a single unit.
-function BrandingLogoField({ t, logoDataUrl, onUpload, onRemove }) {
-  return (
-    <div>
-      <label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">{t('settings.field.businessLogo', 'Business Logo')}</label>
-      <p className="text-[11px] text-white/45 mb-3">{t('settings.logo.desc', 'Logo appears on printed invoices and other documents.')}</p>
-      <div className="flex items-center gap-4 flex-wrap">
-        {logoDataUrl ? (
-          <div className="w-20 h-20 rounded-xl overflow-hidden flex-shrink-0 bg-white" style={{ border: '1px solid rgba(212,175,55,0.3)' }}>
-            <img src={logoDataUrl} alt={t('settings.field.businessLogo', 'Business Logo')} className="w-full h-full object-contain" />
-          </div>
-        ) : (
-          <div className="w-20 h-20 rounded-xl flex flex-col items-center justify-center gap-1 flex-shrink-0 bg-white/5 border border-dashed border-white/15 text-white/30">
-            <ImageOff size={18} />
-          </div>
-        )}
-        <div className="flex flex-col gap-2 min-w-0">
-          {!logoDataUrl && <p className="text-xs text-white/45">{t('settings.logo.emptyState', 'No logo configured yet')}</p>}
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer transition bg-white/5 border border-white/10 text-white/75 hover:bg-white/10">
-              {logoDataUrl ? <RefreshCw size={13} /> : <Upload size={13} />}
-              {logoDataUrl ? t('settings.logo.replaceButton', 'Replace Logo') : t('settings.logo.uploadButton', 'Upload Logo')}
-              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={onUpload} className="hidden" />
-            </label>
-            {logoDataUrl && (
-              <button type="button" onClick={onRemove} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition text-red-400 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20">
-                <Trash2 size={13} /> {t('settings.logo.removeButton', 'Remove Logo')}
-              </button>
-            )}
-          </div>
-          <p className="text-[10px] text-white/35">{t('settings.logo.formats', 'Supported formats: PNG, JPG, WEBP')}</p>
-          <p className="text-[10px] text-white/35">{t('settings.logo.sizeGuidance', 'Max file size 5MB. Use a square or landscape logo for best results.')}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ---- Settings field primitives --------------------------------
+// SetSeg / SetSel / SetTxt / SetCard / BrandingLogoField (and SET_CARD_STYLE) now
+// live in ./inventory/ui/SettingsControls, imported at the top of this file. They
+// MUST stay at module scope (a stable component identity — declaring them inside
+// SettingsView's render remounted every <input> on each keystroke and lost focus).
+// The thin `Seg`/`Sel`/`Card` aliases inside SettingsView still point at them.
 
 // ---- Settings workspace width tiers (shared, not per-section magic numbers) ----
 // A section's CONTENT (how many fields it holds) decides its width, not a blanket rule
@@ -8591,42 +8164,9 @@ const DEMO_PERM_GROUPS = [
 function loadDemoPerms() {
   try { return { ...DEMO_PERM_DEFAULTS, ...(JSON.parse(localStorage.getItem(DEMO_PERM_KEY) || '{}')) }; } catch { return { ...DEMO_PERM_DEFAULTS }; }
 }
-const THEME_STOPS = [
-  { key: 'dark', label: 'Dark', pos: 0 },
-  { key: 'warm', label: 'Warm', pos: 50 },
-  { key: 'light', label: 'Light', pos: 100 },
-];
-const themeFromPos = (p) => THEME_STOPS.reduce((b, s) => (Math.abs(s.pos - p) < Math.abs(b.pos - p) ? s : b), THEME_STOPS[0]).key;
-const posFromTheme = (k) => (THEME_STOPS.find((s) => s.key === k) || THEME_STOPS[0]).pos;
-function applyThemeGlobally(t) {
-  try { const p = JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}'); p.theme = t; localStorage.setItem(STORAGE.PREFS, JSON.stringify(p)); window.dispatchEvent(new CustomEvent('maruti-prefs')); } catch {}
-  document.documentElement.setAttribute('data-theme', t);
-}
-
-function SidebarTheme({ collapsed }) {
-  const [theme, setTheme] = useState(() => { try { return JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}').theme || 'dark'; } catch { return 'dark'; } });
-  const [pos, setPos] = useState(() => { try { return posFromTheme(JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}').theme || 'dark'); } catch { return 0; } });
-  useEffect(() => {
-    const sync = () => { try { const t = JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}').theme || 'dark'; setTheme(t); setPos(posFromTheme(t)); } catch {} };
-    window.addEventListener('maruti-prefs', sync);
-    return () => window.removeEventListener('maruti-prefs', sync);
-  }, []);
-  const pickPreset = (k) => { setTheme(k); setPos(posFromTheme(k)); applyThemeGlobally(k); };
-  if (collapsed) return null;
-  return (
-    <div className="mx-2 mb-1 p-2.5 rounded-xl" style={{ background: 'rgba(var(--fg-rgb),0.02)', border: '1px solid rgba(var(--fg-rgb),0.07)' }}>
-      <span className="block text-[10px] uppercase tracking-wide text-white/45 px-0.5 mb-1.5">Theme</span>
-      <div className="flex gap-0.5 p-0.5 rounded-lg" style={{ background: 'rgba(var(--fg-rgb),0.04)' }}>
-        {THEME_STOPS.map((s) => (
-          <button key={s.key} type="button" onClick={() => pickPreset(s.key)} title={s.label} aria-pressed={theme === s.key}
-            className={`flex-1 py-1.5 rounded-md text-[10px] font-bold transition active:scale-95 ${theme === s.key ? 'bg-gradient-to-r from-[#d4af37] to-[#aa801e] text-black shadow' : 'text-white/55 hover:text-white/90'}`}>
-            {s.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
+// SidebarTheme (the Dark / Warm / Light preset switch, + THEME_STOPS / posFromTheme /
+// applyThemeGlobally) now lives in ./inventory/ui/SidebarTheme, imported at the top of
+// this file (Refactor Phase 1 — leaf UI extraction).
 
 function Sidebar({ activeTab, setActiveTab, collapsed, setCollapsed, mobileOpen, setMobileOpen, isAdmin, alertCount, reminderCount = 0, jobCount = 0, inventoryCount = 0, status, onRetry }) {
   const { t } = useTranslation();

@@ -20,6 +20,10 @@ const fs = require('fs'), path = require('path');
 let PASS = 0, FAIL = 0;
 const ok = (n, c, d = '') => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}${d ? `\n      → ${d}` : ''}`); } };
 const inv = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+// Refactor Phase 1 — the pure card shells (OverviewCard / DashEmpty / ScoreCard /
+// DASH_CARD_MIN_H) were extracted verbatim to ./inventory/ui/DashboardCards. Checks on
+// their DEFINITION read `cards`; checks on how OverviewView USES them still read `inv`.
+const cards = fs.readFileSync(path.resolve(__dirname, '../components/inventory/ui/DashboardCards.jsx'), 'utf8');
 // Scope to OverviewView's own source for checks that would otherwise false-positive
 // against unrelated components elsewhere in this file that happen to reuse similar
 // wording (e.g. Analytics' own "No sales recorded yet" table rows, the Parts table's
@@ -32,20 +36,21 @@ console.log('\nDashboard — universal card height, empty-state & grid consisten
 
 // --- Part 1: ONE shared card shell, not per-widget hacks ---
 ok('DASH_CARD_MIN_H is a single named floor, not a magic number inlined per widget',
-  /const DASH_CARD_MIN_H = 'min-h-\[260px\]';/.test(inv));
+  /const DASH_CARD_MIN_H = 'min-h-\[260px\]';/.test(cards));
 ok('OverviewCard applies the floor + flex-col to every card that renders through it',
-  /function OverviewCard\(\{ children, className = '' \}\) \{\s*return \(\s*<div className=\{`rounded-2xl p-4 backdrop-blur-sm \$\{DASH_CARD_MIN_H\} flex flex-col \$\{className\}`\}/.test(inv));
+  /function OverviewCard\(\{ children, className = '' \}\) \{\s*return \(\s*<div className=\{`rounded-2xl p-4 backdrop-blur-sm \$\{DASH_CARD_MIN_H\} flex flex-col \$\{className\}`\}/.test(cards));
 ok('ScoreCard (Inventory Health / Workshop Score) now renders through the SAME shared shell instead of its own hand-rolled div',
-  /function ScoreCard\(\{ title, icon: Icon, score, suffix = '%', factors, note \}\) \{\s*const r = ratingFor\(score\);\s*return \(\s*<OverviewCard>/.test(inv));
+  /function ScoreCard\(\{ title, icon: Icon, score, suffix = '%', factors, note \}\) \{\s*const r = ratingFor\(score\);\s*return \(\s*<OverviewCard>/.test(cards));
 ok('the two previously hand-rolled Insights/Workshop Progress divs are gone — both now use OverviewCard',
   !/lg:col-span-2 rounded-2xl p-4 backdrop-blur-sm" style=\{\{ background: 'rgba\(var\(--fg-rgb\),0\.03\)'/.test(inv) &&
   (inv.match(/<OverviewCard(?:\s+className="lg:col-span-2")?>/g) || []).length >= 6);
 ok('no divergent card background (0.02 vs 0.03 alpha / with-or-without backdrop-blur) remains — every Dashboard card uses the one OverviewCard shape now',
-  !/rounded-2xl p-4 \$\{className\}.*rgba\(var\(--fg-rgb\),0\.02\)/.test(inv));
+  !/rounded-2xl p-4 \$\{className\}.*rgba\(var\(--fg-rgb\),0\.02\)/.test(cards)
+  && /background: 'rgba\(var\(--fg-rgb\),0\.03\)'/.test(cards));
 
 // --- Part 2: ONE shared, vertically-centered empty state, not a bare top-left <p> ---
 ok('DashEmpty exists as the one shared empty-state body (icon + title + optional hint), centered via flex-1 in the parent\'s flex column',
-  /function DashEmpty\(\{ icon: Icon, title, hint \}\) \{\s*return \(\s*<div className="flex-1 flex flex-col items-center justify-center text-center gap-1\.5 py-4">/.test(inv));
+  /function DashEmpty\(\{ icon: Icon, title, hint \}\) \{\s*return \(\s*<div className="flex-1 flex flex-col items-center justify-center text-center gap-1\.5 py-4">/.test(cards));
 ok('every Dashboard widget\'s empty state now renders DashEmpty, not a bare `<p className="text-sm text-white/40 py-4 text-center">`',
   (inv.match(/<DashEmpty icon=\{/g) || []).length >= 7);
 ok('the old bare-<p> empty-state idiom is gone from EVERY Dashboard widget (Reorder Center/Low Stock/Recent Activity/Top Selling/Top Suppliers/Pending Supplier) — scoped to OverviewView only, since unrelated views elsewhere in this file (Analytics\' own sales tables, the Parts table\'s own filter-empty message) legitimately keep their own bare <p> for a different context',
