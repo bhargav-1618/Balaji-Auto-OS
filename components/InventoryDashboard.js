@@ -8838,16 +8838,6 @@ export default function InventoryDashboard() {
       { icon: <Lock size={16} />, duration: 5000, style: { maxWidth: 420 } }
     );
   }
-  // Returns true (and shows a message) when a Demo USER is blocked from `action`.
-  // If the owner has granted that action, the demo user is allowed through.
-  function blockedDestructiveForDemoUser(action) {
-    if (demoMode && !demoAdmin) {
-      if (action && demoPerms[action]) return false; // owner enabled it
-      protectedDemoToast(!!action);
-      return true;
-    }
-    return false;
-  }
   const [inventory, setInventory] = useState([]);
   // C-2 fix: ref-current pattern (same as customersRef/jobCardsRef/invoicesRef) — lets
   // applyStockDelta/applyReserveDelta read the latest inventory synchronously and return
