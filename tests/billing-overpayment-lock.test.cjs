@@ -61,8 +61,12 @@ ok('savedStatus keys on isPersisted, not inv.invNo',
   !/const savedStatus = inv\.invNo \? deriveStatus/.test(src));
 ok('locked keys on isPersisted, not !!inv.invNo',
   /const locked = !inv\.isEstimate && isPersisted && \[/.test(src));
-ok('deriveStatus has an explicit overpaid guard before the Paid branch',
-  /t\.paid > t\.grand \+ 0\.5\) return 'Partially Paid'/.test(src));
+// Refactor Phase 5 — deriveStatus now delegates to the one canonical invoiceStatus
+// (services/billingService.js), which carries the overpaid guard before the Paid branch.
+ok('deriveStatus delegates to the canonical invoiceStatus, which has the overpaid guard before the Paid branch',
+  /const deriveStatus = invoiceStatus;/.test(src)
+  && /t\.paid > t\.grand \+ 0\.5\) return INVOICE_STATUS\.PARTIALLY_PAID;[\s\S]{0,200}t\.balance <= 0 && t\.grand > 0\) return INVOICE_STATUS\.PAID;/
+    .test(fs.readFileSync(path.resolve(__dirname, '../services/billingService.js'), 'utf8')));
 
 // ---- render: a NEW (unsaved) overpaid invoice is not locked ---------------
 const React = require('react');

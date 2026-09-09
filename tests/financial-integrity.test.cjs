@@ -44,6 +44,9 @@ const defect = (name, isFixed, detail = '') => {
 const read = (p) => fs.readFileSync(path.resolve(__dirname, p), 'utf8');
 const dash = read('../components/InventoryDashboard.js');
 const billing = read('../components/billing/BillingModule.jsx');
+// Refactor Phase 5 — the invoice money maths + status derivation are ONE implementation
+// now (services/billingService.js); totalsOf/deriveStatus/invTotals/invStatus all delegate.
+const svc = read('../services/billingService.js');
 const near = (a, b, eps = 0.005) => Math.abs(a - b) < eps;
 
 console.log('\nPHASE 11 — financial integrity / money consistency audit\n');
@@ -76,12 +79,30 @@ function oracleTotals(inv) {
   const anyLineGst = lines.some((l) => l.gst != null);
   let gst = anyLineGst ? gstAcc * (afterDisc / (sub || 1)) : afterDisc * ((Number(inv.gstPct) || 0) / 100);
   if (inv.gstMode === 'exempt') gst = 0;
-  const grand = Math.round(afterDisc + gst);
+  const isIgst = inv.gstMode === 'igst';
+  const grandRaw = afterDisc + gst;
+  const grand = lines.length ? Math.round(grandRaw) : (Number(inv.grandTotal) || 0);
+  const roundOff = grand - grandRaw;
   const hasPayments = Array.isArray(inv.payments) && inv.payments.length > 0;
   const legacyPaid = !hasPayments && inv.legacyPaid === true ? (Number(inv.paid) || 0) : 0;
   const paid = hasPayments ? inv.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0) : legacyPaid;
   const balance = Math.max(0, grand - paid);
-  return { sub: round2(sub), afterDisc: round2(afterDisc), gst: round2(gst), grand, paid: round2(paid), balance: round2(balance) };
+  // PHASE 5 — the full canonical contract (Stage 1 §7), so billingService.invoiceTotals
+  // is now checked field-for-field against the oracle, not just grand/paid/balance.
+  const cost = lines.reduce((s, l) => s + (Number(l.purchasePrice) || 0) * (Number(l.qty) || 0), 0);
+  const profit = afterDisc - cost;
+  const netOf = (l) => { const g = (Number(l.qty) || 0) * (Number(l.rate) || 0); const d = l.disc ? g * ((Number(l.disc) || 0) / 100) : 0; return Math.max(0, g - d); };
+  const partsRev = lines.filter((l) => l.kind === 'Part').reduce((s, l) => s + netOf(l), 0);
+  const labourRev = lines.filter((l) => l.kind === 'Labour').reduce((s, l) => s + netOf(l), 0);
+  const gstR = round2(gst);
+  const halfS = round2(gstR / 2);
+  const halfC = round2(gstR - halfS);
+  return {
+    sub: round2(sub), afterDisc: round2(afterDisc), gst: gstR,
+    cgst: isIgst ? 0 : halfC, sgst: isIgst ? 0 : halfS, igst: isIgst ? gstR : 0, isIgst,
+    grand, roundOff: round2(roundOff), paid: round2(paid), balance: round2(balance),
+    profit: round2(profit), cost: round2(cost), partsRev: round2(partsRev), labourRev: round2(labourRev),
+  };
 }
 const line = (qty, rate, extra = {}) => ({ id: `l${Math.random()}`, kind: 'Part', qty, rate, disc: 0, gst: 18, ...extra });
 const inv = (fields) => ({ gstPct: 18, gstMode: 'auto', discount: 0, discountType: 'flat', payments: [], lines: [], ...fields });
@@ -101,11 +122,23 @@ function checkAgainstBoth(name, invoice) {
     b.grand === oracle.grand && near(b.paid, oracle.paid) && near(b.balance, oracle.balance),
     `oracle=${JSON.stringify(oracle)} invTotals=${JSON.stringify({ grand: b.grand, paid: b.paid, balance: b.balance })}`);
   const c = svcInvoiceTotals(invoice);
-  // billingService.invoiceTotals deliberately rounds `sub`/`gst` to whole rupees (its
-  // consumers only read grand/paid/balance/parts/labour) — so only those are compared.
-  ok(`${name} — billingService.invoiceTotals matches independent oracle (grand/paid/balance) [PH22-01]`,
-    c.grand === oracle.grand && near(c.paid, oracle.paid) && near(c.balance, oracle.balance),
-    `oracle grand/paid/balance=${oracle.grand}/${oracle.paid}/${oracle.balance}  invoiceTotals=${c.grand}/${c.paid}/${c.balance}`);
+  // PHASE 5 (T1) — billingService.invoiceTotals is now the CANONICAL implementation and is
+  // checked field-for-field against the independent oracle, exactly like totalsOf. (Before
+  // Phase 5 it rounded sub/gst to whole rupees, split parts/labour gross, and had no
+  // legacyPaid fallback — this assertion is what catches a regression back to that.)
+  ok(`${name} — billingService.invoiceTotals matches independent oracle (sub/afterDisc/gst/cgst/sgst/igst/partsRev/labourRev/cost/profit/paid/balance/grand) [PHASE 5 T1]`,
+    near(c.sub, oracle.sub) && near(c.afterDisc, oracle.afterDisc) && near(c.gst, oracle.gst)
+    && near(c.cgst, oracle.cgst) && near(c.sgst, oracle.sgst) && near(c.igst, oracle.igst) && c.isIgst === oracle.isIgst
+    && near(c.partsRev, oracle.partsRev) && near(c.labourRev, oracle.labourRev)
+    && near(c.cost, oracle.cost) && near(c.profit, oracle.profit)
+    && c.grand === oracle.grand && near(c.paid, oracle.paid) && near(c.balance, oracle.balance),
+    `oracle=${JSON.stringify(oracle)}  invoiceTotals=${JSON.stringify(c)}`);
+  ok(`${name} — cgst + sgst === gst exactly on billingService.invoiceTotals`,
+    near((c.cgst || 0) + (c.sgst || 0) + (c.igst || 0), c.gst, 0.0001),
+    `cgst ${c.cgst} + sgst ${c.sgst} + igst ${c.igst} != gst ${c.gst}`);
+  ok(`${name} — partsRev + labourRev === sub on all three paths (the invoice discount does not touch the split)`,
+    near((a.partsRev || 0) + (a.labourRev || 0), oracle.sub) && near((c.partsRev || 0) + (c.labourRev || 0), oracle.sub),
+    `totalsOf ${a.partsRev}+${a.labourRev}  invoiceTotals ${c.partsRev}+${c.labourRev}  vs sub ${oracle.sub}`);
   ok(`${name} — no NaN/Infinity/undefined in any of the THREE production paths' output`,
     [a.sub, a.gst, a.grand, a.paid, a.balance, b.grand, b.paid, b.balance, c.grand, c.paid, c.balance].every((v) => Number.isFinite(v)));
 }
@@ -256,10 +289,10 @@ console.log('\n9  Overpayment — status must never read clean "Paid" (PH11-02)\
   const overpaid = { ...target, payments: [{ id: 'x', amount: 2000 }] };
   defect('PH11-02: an invoice paid ₹2000 against a ₹1000 total is status "Partially Paid" (anomalous, needs review) on BOTH totalsOf/deriveStatus AND invTotals/invStatus — not silently "Paid" on either',
     deriveStatus(overpaid) === 'Partially Paid' && invStatus(overpaid) === 'Partially Paid');
-  ok('[fact] deriveStatus\'s overpayment guard (BUG-LIVE-002, pre-existing) is present',
-    /if \(t\.grand > 0 && t\.paid > t\.grand \+ 0\.5\) return 'Partially Paid';/.test(billing));
-  ok('PH11-02 FIXED [fact]: invStatus now carries the SAME overpayment guard invTotals/invStatus was missing — the value collectInvoicePayment persists as the invoice\'s own `status` field can no longer read "Paid" while overpaid',
-    /if \(t\.grand > 0 && t\.paid > t\.grand \+ 0\.5\) return 'Partially Paid';[\s\S]{0,120}if \(t\.balance <= 0 && t\.grand > 0\) return 'Paid';/.test(dash));
+  ok('[fact] the overpayment guard (BUG-LIVE-002 / PH11-02) is present in the canonical invoiceStatus, BEFORE the Paid branch',
+    /if \(t\.grand > 0 && t\.paid > t\.grand \+ 0\.5\) return INVOICE_STATUS\.PARTIALLY_PAID;[\s\S]{0,200}if \(t\.balance <= 0 && t\.grand > 0\) return INVOICE_STATUS\.PAID;/.test(svc));
+  ok('PH11-02 FIXED [fact]: BillingModule.deriveStatus AND InventoryDashboard.invStatus both delegate to that one canonical invoiceStatus — the value collectInvoicePayment persists as `status` can no longer read "Paid" while overpaid on ANY path',
+    /const deriveStatus = invoiceStatus;/.test(billing) && /const invStatus = invoiceStatus;/.test(dash));
 }
 
 // =====================================================================
@@ -384,9 +417,9 @@ function mockCollectPayment_AFTER(freshGrand, existingPaid, incomingAmount) {
 // =====================================================================
 console.log('\n14  Floating-point hazard audit\n');
 ok('[fact] money is rounded to paisa at the boundary via a documented, EPSILON-corrected round-half-up helper (p2), not left as raw floating point or naive toFixed string formatting',
-  /const p2 = \(v\) => Math\.round\(\(Number\(v\) \+ Number\.EPSILON\) \* 100\) \/ 100;/.test(billing));
+  /const p2 = \(v\) => Math\.round\(\(Number\(v\) \+ Number\.EPSILON\) \* 100\) \/ 100;/.test(svc));
 ok('[fact] CGST/SGST are split from the ALREADY-ROUNDED gst total (half each, odd paisa pushed onto CGST) so cgst + sgst === gst exactly — never independently rounded halves that could disagree with the whole by ₹0.01',
-  /const halfS = p2\(gstR \/ 2\);(\s*\/\/[^\n]*)?\s*\n\s*const halfC = p2\(gstR - halfS\);/.test(billing));
+  /const halfS = p2\(gstR \/ 2\);(\s*\/\/[^\n]*)?\s*\n\s*const halfC = p2\(gstR - halfS\);/.test(svc));
 {
   // The classic 0.1+0.2 hazard, run through the real per-line loop.
   const t = totalsOf(inv({ lines: [line(1, 0.1), line(1, 0.2)] }));
@@ -398,10 +431,9 @@ ok('[fact] CGST/SGST are split from the ALREADY-ROUNDED gst total (half each, od
 // 15 — STATUS LABEL CONSISTENCY — the "Unpaid" vs "Pending" split is CLOSED (PH22-03)
 // =====================================================================
 console.log('\n15  Status label — deriveStatus and invStatus now agree (PH22-03, was a documented LOW)\n');
-ok('[FIXED, PH22-03] both derived-status functions label the "nothing paid, not a draft" state "Unpaid" — the Reports/Dashboard export can no longer show "Pending" for an invoice the Billing screen calls "Unpaid"',
-  /return inv\.status === 'Draft' \? 'Draft' : 'Unpaid';/.test(billing)
-  && /return iv\.status === 'Draft' \? 'Draft' : 'Unpaid';/.test(dash)
-  && !/'Draft' : 'Pending'/.test(dash));
+ok('[FIXED, PH22-03] the canonical invoiceStatus labels the "nothing paid, not a draft" state PENDING (= "Unpaid"), never "Pending" — one implementation, so the Reports/Dashboard export can no longer disagree with the Billing screen',
+  /return iv\.status === INVOICE_STATUS\.DRAFT \? INVOICE_STATUS\.DRAFT : INVOICE_STATUS\.PENDING;/.test(svc)
+  && !/: 'Pending'/.test(svc));
 ok('[FIXED, PH22-03] the shared INVOICE_STATUS.PENDING constant now carries the value "Unpaid"',
   /PENDING: 'Unpaid'/.test(fs.readFileSync(path.resolve(__dirname, '../constants/index.js'), 'utf8')));
 

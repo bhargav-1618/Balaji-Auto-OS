@@ -38,6 +38,7 @@ import { writeSheet, asDate, stamp } from '../../lib/exportSheet';
 import { useDeferredSearch, matchIndexed, normId, useSearchIndex, searchAndRank, rankIndexed, regKey, phoneKey } from '../../lib/useSearch';
 import { resolveSelectedRecords, countHiddenSelections } from '../../lib/selectionScope';
 import { statusColor, SHELL_WIDTH_CLS, SEMANTIC } from '../../constants/ui';
+import { invoiceTotals, invoiceStatus } from '../../services/billingService';
 import { BILLABLE_JOB_CARD_STATUSES } from '../../constants';
 import { isValidGstin, GSTIN_ERROR } from '../../lib/gst';
 import Badge from '../common/Badge';
@@ -436,92 +437,16 @@ function Stat({ icon: Icon, label, value, color }) {
   );
 }
 
-const totalsOf = (inv) => {
-  const lines = asArray(inv.lines); // PH21-D1 — a wrong-type `lines` (forged/corrupt doc) must not throw; this drives the whole Billing list
-  // Per-line: amount after line discount; GST computed per line when line.gst present,
-  // else falls back to the invoice-level gstPct (backward compatible).
-  let sub = 0, lineGst = 0, cost = 0;
-  lines.forEach((l) => {
-    const gross = num(l.qty) * num(l.rate);
-    const lineDisc = l.disc ? gross * (num(l.disc) / 100) : 0;
-    const net = Math.max(0, gross - lineDisc);
-    sub += net;
-    const rate = l.gst != null ? num(l.gst) : num(inv.gstPct);
-    lineGst += net * (rate / 100);
-    cost += num(l.purchasePrice) * num(l.qty);
-  });
-  // Invoice-level discount (flat ₹ or %) applied on subtotal.
-  const invDisc = inv.discountType === 'percent' ? sub * (num(inv.discount) / 100) : num(inv.discount);
-  const afterDisc = Math.max(0, sub - invDisc);
-  // If any line carried its own GST we use the summed line GST; otherwise invoice gstPct.
-  const anyLineGst = lines.some((l) => l.gst != null);
-  let gst = anyLineGst ? lineGst * (afterDisc / (sub || 1)) : afterDisc * (num(inv.gstPct) / 100);
-  if (inv.gstMode === 'exempt') gst = 0; // GST is optional — exempt zeroes all tax
-  const isIgst = inv.gstMode === 'igst';
-  const grandRaw = afterDisc + gst;
-  const grand = Math.round(grandRaw);
-  const roundOff = grand - grandRaw;
-  // Payments are the SINGLE SOURCE OF TRUTH. An invoice is only ever "paid" to the
-  // extent that real payment entries exist for it.
-  //
-  // The legacy `inv.paid` scalar used to be a fallback here, and that was a genuine
-  // money bug: any invoice carrying a stale/imported `paid` value with no payment
-  // rows would derive as "Paid" on its own — which then locked the invoice AND
-  // deducted stock, with no one having collected anything. We now only fall back to
-  // `inv.paid` for a legacy record that has never had payments recorded AND is
-  // explicitly flagged as such, so a new invoice can never self-declare as paid.
-  const hasPayments = Array.isArray(inv.payments) && inv.payments.length > 0;
-  const legacyPaid = !hasPayments && inv.legacyPaid === true ? num(inv.paid) : 0;
-  const paid = hasPayments ? inv.payments.reduce((s, p) => s + num(p.amount), 0) : legacyPaid;
-  const balance = Math.max(0, grand - paid);
-  const profit = afterDisc - cost;
-  // Settings QA fix: these two used raw qty*rate (gross), not net-of-line-discount —
-  // so a discounted line's Parts/Labour revenue split didn't match the Subtotal it's
-  // supposed to add up to (and, since these same figures drive the Billing KPI cards'
-  // "Parts Revenue"/"Labour Revenue" and Reports/Analytics, any discounted line
-  // inflated reported revenue by exactly the discount amount, invoice after invoice).
-  // Same net = gross - lineDisc as the `sub` loop above, so Parts + Labour === sub.
-  const netOfLine = (l) => { const gross = num(l.qty) * num(l.rate); const lineDisc = l.disc ? gross * (num(l.disc) / 100) : 0; return Math.max(0, gross - lineDisc); };
-  const partsRev = lines.filter((l) => l.kind === 'Part').reduce((s, l) => s + netOfLine(l), 0);
-  const labourRev = lines.filter((l) => l.kind === 'Labour').reduce((s, l) => s + netOfLine(l), 0);
-  // 💰 ROUND MONEY TO PAISA AT THE BOUNDARY.
-  //
-  // Binary floating point cannot represent 0.1, so these values arrive as things like
-  // 59.999399999999994 and were being handed straight to the invoice, the PDF and the
-  // GSTR-1 export. A tax invoice must state tax to 2 decimal places; printing
-  // ₹29.999699999999997 as CGST is not a legal figure, and summing unrounded values
-  // across a month makes the filed return disagree with the books by a few paise —
-  // which is exactly what a GST reconciliation flags.
-  //
-  // CGST/SGST are halved from a rounded total and the remainder is pushed onto CGST, so
-  // cgst + sgst === gst EXACTLY. Otherwise a ₹0.01 split error appears on odd amounts.
-  const p2 = (v) => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
-  const gstR = p2(gst);
-  const halfS = p2(gstR / 2);              // SGST takes the clean half
-  const halfC = p2(gstR - halfS);          // CGST absorbs the odd paisa
-  return {
-    sub: p2(sub), afterDisc: p2(afterDisc), gst: gstR,
-    cgst: isIgst ? 0 : halfC,
-    sgst: isIgst ? 0 : halfS,
-    igst: isIgst ? gstR : 0,
-    isIgst, grand, roundOff: p2(roundOff),
-    balance: p2(balance), paid: p2(paid), profit: p2(profit), cost: p2(cost),
-    partsRev: p2(partsRev), labourRev: p2(labourRev),
-  };
-};
-const deriveStatus = (inv) => {
-  if (inv.status === 'Cancelled' || inv.status === 'Refunded' || inv.status === 'Returned') return inv.status;
-  if (inv.isEstimate) return 'Estimate';
-  const t = totalsOf(inv);
-  // BUG-LIVE-002: an OVERPAID invoice's books do not balance — `t.balance` is floored
-  // to 0 by Math.max(0, …), which used to read as "Paid" (and then locked the invoice).
-  // Overpayment is an error state, never "Paid"; the excess is surfaced separately as
-  // "Overpaid by ₹X". 0.5 slack absorbs rounding.
-  if (t.grand > 0 && t.paid > t.grand + 0.5) return 'Partially Paid';
-  if (t.balance <= 0 && t.grand > 0) return 'Paid';
-  if (t.paid > 0) return 'Partially Paid';
-  return inv.status === 'Draft' ? 'Draft' : 'Unpaid';
-};
+// Refactor Phase 5 — the invoice money maths and status derivation are now ONE
+// implementation, in services/billingService.js (invoiceTotals / invoiceStatus). This
+// file's `totalsOf` / `deriveStatus` were byte-equivalent copies that had drifted apart
+// over 30 phases of fixes; consolidating means the Billing screen, the PDF, the persisted
+// grandTotal/balance/gstAmount/profitAmount, the transaction engine's realization gate
+// and every Reports/analytics figure can never disagree again. The `totalsOf` /
+// `deriveStatus` names are kept as compatibility aliases (the shipped `export { totalsOf }`
+// and tests/setup.cjs's `export { deriveStatus }` both still resolve).
+const totalsOf = invoiceTotals;
+const deriveStatus = invoiceStatus;
 
 function Section({ title, sub, children, defaultOpen = true, badge }) {
   const [open, setOpen] = useState(defaultOpen);

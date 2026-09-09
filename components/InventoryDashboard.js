@@ -61,7 +61,7 @@ import { getGarageSeed } from '../lib/demoGarageSeed';
 import { computeRange, computeInventoryHealth, computeWorkshopScore, computeAlerts, computeInsights, computeAchievements, computeWorkshopProgress } from '../services/analyticsService';
 import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, toIndianPhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, isSameDay, trendPct, asArray, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
 import { buildPO, poCreateDoc, poAdvanceDoc, poReceiveDoc, poCancelDoc, nextPOStatus } from '../services/purchaseOrderService';
-import { toNum } from '../services/billingService';
+import { toNum, invoiceTotals, invoiceStatus } from '../services/billingService';
 import {
   catMatches, remapCatFields, renameCategoryDocs, deleteCategoryDocs,
   nonNegInt, nonNegNum, sanitizeStock,
@@ -5395,110 +5395,23 @@ const txn = (step, msg, data) => {
   else console.log(`%c[TXN ${step}] ${msg}`, style);
 };
 
-// `toNum` — the ledger-maths numeric coercion — is imported from
-// services/billingService (Refactor Phase 4). It was a byte-for-byte copy of that
-// canonical helper; consolidating means invTotals / invoiceRevenueLines /
-// planInvoiceRealization here and billingService.invoiceTotals (the oracle-tested
-// version) now coerce numbers through exactly one implementation.
-
-function invTotals(iv) {
-  // COMPUTE FROM THE LINES. Never trust a stored total.
-  //
-  // ROOT CAUSE OF "invoice paid but nothing updated": this used to read the STORED
-  // `iv.grandTotal` field. But collectPayment() in BillingModule builds the paid
-  // invoice with `{...iv, payments:[...]}` and never refreshes grandTotal — while
-  // Billing decides "Paid" from the LIVE lines. So Billing said Paid, and the engine,
-  // reading a stale/zero grandTotal, computed grand = 0, so `t.grand > 0` was false,
-  // invStatus returned "Pending", isRealized() was false and the ENTIRE TRANSACTION
-  // ENGINE SILENTLY SKIPPED. Invoice looked paid; inventory, stock-out, sales,
-  // services, reports, analytics and the dashboard never moved.
-  //
-  // Deriving from the lines means there is exactly ONE definition of the total, so no
-  // upstream code path can ever desynchronise the engine's gate again.
-  const lines = asArray(iv.lines); // PH21-D1 — a wrong-type `lines` (forged/corrupt doc) must not throw; this runs in Reports/Overview useMemos
-  let sub = 0;
-  let gst = 0;
-  lines.forEach((l) => {
-    const gross = toNum(l.qty) * toNum(l.rate);
-    const disc = gross * (toNum(l.disc) / 100);
-    const net = Math.max(0, gross - disc);
-    sub += net;
-    gst += net * ((l.gst != null ? toNum(l.gst) : toNum(iv.gstPct)) / 100);
-  });
-  // E2E workflow QA fix: invTotals() never applied the invoice-level `discount` field
-  // (flat ₹ or %) that BillingModule's totalsOf() applies to `sub` before GST — so for
-  // any invoice carrying an invoice-level discount, invTotals().grand stayed at the
-  // PRE-discount figure while the invoice's real (totalsOf-derived) grand total, and
-  // the amount actually collected, were both the post-discount figure. That made
-  // invTotals().balance appear permanently > 0 even on a fully-paid invoice.
-  // planInvoiceRealization/isRealized (the sole gate for stock/sales/rollup updates)
-  // reads invTotals(), not totalsOf() — so isRealized() came back false, the engine's
-  // own guard-rail logged "invoice says Paid but engine says NOT realized", and stock
-  // was never deducted, no Sales/Services rows were written, and Reports/Analytics/
-  // Dashboard/customer outstanding all stayed wrong for every discounted-and-paid
-  // invoice. Reproduced live: a ₹300 invoice-level discount left a real Paid invoice's
-  // stock completely untouched. Mirrors totalsOf()'s discount + GST-scaling exactly so
-  // the two functions can no longer disagree on whether an invoice is realized.
-  const invDisc = iv.discountType === 'percent' ? sub * (toNum(iv.discount) / 100) : toNum(iv.discount);
-  const afterDisc = Math.max(0, sub - invDisc);
-  const anyLineGst = lines.some((l) => l.gst != null);
-  let gstAdjusted = anyLineGst ? gst * (afterDisc / (sub || 1)) : afterDisc * (toNum(iv.gstPct) / 100);
-  if (iv.gstMode === 'exempt') gstAdjusted = 0;
-  // Fall back to the stored value only when the invoice genuinely carries no lines
-  // (legacy/imported records), so old data still reports a total.
-  const computed = Math.round(afterDisc + gstAdjusted);
-  const grand = lines.length ? computed : (toNum(iv.grandTotal) || 0);
-
-  // Payment ROWS are the sole source of truth for how much was received.
-  const hasPayments = Array.isArray(iv.payments) && iv.payments.length > 0;
-  const legacyPaid = !hasPayments && iv.legacyPaid === true ? toNum(iv.paid) : 0;
-  const paid = hasPayments ? iv.payments.reduce((s, p) => s + toNum(p.amount), 0) : legacyPaid;
-
-  const profit = toNum(iv.profitAmount);
-  const balance = Math.max(0, grand - paid);
-  // Settings QA fix: same net-of-line-discount bug as BillingModule.jsx's totalsOf —
-  // this used raw qty*rate (gross), not the discounted net used by `sub` just above,
-  // so a discounted line inflated this Parts/Labour split above the real invoice total.
-  const netOfLine = (l) => { const gross = toNum(l.qty) * toNum(l.rate); const disc = gross * (toNum(l.disc) / 100); return Math.max(0, gross - disc); };
-  const parts = lines.filter((l) => l.kind === 'Part').reduce((s, l) => s + netOfLine(l), 0);
-  const labour = lines.filter((l) => l.kind === 'Labour').reduce((s, l) => s + netOfLine(l), 0);
-  // E2E workflow QA fix: this returned the pre-discount-scaling `gst` (the raw per-line
-  // sum from the loop above), not `gstAdjusted` — so `grand` (used internally here) was
-  // correctly discount-scaled while every EXTERNAL caller of invTotals().gst (Reports'
-  // "GST Collected" KPI, etc.) got the wrong, inflated figure. Reproduced live: Reports
-  // showed GST Collected ₹3,810.65 for the same two invoices Billing's own KPI (driven
-  // by totalsOf, already correct) showed as ₹3,738.27.
-  // E2E workflow QA fix: the GST Report's "Taxable" column read `grand - gst`, i.e. it
-  // backed the tax base out of the ROUNDED grand total instead of using the real
-  // pre-GST line sum. `grand` is `Math.round(afterDisc + gstAdjusted)` — whenever that
-  // rounding moves the total (e.g. 1068.60 -> 1069), `grand - gst` leaks the rounding
-  // remainder into "Taxable" as a fictitious amount that was never actually on any
-  // line. Reproduced live: a real invoice with an exact pre-GST base of Rs. 1,020.00
-  // showed "Taxable: Rs. 1,020.4" on the generated GST Report PDF — a figure that
-  // doesn't correspond to anything actually charged, which matters on a document
-  // meant to support real GST filing. `afterDisc` (already computed above, discount-
-  // scaled and pre-GST) is the correct value; exposed here so no external caller needs
-  // to re-derive it by subtraction.
-  return { grand, paid, gst: gstAdjusted, profit, balance, parts, labour, taxable: afterDisc };
-}
-
-const invStatus = (iv) => {
-  if (iv.status === 'Cancelled' || iv.status === 'Refunded' || iv.status === 'Returned') return iv.status;
-  if (iv.isEstimate) return 'Estimate';
-  const t = invTotals(iv);
-  // PHASE 11 (PH11-02) — mirrors deriveStatus's BUG-LIVE-002 fix (BillingModule.jsx),
-  // missing here. Without it, an overpaid invoice (t.paid > t.grand) still satisfies
-  // `t.balance <= 0 && t.grand > 0` below (balance is floored to 0), so THIS function
-  // — the one collectInvoicePayment actually persists as the invoice's `status` field,
-  // and the one every Reports/Dashboard export reads — called it a clean "Paid" while
-  // deriveStatus (what the Billing screen itself shows) correctly flagged the exact
-  // same invoice as "Partially Paid" with an "Overpaid by ₹X" banner. Two functions
-  // computing the same invoice's status must never disagree.
-  if (t.grand > 0 && t.paid > t.grand + 0.5) return 'Partially Paid';
-  if (t.balance <= 0 && t.grand > 0) return 'Paid';
-  if (t.paid > 0) return 'Partially Paid';
-  return iv.status === 'Draft' ? 'Draft' : 'Unpaid'; // PH22-03 — was 'Pending'; matches deriveStatus / every export
-};
+// Refactor Phase 5 — the invoice money maths and status derivation are ONE
+// implementation now, in services/billingService.js. `invTotals` was the transaction
+// engine's SECOND copy — kept in sync with BillingModule.totalsOf by hand across ~30
+// phases of fixes, and Stage 1 found it had still drifted (unrounded gst, stored
+// profitAmount, a `taxable` alias, and no `sub`/`cgst`/`sgst`). `invStatus` was a
+// THIRD status copy (PH11-02 added its overpayment guard here specifically because
+// billingService.invoiceStatus lacked it). Both now delegate to the canonical, so
+// isRealized / planInvoiceRealization / Reports / customer-outstanding and
+// billingService.invoiceTotals compute one way. `toNum` (Phase 4) comes from the
+// same module. Local names kept — every call site here uses them.
+//
+// Shape note vs the old local `invTotals`: `.taxable` → `.afterDisc` (2 dp), `.gst`
+// is now 2 dp (was raw float), `.profit` is a live `afterDisc − cost` (was the stored
+// `iv.profitAmount`), and `.parts`/`.labour` → `.partsRev`/`.labourRev` (they had no
+// consumer here). New fields: `sub`, `cgst`, `sgst`, `igst`, `isIgst`, `roundOff`.
+const invTotals = invoiceTotals;
+const invStatus = invoiceStatus;
 const RPT_COLORS = ['#d4af37', '#60a5fa', '#34d399', '#f472b6', '#a78bfa', '#fbbf24', '#22d3ee', '#fb923c'];
 
 // Production report table (hoisted so its pagination/sort state survives parent
@@ -5766,7 +5679,11 @@ function ReportsView(props) {
     const received = orderedUnits > 0 && receivedUnits > 0 ? `${receivedUnits} / ${orderedUnits} units` : '—';
     return [po.poNumber, po.supplierName || '', po.status || '', items.length, received, money(po.total || 0), po.expectedDate || '', po.priority || 'Normal'];
   });
-  const gstRows = invoices.filter((iv) => !iv.isEstimate && invStatus(iv) !== 'Cancelled' && inRange(iv.date)).map((iv) => { const t = invTotals(iv); const isIg = iv.gstMode === 'igst'; return [iv.invNo, iv.date, iv.gstNo || 'Unregistered', money(t.taxable), money(isIg ? 0 : t.gst / 2), money(isIg ? 0 : t.gst / 2), money(isIg ? t.gst : 0), money(t.gst)]; });
+  // Refactor Phase 5 — reads the canonical invoiceTotals shape: `.afterDisc` is the
+  // 2-dp pre-GST taxable base (was the `.taxable` alias), and `.cgst`/`.sgst`/`.igst`
+  // are split from the ALREADY-ROUNDED gst so cgst + sgst === gst exactly (was a
+  // hand `t.gst / 2` that could each round up on an odd-paisa amount).
+  const gstRows = invoices.filter((iv) => !iv.isEstimate && invStatus(iv) !== 'Cancelled' && inRange(iv.date)).map((iv) => { const t = invTotals(iv); return [iv.invNo, iv.date, iv.gstNo || 'Unregistered', money(t.afterDisc), money(t.cgst), money(t.sgst), money(t.igst), money(t.gst)]; });
   // E2E workflow QA fix: this read a.at/a.by/a.user/a.meta, but every real writer
   // (pushAudit and writeAudit, both in this same file) stamps entries as
   // createdAt/performedBy/performedByEmail/details — a field-name mismatch left over

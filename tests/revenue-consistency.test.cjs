@@ -28,9 +28,13 @@ ok('touchVehicleHistory records spend via invTotals, not raw grandTotal',
 ok('the raw "Number(iv.grandTotal) || 0" spend read is gone',
   !/const spend = Number\(iv\.grandTotal\) \|\| 0/.test(src));
 
-// the shared invTotals only falls back to grandTotal when there are NO lines
-ok('invTotals derives from lines and ignores a stored total when lines exist',
-  /const grand = lines\.length \? computed : \(toNum\(iv\.grandTotal\)/.test(src));
+// Refactor Phase 5 — invTotals now delegates to the one canonical invoiceTotals
+// (services/billingService.js), which only falls back to grandTotal when there are NO lines.
+ok('invTotals delegates to the canonical invoiceTotals',
+  /const invTotals = invoiceTotals;/.test(src));
+ok('the canonical invoiceTotals derives grand from the lines and ignores a stored total when lines exist',
+  /const grand = lines\.length \? Math\.round\(grandRaw\) : toNum\(iv\?\.grandTotal\);/
+    .test(fs.readFileSync(path.resolve(__dirname, '../services/billingService.js'), 'utf8')));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

@@ -48,69 +48,126 @@ export const toNum = (v) => {
 };
 
 /**
+ * Round money to paisa at the boundary — an EPSILON-corrected round-half-up.
+ *
+ * Binary floating point cannot represent 0.1, so intermediate money values arrive as
+ * things like 59.999399999999994. A tax invoice must state tax to 2 decimal places, and
+ * summing unrounded values across a month makes a filed GST return disagree with the
+ * books by a few paise. Rounding happens HERE, once, at the contract boundary — no
+ * caller rounds and no caller receives raw floats.
+ *
+ * ONE implementation for the whole app: BillingModule.totalsOf and
+ * InventoryDashboard.invTotals delegate to invoiceTotals, so this is the only `p2`.
+ */
+export const p2 = (v) => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
+
+/**
  * Totals for an invoice, DERIVED FROM ITS LINE ITEMS.
  *
- * Never trust a stored `grandTotal`. That single decision is what broke the engine:
- * a stale stored total made `grand === 0`, so the invoice never counted as Paid, so the
- * engine skipped — silently. Deriving means no upstream code path can desynchronise it.
+ * THE canonical invoice-money implementation (Refactor Phase 5 — Stage 1 spec §7).
+ * BillingModule.totalsOf and InventoryDashboard.invTotals both delegate here, so the
+ * Billing screen, the invoice PDF, the persisted grandTotal / balance / gstAmount /
+ * profitAmount, the transaction engine's realization gate, every Reports / analytics
+ * figure and lib/vehicleStats.revenueOf all compute invoice money exactly one way.
+ *
+ * Contract:
+ *   - money fields at 2 dp (paise); `grand` further rounded to the nearest RUPEE
+ *     (the "Round Off" line every Indian retail/GST invoice carries).
+ *   - line discount (percent) reduces `sub` / `partsRev` / `labourRev`; the
+ *     invoice-level discount (flat ₹ or %) produces `afterDisc` and rescales GST by
+ *     afterDisc/sub, but does NOT touch the parts/labour split
+ *     (invariant: partsRev + labourRev === sub — the split reconciles to the subtotal).
+ *   - GST: per-line rate summed then scaled by afterDisc/sub; flat afterDisc·gstPct%
+ *     only when NO line carries its own `gst`; 0 when gstMode === 'exempt'.
+ *   - CGST/SGST split from the ALREADY-ROUNDED gst (SGST the clean half, CGST absorbs
+ *     the odd paisa) so cgst + sgst === gst EXACTLY; IGST carries the whole tax when
+ *     gstMode === 'igst'.
+ *   - paid = Σ payment-row amounts; else the legacy `iv.paid` scalar ONLY when
+ *     iv.legacyPaid === true; else 0 — an unflagged stale/imported `paid` must never
+ *     let an invoice self-declare as paid (that was a genuine money bug).
+ *   - profit = afterDisc − cost, computed LIVE (never the stored `profitAmount`).
+ *   - `grand` falls back to the stored `grandTotal` ONLY for a legacy import with no lines.
  */
 export function invoiceTotals(iv) {
-  const lines = asArray(iv?.lines); // PH21-D1 — a wrong-type `lines` must not throw here (the money path runs on every screen)
-  // PHASE 22 (PH22-01) — this now mirrors BillingModule.totalsOf's FULL model, not a
-  // simplified subset. It previously ignored the invoice-level discount, `gstMode`
-  // (exempt / IGST) and the per-line-GST-absent → `gstPct` fallback — so
-  // lib/vehicleStats.revenueOf (the Vehicle Report "Revenue" column and every Vehicles
-  // "Revenue" display) summed a grand total that disagreed with the invoice's own
-  // authoritative `grandTotal` whenever a contributing invoice carried a discount or
-  // was GST-exempt. The docstring above ("exactly one definition of the total") is now
-  // actually true; tests/financial-integrity.test.cjs checks this against the oracle.
+  const lines = asArray(iv?.lines); // PH21-D1 — a wrong-type `lines` must not throw (this runs on every screen)
+
+  const netOfLine = (l) => {
+    const gross = toNum(l.qty) * toNum(l.rate);
+    const lineDisc = l.disc ? gross * (toNum(l.disc) / 100) : 0;
+    return Math.max(0, gross - lineDisc);
+  };
+
   let sub = 0;
   let lineGst = 0;
   let cost = 0;
   lines.forEach((l) => {
-    const gross = toNum(l.qty) * toNum(l.rate);
-    const lineDisc = l.disc ? gross * (toNum(l.disc) / 100) : 0;
-    const net = Math.max(0, gross - lineDisc);
+    const net = netOfLine(l);
     sub += net;
     const rate = l.gst != null ? toNum(l.gst) : toNum(iv?.gstPct);
     lineGst += net * (rate / 100);
     cost += toNum(l.purchasePrice) * toNum(l.qty);
   });
+
   const invDisc = iv?.discountType === 'percent' ? sub * (toNum(iv?.discount) / 100) : toNum(iv?.discount);
   const afterDisc = Math.max(0, sub - invDisc);
   const anyLineGst = lines.some((l) => l.gst != null);
   let gst = anyLineGst ? lineGst * (afterDisc / (sub || 1)) : afterDisc * (toNum(iv?.gstPct) / 100);
   if (iv?.gstMode === 'exempt') gst = 0;
+  const isIgst = iv?.gstMode === 'igst';
 
-  const computed = Math.round(afterDisc + gst);
-  // Fall back to the stored value ONLY for legacy/imported invoices that carry no lines.
-  const grand = lines.length ? computed : toNum(iv?.grandTotal);
+  const grandRaw = afterDisc + gst;
+  // Fall back to the stored value ONLY for a legacy/imported invoice that carries no lines.
+  const grand = lines.length ? Math.round(grandRaw) : toNum(iv?.grandTotal);
+  const roundOff = grand - grandRaw;
 
-  // Payment ROWS are the sole source of truth for money received.
   const hasPayments = Array.isArray(iv?.payments) && iv.payments.length > 0;
-  const paid = hasPayments ? iv.payments.reduce((s, p) => s + toNum(p.amount), 0) : 0;
+  const legacyPaid = !hasPayments && iv?.legacyPaid === true ? toNum(iv?.paid) : 0;
+  const paid = hasPayments ? iv.payments.reduce((s, p) => s + toNum(p.amount), 0) : legacyPaid;
+
+  const balance = Math.max(0, grand - paid);
+  const profit = afterDisc - cost;
+  const partsRev = lines.filter((l) => l.kind === LINE_KIND.PART).reduce((s, l) => s + netOfLine(l), 0);
+  const labourRev = lines.filter((l) => l.kind === LINE_KIND.LABOUR).reduce((s, l) => s + netOfLine(l), 0);
+
+  const gstR = p2(gst);
+  const halfS = p2(gstR / 2);           // SGST takes the clean half
+  const halfC = p2(gstR - halfS);       // CGST absorbs the odd paisa → cgst + sgst === gst
 
   return {
-    sub: Math.round(sub),
-    afterDisc: Math.round(afterDisc),
-    gst: Math.round(gst),
+    sub: p2(sub),
+    afterDisc: p2(afterDisc),
+    gst: gstR,
+    cgst: isIgst ? 0 : halfC,
+    sgst: isIgst ? 0 : halfS,
+    igst: isIgst ? gstR : 0,
+    isIgst,
     grand,
-    paid,
-    balance: Math.max(0, grand - paid),
-    cost: Math.round(cost),
-    parts: lines.filter((l) => l.kind === LINE_KIND.PART)
-      .reduce((s, l) => s + toNum(l.qty) * toNum(l.rate), 0),
-    labour: lines.filter((l) => l.kind === LINE_KIND.LABOUR)
-      .reduce((s, l) => s + toNum(l.qty) * toNum(l.rate), 0),
+    roundOff: p2(roundOff),
+    paid: p2(paid),
+    balance: p2(balance),
+    cost: p2(cost),
+    profit: p2(profit),
+    partsRev: p2(partsRev),
+    labourRev: p2(labourRev),
   };
 }
 
-/** The invoice's status, derived — not read from a field that can go stale. */
+/**
+ * The invoice's status, DERIVED — never a stale stored field, except the three explicit
+ * terminal overrides. Payment data always wins over `iv.status`. Identical rule to
+ * BillingModule.deriveStatus and InventoryDashboard.invStatus, which delegate here
+ * (Refactor Phase 5).
+ */
 export function invoiceStatus(iv) {
   if (!iv) return INVOICE_STATUS.PENDING;
   if (NON_REALIZING_STATUSES.includes(iv.status)) return iv.status;
   if (iv.isEstimate) return INVOICE_STATUS.ESTIMATE;
   const t = invoiceTotals(iv);
+  // PH11-02 — an OVERPAID invoice's books do not balance: `balance` is floored to 0 by
+  // Math.max, which would otherwise read as a clean "Paid" and lock the invoice.
+  // Overpayment is an error state, never "Paid"; the excess is surfaced separately as
+  // "Overpaid by ₹X". 0.5 slack absorbs rounding.
+  if (t.grand > 0 && t.paid > t.grand + 0.5) return INVOICE_STATUS.PARTIALLY_PAID;
   if (t.balance <= 0 && t.grand > 0) return INVOICE_STATUS.PAID;
   if (t.paid > 0) return INVOICE_STATUS.PARTIALLY_PAID;
   return iv.status === INVOICE_STATUS.DRAFT ? INVOICE_STATUS.DRAFT : INVOICE_STATUS.PENDING;

@@ -169,7 +169,12 @@ console.log('\n2  PH23-01 — an invoice-level discount reaches the sales ledger
   // must now reconcile with the invoice money path (which always applied the discount)
   ok('[PH23-01] Σ ledger revenue == totalsOf().afterDisc', near(agg.rev, totalsOf(paid).afterDisc));
   ok('[PH23-01] Σ ledger profit == totalsOf().profit', near(agg.profit, totalsOf(paid).profit));
-  ok('[PH23-01] Σ ledger profit == invTotals().profit (the stored profitAmount)', near(agg.profit, invTotals({ ...paid, profitAmount: totalsOf(paid).profit }).profit));
+  // PHASE 5 (T11) — was a near-tautology: it set profitAmount := totalsOf(paid).profit and
+  // then checked invTotals (which merely returned that field). Now invTotals computes
+  // profit = afterDisc − cost independently; both it AND the ledger aggregate are checked
+  // against the HAND figure 3000, never against totalsOf().profit.
+  ok('[PH23-01 / PHASE 5 T11] Σ ledger profit AND invTotals().profit both == the hand figure 3000 (independent, not a totalsOf passthrough)',
+    near(agg.profit, 3000) && near(invTotals(paid).profit, 3000), `ledger ${agg.profit}  invTotals ${invTotals(paid).profit}`);
 
   // percent discount
   const pct = inv({ invNo: 'INV-D2', gstMode: 'exempt', discount: 20, discountType: 'percent', lines: [mkLine({ partId: 'p3', qty: 2, rate: 1000, purchasePrice: 400, gst: 0 })] });

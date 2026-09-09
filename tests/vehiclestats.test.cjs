@@ -204,5 +204,45 @@ ok('empty data does not divide by zero',
 ok('reg numbers match case- and space-insensitively',
   S.jobsOf(idx, { regNo: 'ap01 aa1111' }).length === 3);
 
+// =====================================================================
+// PHASE 5 (T9) — revenueOf must be UNCHANGED by the billing canonicalization.
+// revenueOf sums invoiceTotals(iv).grand over isRealized invoices. The one field
+// it reads (.grand) is oracle-anchored and does not move; this pins the exact
+// hand figure for a discounted + GST-exempt + fully-paid invoice so a regression
+// in the canonical invoiceTotals would surface here.
+// =====================================================================
+{
+  const line = (o) => ({ id: `l${Math.random()}`, kind: 'Part', qty: 1, rate: 0, disc: 0, gst: 0, partId: null, purchasePrice: 0, ...o });
+  // 3 × ₹800 part, GST-exempt, 12.5% invoice discount → sub 2400, afterDisc 2100, grand 2100.
+  const discExemptPaid = {
+    invNo: 'INV-T9A', regNo: 'T9-REG-001', date: '2026-06-01', gstPct: 18, gstMode: 'exempt',
+    discount: 12.5, discountType: 'percent',
+    lines: [line({ qty: 3, rate: 800, purchasePrice: 500, partId: 'pT9' })],
+    payments: [{ id: 'p', mode: 'Cash', amount: 2100 }],
+  };
+  // 2 × ₹1500 labour + 1 × ₹1000 part @18%, flat ₹500 discount → sub 4000, afterDisc 3500,
+  // gst 3500·(1000/4000·0.18 scaled) … labour has gst:0. lineGst = 1000·0.18 = 180.
+  // gst = 180 · (3500/4000) = 157.5 → grand round(3500 + 157.5) = 3658.
+  const mixedPaid = {
+    invNo: 'INV-T9B', regNo: 'T9-REG-001', date: '2026-06-05', gstPct: 18, gstMode: 'auto',
+    discount: 500, discountType: 'flat',
+    lines: [
+      line({ kind: 'Labour', qty: 2, rate: 1500, gst: 0 }),
+      line({ kind: 'Part', qty: 1, rate: 1000, gst: 18, purchasePrice: 600, partId: 'pT9b' }),
+    ],
+    payments: [{ id: 'p', mode: 'UPI', amount: 3658 }],
+  };
+  const t9Idx = S.buildVehicleIndex([], [discExemptPaid, mixedPaid]);
+  const v = { regNo: 'T9-REG-001' };
+  ok('T9 · both T9 invoices are realized (fully paid, not cancelled/estimate)',
+    S.invoicesOf(t9Idx, v).filter(isRealized).length === 2);
+  ok('T9 · revenueOf(discounted + GST-exempt + mixed) === ₹5,758 (2100 + 3658) — unchanged by canonicalization',
+    S.revenueOf(t9Idx, v) === 2100 + 3658, `got ₹${S.revenueOf(t9Idx, v)}`);
+  // an UNPAID copy of the same invoice must contribute nothing
+  const unpaid = { ...discExemptPaid, invNo: 'INV-T9C', payments: [] };
+  const t9Idx2 = S.buildVehicleIndex([], [unpaid]);
+  ok('T9 · an unpaid discounted GST-exempt invoice contributes ₹0', S.revenueOf(t9Idx2, v) === 0, `got ₹${S.revenueOf(t9Idx2, v)}`);
+}
+
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

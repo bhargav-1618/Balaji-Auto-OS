@@ -36,6 +36,7 @@ const { applyPoReceive } = require('../lib/poReceive.js');
 const { cardReservedQtys, reserveDelta } = require('../services/inventoryService.js');
 const { invStatus } = require('../components/InventoryDashboard.js');
 const { deriveStatus } = require('../components/billing/BillingModule.jsx');
+const { invoiceStatus } = require('../services/billingService.js');
 
 let PASS = 0, FAIL = 0;
 const ok = (name, cond, detail = '') => {
@@ -45,6 +46,9 @@ const ok = (name, cond, detail = '') => {
 const read = (p) => fs.readFileSync(path.resolve(__dirname, p), 'utf8');
 const dash = read('../components/InventoryDashboard.js');
 const billing = read('../components/billing/BillingModule.jsx');
+// Refactor Phase 5 — status derivation is ONE implementation (services/billingService.js);
+// deriveStatus / invStatus both delegate to invoiceStatus.
+const svc = read('../services/billingService.js');
 const poSvc = read('../services/purchaseOrderService.js');
 const poLib = read('../lib/poReceive.js');
 const capSvc = read('../services/capacityService.js');
@@ -109,12 +113,68 @@ function oracleStatus(iv) {
     invStatus(cancelled) === 'Cancelled' && deriveStatus(cancelled) === 'Cancelled');
 }
 
+// PHASE 5 (T7) — billingService.invoiceStatus is now a THIRD status derivation
+// (behind capacityService cleanup-eligibility + JobCardModule open-invoice detection).
+// Run an INDEPENDENT spec-complete status oracle against it: terminal / payment-wins /
+// overpaid / legacyPaid / draft / estimate. (The `oracleStatus` above is a simpler
+// forge-focused oracle that ignores GST + legacyPaid — insufficient here.)
+{
+  const N = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  const specStatus = (iv) => {
+    if (!iv) return 'Unpaid';
+    if (['Cancelled', 'Refunded', 'Returned'].includes(iv.status)) return iv.status;
+    if (iv.isEstimate) return 'Estimate';
+    const lines = Array.isArray(iv.lines) ? iv.lines : [];
+    let sub = 0, lineGst = 0;
+    lines.forEach((l) => {
+      const gross = N(l.qty) * N(l.rate);
+      const net = Math.max(0, gross - (l.disc ? gross * (N(l.disc) / 100) : 0));
+      sub += net;
+      lineGst += net * ((l.gst != null ? N(l.gst) : N(iv.gstPct)) / 100);
+    });
+    const invDisc = iv.discountType === 'percent' ? sub * (N(iv.discount) / 100) : N(iv.discount);
+    const afterDisc = Math.max(0, sub - invDisc);
+    const anyLineGst = lines.some((l) => l.gst != null);
+    let gst = anyLineGst ? lineGst * (afterDisc / (sub || 1)) : afterDisc * (N(iv.gstPct) / 100);
+    if (iv.gstMode === 'exempt') gst = 0;
+    const grand = lines.length ? Math.round(afterDisc + gst) : N(iv.grandTotal);
+    const hasP = Array.isArray(iv.payments) && iv.payments.length > 0;
+    const paid = hasP ? iv.payments.reduce((s, p) => s + N(p.amount), 0) : (iv.legacyPaid === true ? N(iv.paid) : 0);
+    if (grand > 0 && paid > grand + 0.5) return 'Partially Paid';
+    if (Math.max(0, grand - paid) <= 0 && grand > 0) return 'Paid';
+    if (paid > 0) return 'Partially Paid';
+    return iv.status === 'Draft' ? 'Draft' : 'Unpaid';
+  };
+  const oracleLabel = specStatus;
+  const cases = [
+    { n: 'terminal Cancelled sticks', iv: { status: 'Cancelled', grandTotal: 1000, payments: [{ id: 'p', amount: 1000 }], lines: [{ qty: 1, rate: 1000 }] } },
+    { n: 'terminal Returned sticks', iv: { status: 'Returned', grandTotal: 1000, payments: [], lines: [{ qty: 1, rate: 1000 }] } },
+    { n: 'estimate', iv: { isEstimate: true, lines: [{ qty: 1, rate: 1000, gst: 18 }] } },
+    { n: 'draft, unpaid', iv: { status: 'Draft', payments: [], lines: [{ qty: 1, rate: 1000, gst: 18 }] } },
+    { n: 'payment wins over stale Draft status', iv: { status: 'Draft', payments: [{ id: 'p', amount: 1180 }], lines: [{ qty: 1, rate: 1000, gst: 18 }] } },
+    { n: 'unpaid finalised bill', iv: { status: 'Unpaid', payments: [], lines: [{ qty: 1, rate: 1000, gst: 0 }] } },
+    { n: 'partially paid', iv: { payments: [{ id: 'p', amount: 400 }], lines: [{ qty: 1, rate: 1000, gst: 0 }] } },
+    { n: 'fully paid', iv: { payments: [{ id: 'p', amount: 1000 }], lines: [{ qty: 1, rate: 1000, gst: 0 }] } },
+    { n: 'overpaid → Partially Paid, NEVER clean Paid (PH11-02)', iv: { payments: [{ id: 'p', amount: 2000 }], lines: [{ qty: 1, rate: 1000, gst: 0 }] } },
+    { n: 'legacyPaid → Paid', iv: { legacyPaid: true, paid: 1000, payments: [], lines: [{ qty: 1, rate: 1000, gst: 0 }] } },
+  ];
+  cases.forEach(({ n, iv }) => {
+    const want = oracleLabel(iv);
+    ok(`T7 · billingService.invoiceStatus — ${n} → "${want}"`, invoiceStatus(iv) === want, `got "${invoiceStatus(iv)}"`);
+    ok(`T7 · invoiceStatus agrees with deriveStatus and invStatus — ${n}`,
+      invoiceStatus(iv) === deriveStatus(iv) && deriveStatus(iv) === invStatus(iv),
+      `invoiceStatus="${invoiceStatus(iv)}" deriveStatus="${deriveStatus(iv)}" invStatus="${invStatus(iv)}"`);
+  });
+}
+
 ok('[fact] changeStatus (the Cancel/Refund/Return action) only ever sets a terminal-override status, never an active one',
   (billing.match(/changeStatus\(iv, '(Refunded|Returned|Cancelled)'/g) || []).length >= 3
   && !/changeStatus\(iv, '(Paid|Draft|Unpaid|Pending|Partially Paid)'/.test(billing));
-ok('[fact] editing a Cancelled/Refunded/Returned invoice keeps that status (deriveStatus/invStatus return it verbatim before any recompute) — no "revive by editing"',
-  /if \(inv\.status === 'Cancelled' \|\| inv\.status === 'Refunded' \|\| inv\.status === 'Returned'\) return inv\.status;/.test(billing)
-  && /if \(iv\.status === 'Cancelled' \|\| iv\.status === 'Refunded' \|\| iv\.status === 'Returned'\) return iv\.status;/.test(dash));
+ok('[fact] editing a Cancelled/Refunded/Returned invoice keeps that status (the canonical invoiceStatus returns it verbatim before any recompute; deriveStatus/invStatus delegate) — no "revive by editing"',
+  /if \(NON_REALIZING_STATUSES\.includes\(iv\.status\)\) return iv\.status;/.test(svc)
+  && /NON_REALIZING_STATUSES = Object\.freeze\(\[\s*INVOICE_STATUS\.CANCELLED,\s*INVOICE_STATUS\.REFUNDED,\s*INVOICE_STATUS\.RETURNED,/.test(read('../constants/index.js'))
+  && /const deriveStatus = invoiceStatus;/.test(billing)
+  && /const invStatus = invoiceStatus;/.test(dash));
 
 // =====================================================================
 // 3 — INVOICE MUTATION BOUNDARY — deleted docs cannot be resurrected

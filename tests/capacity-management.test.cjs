@@ -250,5 +250,26 @@ ok('CapacityBanner/CapacityCleanupModal/LocalCapacityBanner all route their reco
 ok('capacityService\'s own cleanup-audit-trail message uses pluralize too (the audit entry text itself must not say "ledger entrys")',
   /details: `\$\{count\} \$\{pluralize\(cfg\.recordLabel, count\)\} \(\$\{dateRangeLabel\}\) via capacity cleanup`,/.test(svc));
 
+// --- PHASE 5 (T10): an OVERPAID invoice is an anomaly, not a settled bill ---
+// capacityService gates invoice cleanup on TERMINAL_INVOICE_STATUSES.includes(invoiceStatus(record))
+// and JobCardModule treats a job card as still-open while !TERMINAL_INVOICE_STATUSES.includes(invoiceStatus(iv)).
+// After the Phase 5 overpayment guard, invoiceStatus(overpaid) === 'Partially Paid' (never 'Paid'),
+// so BOTH gates now correctly refuse to treat an overpaid invoice as finished. This suite is
+// pure source-pattern (no module harness); the executable proof that invoiceStatus(overpaid)
+// !== 'Paid' lives in billing-canonical-convergence.test.cjs (T3/T10) and state-machine-integrity.test.cjs (T7).
+{
+  const jc = R('components/jobcards/JobCardModule.jsx');
+  const cap = R('constants/capacity.js');
+  ok('T10 · TERMINAL_INVOICE_STATUSES is exactly Paid/Cancelled/Refunded/Returned',
+    /TERMINAL_INVOICE_STATUSES\s*=\s*Object\.freeze\(\['Paid', 'Cancelled', 'Refunded', 'Returned'\]\)/.test(cap));
+  ok('T10 · capacityService gates invoice cleanup on invoiceStatus() ∈ TERMINAL (not the stored/forgeable status field)',
+    /const status = invoiceStatus\(record\);/.test(svc) && /if \(!TERMINAL_INVOICE_STATUSES\.includes\(status\)\) \{/.test(svc));
+  ok('T10 · JobCardModule keeps a linked invoice\'s job card OPEN while invoiceStatus(iv) ∉ TERMINAL',
+    /!TERMINAL_INVOICE_STATUSES\.includes\(invoiceStatus\(iv\)\)/.test(jc));
+  ok('T10 · billingService.invoiceStatus carries the PH11-02 overpayment guard (overpaid → "Partially Paid", never a clean "Paid")',
+    /if \(t\.grand > 0 && t\.paid > t\.grand \+ 0\.5\) return INVOICE_STATUS\.PARTIALLY_PAID;\s*\n\s*if \(t\.balance <= 0 && t\.grand > 0\) return INVOICE_STATUS\.PAID;/
+      .test(R('services/billingService.js')));
+}
+
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

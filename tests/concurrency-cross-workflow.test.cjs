@@ -114,20 +114,30 @@ ok('deleteInvoice unwinds against a transactional server pre-image in production
 // --- pure logic: Paid -> Paid is a zero delta (2nd concurrent payment is a no-op)
 const line = { id: 'l1', kind: 'Part', partId: 'p1', desc: 'Pad', qty: 2, rate: 500, disc: 0, gst: 0 };
 const unpaid = { invNo: 'INV-1', isEstimate: false, status: 'Invoice', lines: [line], payments: [] };
-const paidA = { ...unpaid, status: 'Invoice', payments: [{ id: 'pA', mode: 'Cash', amount: 1000 }] };
-const paidAB = { ...unpaid, payments: [{ id: 'pA', mode: 'Cash', amount: 1000 }, { id: 'pB', mode: 'UPI', amount: 1000 }] };
+const paidHalf = { ...unpaid, payments: [{ id: 'pA', mode: 'Cash', amount: 500 }] };            // Partially Paid
+const paidA = { ...unpaid, status: 'Invoice', payments: [{ id: 'pA', mode: 'Cash', amount: 500 }, { id: 'pB', mode: 'UPI', amount: 500 }] }; // Paid
+const paidAB = { ...unpaid, payments: [{ id: 'pA', mode: 'Cash', amount: 500 }, { id: 'pB', mode: 'UPI', amount: 500 }, { id: 'pC', mode: 'Cash', amount: 1000 }] }; // OVERPAID (₹2000 on a ₹1000 bill)
 
-ok('an unpaid invoice paid in full IS realized', isRealized(paidA) === true && isRealized(unpaid) === false);
-ok('payment A: unpaid -> Paid deducts the 2 pads exactly once',
+ok('an unpaid invoice paid in full IS realized', isRealized(paidA) === true && isRealized(unpaid) === false && isRealized(paidHalf) === false);
+ok('the completing payment: Partially Paid -> Paid deducts the 2 pads exactly once',
+  JSON.stringify(stockDelta(paidHalf, paidA)) === JSON.stringify({ p1: -2 }));
+// CWF-01: the 2nd concurrent payment transaction diffs against the SERVER pre-image
+// (already Paid from the 1st), not stale React state — so re-running the cascade with
+// prior===next (the `alreadyApplied` / `serverPrior === fresh` path) is a zero delta.
+ok('2nd concurrent payment (serverPrior already Paid, prior === next): ZERO stock delta — no double deduction',
+  JSON.stringify(stockDelta(paidA, paidA)) === '{}',
+  `got ${JSON.stringify(stockDelta(paidA, paidA))}`);
+ok('2nd concurrent payment: prior === next is a ZERO ledger delta — no double revenue',
+  Object.keys(ledgerDelta(paidA, paidA)).length === 0,
+  `got ${JSON.stringify(ledgerDelta(paidA, paidA))}`);
+// PHASE 5 (PH11-02) — an OVERPAID invoice is never a clean "Paid" (invoiceStatus →
+// "Partially Paid"), so isRealized is false: a duplicate FULL payment that somehow
+// persisted past the `conc/overpaid` guard does NOT double-count the sale — the
+// realization reverses and the anomaly is surfaced for review instead.
+ok('an overpaid invoice is NOT realized (PH11-02) — the sale is not silently double-counted',
+  isRealized(paidAB) === false);
+ok('contrast — the OLD bug: a STALE (pre-1st-payment) unpaid prior vs the Paid fresh double-deducts',
   JSON.stringify(stockDelta(unpaid, paidA)) === JSON.stringify({ p1: -2 }));
-ok('payment B (serverPrior already Paid): Paid -> Paid is a ZERO stock delta — no double deduction',
-  JSON.stringify(stockDelta(paidA, paidAB)) === '{}',
-  `got ${JSON.stringify(stockDelta(paidA, paidAB))}`);
-ok('payment B: Paid -> Paid is a ZERO ledger delta — no double revenue',
-  Object.keys(ledgerDelta(paidA, paidAB)).length === 0,
-  `got ${JSON.stringify(ledgerDelta(paidA, paidAB))}`);
-ok('contrast — the OLD bug: a STALE unpaid prior vs Paid fresh double-deducts',
-  JSON.stringify(stockDelta(unpaid, paidAB)) === JSON.stringify({ p1: -2 }));
 
 // =====================================================================
 // CWF-02 — concurrent PO receive
