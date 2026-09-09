@@ -108,6 +108,7 @@ import {
 import { formatDocNo } from '../lib/docCounter';
 import { useEditLease } from '../hooks/useEditLease';
 import { useRecordSync } from '../hooks/useRecordSync';
+import { useLiveCollection } from '../hooks/useLiveCollection';
 import { useLeaseReleaseToast } from '../hooks/useLeaseReleaseToast';
 import { useDurableOpId } from '../hooks/useDurableOpId';
 import { clearOpId, readOrCreateOpId } from '../lib/durableOpId';
@@ -9451,78 +9452,48 @@ export default function InventoryDashboard() {
     })();
   }, [demoMode, loading]);
 
-  // ---- Sales ledger live subscription (powers the Monthly Profit Trend) ----
-  // Capped to the most recent records for performance on large histories.
-  useEffect(() => {
-    if (demoMode) return;
-    const q = query(collection(db, COLLECTIONS.SALES), orderBy('createdAt', 'desc'), limit(LIMITS.SALES_LIVE));
-    const unsub = onSnapshot(
-      q,
-      (snap) => { setSales(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('sales'); },
-      (err) => handleListenerError('sales', err)
-    );
-    return unsub;
-  }, []);
-
-  // ---- FIX-07: monthly rollups subscription (one tiny doc per month) ----
-  useEffect(() => {
-    if (demoMode) return;
-    const q = query(collection(db, 'salesRollups'), orderBy('month', 'desc'), limit(60));
-    const unsub = onSnapshot(
-      q,
-      (snap) => { setRollups(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('salesRollups'); },
-      (err) => handleListenerError('salesRollups', err)
-    );
-    return unsub;
-  }, []);
-
-  // ---- ADD-02: restock ledger subscription (Restock Cost analytics) ----
-  useEffect(() => {
-    if (demoMode) return;
-    const q = query(collection(db, COLLECTIONS.RESTOCKS), orderBy('createdAt', 'desc'), limit(LIMITS.RESTOCKS_LIVE));
-    const unsub = onSnapshot(
-      q,
-      (snap) => { setRestocks(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('restocks'); },
-      (err) => handleListenerError('restocks', err)
-    );
-    return unsub;
-  }, []);
-
-  // ---- Task 8: stock adjustment ledger (non-sale reductions) ----
-  useEffect(() => {
-    if (demoMode) return;
-    const q = query(collection(db, COLLECTIONS.STOCK_ADJUSTMENTS), orderBy('createdAt', 'desc'), limit(LIMITS.STOCK_ADJUSTMENTS_LIVE));
-    const unsub = onSnapshot(
-      q,
-      (snap) => { setStockAdjustments(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('stockAdjustments'); },
-      (err) => handleListenerError('stockAdjustments', err)
-    );
-    return unsub;
-  }, []);
-
-  // ---- Reorder requests (purchase tracking; status transitions) ----
-  useEffect(() => {
-    if (demoMode) return;
-    const q = query(collection(db, COLLECTIONS.REORDER_REQUESTS), orderBy('createdAt', 'desc'), limit(200));
-    const unsub = onSnapshot(
-      q,
-      (snap) => { setReorderRequests(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('reorderRequests'); },
-      (err) => handleListenerError('reorderRequests', err)
-    );
-    return unsub;
-  }, []);
-
-  // ---- Purchase Orders (lifecycle: pending → approved → received → cancelled) ----
-  useEffect(() => {
-    if (demoMode) return;
-    const q = query(collection(db, COLLECTIONS.PURCHASE_ORDERS), orderBy('createdAt', 'desc'), limit(300));
-    const unsub = onSnapshot(
-      q,
-      (snap) => { setPurchaseOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('purchaseOrders'); },
-      (err) => handleListenerError('purchaseOrders', err)
-    );
-    return unsub;
-  }, []);
+  // ---- Ledger / tracking live subscriptions ----
+  // Six structurally-identical bounded windows: gate on production, subscribe to
+  // an ordered/capped query, map {id,...data} into state, route any error to the
+  // shared listener-error surface. Refactor Phase 6 folded the demo-gate + mount-
+  // once lifecycle into useLiveCollection; the query, the cap, the mapping and
+  // the error key stay here.
+  //   • Sales ledger — powers the Monthly Profit Trend (capped for large histories)
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.SALES), orderBy('createdAt', 'desc'), limit(LIMITS.SALES_LIVE)),
+    (snap) => { setSales(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('sales'); },
+    (err) => handleListenerError('sales', err),
+  ));
+  //   • FIX-07: monthly rollups — one tiny doc per month
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, 'salesRollups'), orderBy('month', 'desc'), limit(60)),
+    (snap) => { setRollups(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('salesRollups'); },
+    (err) => handleListenerError('salesRollups', err),
+  ));
+  //   • ADD-02: restock ledger — Restock Cost analytics
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.RESTOCKS), orderBy('createdAt', 'desc'), limit(LIMITS.RESTOCKS_LIVE)),
+    (snap) => { setRestocks(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('restocks'); },
+    (err) => handleListenerError('restocks', err),
+  ));
+  //   • Task 8: stock adjustment ledger — non-sale reductions
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.STOCK_ADJUSTMENTS), orderBy('createdAt', 'desc'), limit(LIMITS.STOCK_ADJUSTMENTS_LIVE)),
+    (snap) => { setStockAdjustments(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('stockAdjustments'); },
+    (err) => handleListenerError('stockAdjustments', err),
+  ));
+  //   • Reorder requests — purchase tracking; status transitions
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.REORDER_REQUESTS), orderBy('createdAt', 'desc'), limit(200)),
+    (snap) => { setReorderRequests(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('reorderRequests'); },
+    (err) => handleListenerError('reorderRequests', err),
+  ));
+  //   • Purchase Orders — lifecycle: pending → approved → received → cancelled
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.PURCHASE_ORDERS), orderBy('createdAt', 'desc'), limit(300)),
+    (snap) => { setPurchaseOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('purchaseOrders'); },
+    (err) => handleListenerError('purchaseOrders', err),
+  ));
 
   // ---- Recovery Vault meta (drives the status card; syncs across devices) ----
   const [recoveryMeta, setRecoveryMeta] = useState(null);
@@ -9546,24 +9517,19 @@ export default function InventoryDashboard() {
   }, []);
 
   // ---- Task 1: custom categories & vehicles (user-extendable option lists) ----
-  useEffect(() => {
-    if (demoMode) return;
-    const unsub = onSnapshot(
-      collection(db, COLLECTIONS.CATEGORIES),
-      (snap) => { setCustomCategories(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('categories'); },
-      (err) => handleListenerError('categories', err)
-    );
-    return unsub;
-  }, []);
-  useEffect(() => {
-    if (demoMode) return;
-    const unsub = onSnapshot(
-      collection(db, COLLECTIONS.VEHICLES),
-      (snap) => { setCustomVehicles(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('customVehicles'); },
-      (err) => handleListenerError('customVehicles', err)
-    );
-    return unsub;
-  }, []);
+  // Small option-list collections — no ordering/cap (see the note on Phase 25's
+  // bounded-listener scope). Same demo-gate + mount-once lifecycle via Phase 6's
+  // useLiveCollection.
+  useLiveCollection(!demoMode, () => onSnapshot(
+    collection(db, COLLECTIONS.CATEGORIES),
+    (snap) => { setCustomCategories(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('categories'); },
+    (err) => handleListenerError('categories', err),
+  ));
+  useLiveCollection(!demoMode, () => onSnapshot(
+    collection(db, COLLECTIONS.VEHICLES),
+    (snap) => { setCustomVehicles(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('customVehicles'); },
+    (err) => handleListenerError('customVehicles', err),
+  ));
 
   // ---- ADD-06: audit log subscription (admin-only viewer) ----
   useEffect(() => {

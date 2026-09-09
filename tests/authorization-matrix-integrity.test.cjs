@@ -83,8 +83,19 @@ ok('Settings "Users & Roles" and "Backup & Data" tabs are isAdmin-gated (not in 
   && /\.\.\.\(isAdmin \? \[\['backup', 'Backup & Data'\]\] : \[\]\)/.test(dash));
 ok('Settings sections themselves re-check isAdmin (section === "users" && isAdmin, etc.)',
   /section === 'users' && isAdmin/.test(dash) && /section === 'backup' && isAdmin/.test(dash) && /section === 'demoperms' && isAdmin/.test(dash));
-ok('demo mode never starts a business-data Firestore listener (every live onSnapshot effect returns early when demoMode)',
+ok('demo mode never starts a business-data Firestore listener (every inline onSnapshot effect returns early when demoMode)',
   (dash.match(/if \(demoMode\) return;\s*\n\s*const unsub = onSnapshot\(/g) || []).length >= 3);
+// Refactor Phase 6 — 8 of the simplest listeners now route through hooks/useLiveCollection.js.
+// Same guarantee, enforced in two halves: the hook refuses to subscribe unless enabled,
+// and every dashboard call site passes `!demoMode` as that enable flag.
+{
+  const liveHook = R('hooks/useLiveCollection.js');
+  const calls = [...dash.matchAll(/useLiveCollection\(([^,]+),/g)].map((m) => m[1].trim());
+  ok('useLiveCollection refuses to subscribe unless enabled (no listener in demo mode)',
+    /if \(!enabled\) return undefined;\s*\n\s*const unsub = subscribe\(\);/.test(liveHook));
+  ok('every useLiveCollection call in the dashboard gates on !demoMode (8 listeners, none subscribe in demo)',
+    calls.length >= 8 && calls.every((a) => a === '!demoMode'));
+}
 ok('destructive / admin actions for a demo user are intercepted (protectedDemoToast), not written',
   /function protectedDemoToast\(/.test(dash)
   && /disabled by the administrator|Protected Demo Environment/.test(dash)
