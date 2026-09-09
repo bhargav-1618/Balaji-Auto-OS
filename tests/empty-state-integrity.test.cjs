@@ -314,14 +314,17 @@ ok('RevenueTrend formula WOULD produce "NaN" at 1 point / be empty at 0 (latent,
 // their empty guards. The old module-level RSpark / RDonut / RBars were dead
 // duplicates of these and were deleted in the Phase 24 cleanup — assert they stay
 // gone so they can't silently return unguarded.
+// Refactor Phase 8 — RptBars / RptDonut moved verbatim with ReportsView to
+// components/inventory/views/ReportsView.jsx.
 {
   const inv = read('../components/InventoryDashboard.js');
+  const rv = read('../components/inventory/views/ReportsView.jsx');
   ok('RptBars (live Reports chart) keeps the `!data.length` empty guard + Math.max(1,…) floor',
-    /const RptBars = \(\{ data \}\) => \{[^]*?Math\.max\(1, \.\.\.data\.map[^]*?if \(!data\.length\) return/.test(inv));
+    /const RptBars = \(\{ data \}\) => \{[^]*?Math\.max\(1, \.\.\.data\.map[^]*?if \(!data\.length\) return/.test(rv));
   ok('RptDonut (live Reports chart) keeps the `!total` empty guard before dividing',
-    /const RptDonut = \(\{ data \}\) => \{[^]*?if \(!total\) return/.test(inv));
+    /const RptDonut = \(\{ data \}\) => \{[^]*?if \(!total\) return/.test(rv));
   ok('dead RSpark / RDonut / RBars are GONE (no `function RSpark|RDonut|RBars` definition)',
-    !/function R(Spark|Donut|Bars)\b/.test(inv));
+    !/function R(Spark|Donut|Bars)\b/.test(inv) && !/function R(Spark|Donut|Bars)\b/.test(rv));
 }
 
 // -- 6c. Monthly Profit Trend (Analytics) — empty guard + maxBar floor

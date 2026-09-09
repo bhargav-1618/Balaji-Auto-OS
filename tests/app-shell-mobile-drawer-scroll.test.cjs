@@ -24,7 +24,9 @@
 const fs = require('fs'), path = require('path');
 let PASS = 0, FAIL = 0;
 const ok = (n, c, d = '') => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}${d ? `\n      → ${d}` : ''}`); } };
-const src = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+// Refactor Phase 8 — Sidebar (desktop rail + mobile drawer + shared `inner`) moved
+// verbatim from InventoryDashboard.js to its own module.
+const src = fs.readFileSync(path.resolve(__dirname, '../components/inventory/Sidebar.jsx'), 'utf8');
 
 console.log('\nApplication shell — mobile drawer scroll isolation (only nav scrolls)\n');
 

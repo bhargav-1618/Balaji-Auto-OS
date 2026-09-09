@@ -177,8 +177,9 @@ function runSourceProofs() {
     /if \(invPage > invTotalPages\) setInvPage\(invTotalPages\);/.test(dash)
     && /if \(page > pages\) setPage\(pages\);/.test(read('../components/inventory/views/AlertsView.jsx')));
 
+  // Refactor Phase 8 — ReportTable moved verbatim to ./inventory/views/ReportsView.jsx.
   ok('[fact] the report-table pager already reset on `rows.length` (covers a live shrink) — unchanged',
-    /useEffect\(\(\) => \{ setPage\(1\); \}, \[ql, sortCol, sortDir, per, rows\.length\]\);/.test(dash));
+    /useEffect\(\(\) => \{ setPage\(1\); \}, \[ql, sortCol, sortDir, per, rows\.length\]\);/.test(read('../components/inventory/views/ReportsView.jsx')));
 
   ok('[fact, documented not fixed] LedgerPage\'s pager still uses `page === pages` boundary guards, but its data is append-only and every real shrink vector (date range / type filter) fires its own setPage(1) — the live-shrink case is unreachable there',
     /disabled=\{page === pages\}/.test(read('../components/common/LedgerPage.jsx'))

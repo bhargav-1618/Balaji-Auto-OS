@@ -37,6 +37,9 @@ console.log('\nReport PDF export — one shared framework, wired into every repo
 
 const theme = R('lib/pdfTheme.js');
 const inv = R('components/InventoryDashboard.js');
+// Refactor Phase 8 — the global Reports tab's ReportTable + ReportsView moved verbatim
+// to components/inventory/views/ReportsView.jsx.
+const rv = R('components/inventory/views/ReportsView.jsx');
 const invReports = R('components/inventory/InventoryReports.jsx');
 const cust = R('components/customers/CustomersModule.jsx');
 const veh = R('components/vehicles/VehiclesModule.jsx');
@@ -99,18 +102,18 @@ ok('a ₹-prefixed currency string (from a report\'s on-screen formatINR/inr() h
 // ReportsView) and the PDF button (pdf, inside ReportTable itself) — previously
 // neither checked it at all. Same demoMode prop stays; two new ones ride alongside.
 ok('ReportTable (shared by all 15 report sections) accepts demoMode + the export permission props',
-  /function ReportTable\(\{ head, rows, exportName, exportHead, q, csv, demoMode, demoCanExport = true, onProtectedAction \}\)/.test(inv));
+  /function ReportTable\(\{ head, rows, exportName, exportHead, q, csv, demoMode, demoCanExport = true, onProtectedAction \}\)/.test(rv));
 ok('ReportTable gained a PDF export action alongside the existing Excel one, reusing the exact same sorted rows',
-  /await exportReportPDF\(\{[\s\S]{0,300}head: exportHead \|\| head,\s*\n\s*rows: sorted,/.test(inv));
+  /await exportReportPDF\(\{[\s\S]{0,300}head: exportHead \|\| head,\s*\n\s*rows: sorted,/.test(rv));
 ok('every <ReportTable> call site passes demoMode + the export permission props (mechanical prop-threading, not a per-section rewrite)',
   // q={dq}, not q={q} — Universal Search Engine review: Reports search is now debounced
   // (see tests/reports-alerts-analytics-search.test.cjs), the one raw-undebounced search
   // box in this file besides Alerts. Prop-threading itself (demoMode) is unaffected.
-  (inv.match(/q=\{dq\} csv=\{csv\} demoMode=\{demoMode\} demoCanExport=\{demoCanExport\} onProtectedAction=\{onProtectedAction\}/g) || []).length === 15);
+  (rv.match(/q=\{dq\} csv=\{csv\} demoMode=\{demoMode\} demoCanExport=\{demoCanExport\} onProtectedAction=\{onProtectedAction\}/g) || []).length === 15);
 ok('Customer Report and Vehicle Report sections specifically are among those 15 (confirms this fixes exactly what was asked)',
-  /tab === 'customer' && <Card title="Customer Report">/.test(inv) && /tab === 'vehicle' && <Card title="Vehicle Report">/.test(inv));
-ok('lib/pdfTheme.js exportReportPDF is imported into InventoryDashboard.js',
-  /import \{ exportReportPDF \} from '\.\.\/lib\/pdfTheme';/.test(inv));
+  /tab === 'customer' && <Card title="Customer Report">/.test(rv) && /tab === 'vehicle' && <Card title="Vehicle Report">/.test(rv));
+ok('lib/pdfTheme.js exportReportPDF is imported into the Reports view',
+  /import \{ exportReportPDF \} from '\.\.\/\.\.\/\.\.\/lib\/pdfTheme';/.test(rv));
 
 // --- Part 3: InventoryReports.jsx (Valuation/Dead Stock/Low-Out/Profit) ---
 // A later fix (E2E workflow QA) changed this from `active.csv` to `active.rows`: `csv`

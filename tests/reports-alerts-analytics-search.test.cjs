@@ -36,13 +36,16 @@ const fs = require('fs'), path = require('path');
 let PASS = 0, FAIL = 0;
 const ok = (n, c, d = '') => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}${d ? `\n      → ${d}` : ''}`); } };
 const src = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+// Refactor Phase 8 — ReportTable + ReportsView moved verbatim to this file (AnalyticsView
+// and AlertsView are unaffected: Analytics stays in the container, Alerts moved in Phase 3).
+const rv = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/ReportsView.jsx'), 'utf8');
 
 console.log('\nReportTable / AlertsView / Analytics — search fixes\n');
 
 // --- 1. ReportTable ---
-const rtStart = src.indexOf('function ReportTable({');
+const rtStart = rv.indexOf('function ReportTable({');
 ok('ReportTable call site found', rtStart !== -1);
-const rtBlock = src.slice(rtStart, rtStart + 1600);
+const rtBlock = rv.slice(rtStart, rtStart + 1600);
 ok('ReportTable ranks rows: an exact cell match (score 2) outranks a mere substring match (score 1)',
   /if \(c === ql\) \{ score = 2; break; \}/.test(rtBlock) && /if \(score < 1 && c\.includes\(ql\)\) score = 1;/.test(rtBlock));
 ok('ReportTable no longer uses the flat, unranked r.join(\' \').includes(ql) filter',
@@ -79,12 +82,12 @@ ok('ReportTable still returns rows untouched with no query (no ranking overhead 
 }
 
 // --- Reports search is debounced (was the one raw, undebounced box in this file besides Alerts) ---
-const rvStart = src.indexOf('function ReportsView(props) {');
-const rvBlock = src.slice(rvStart, rvStart + 1300);
+const rvStart = rv.indexOf('function ReportsView(props) {');
+const rvBlock = rv.slice(rvStart, rvStart + 1300);
 ok('ReportsView debounces its search input via the shared useDeferredSearch hook',
   /const \[dq\] = useDeferredSearch\(q\);/.test(rvBlock));
 ok('every <ReportTable> call site now receives the debounced dq, not the raw q',
-  (src.match(/<ReportTable q=\{dq\}/g) || []).length >= 10 && !/<ReportTable q=\{q\}/.test(src));
+  (rv.match(/<ReportTable q=\{dq\}/g) || []).length >= 10 && !/<ReportTable q=\{q\}/.test(rv));
 
 // --- 2. AlertsView ---
 // Refactor Phase 3 — AlertsView moved verbatim from InventoryDashboard.js to

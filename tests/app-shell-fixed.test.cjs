@@ -24,6 +24,8 @@ const hero = read('components/common/DetailHero.jsx');
 const veh = read('components/vehicles/VehiclesModule.jsx');
 const cust = read('components/customers/CustomersModule.jsx');
 const dash = read('components/InventoryDashboard.js');
+// Refactor Phase 8 — Sidebar extracted verbatim to its own module.
+const side = read('components/inventory/Sidebar.jsx');
 const css = read('styles/globals.css');
 const appScroll = read('lib/appScroll.js');
 const modal = read('components/Modal.js');
@@ -83,7 +85,7 @@ ok('banner/header no longer rely on sticky or fixed positioning',
 // overscroll containment, still holds — just via a simpler className now.
 ok('<main> is the single scroll container and contains its own overscroll',
   /<main id=\{APP_SCROLL_ID\} style=\{\{ overscrollBehavior: 'contain' \}\} className="relative z-10 flex-1 min-h-0 overflow-y-auto">/.test(dash));
-ok('desktop sidebar stays fixed full-height', /fixed left-0 top-0 bottom-0 z-50/.test(dash));
+ok('desktop sidebar stays fixed full-height', /fixed left-0 top-0 bottom-0 z-50/.test(side));
 
 // ── 3. Everything that scrolled the window now scrolls the container ─────────
 ok('appScroll helper exists', /export const APP_SCROLL_ID = 'app-scroll'/.test(appScroll) && /export function appScrollTo/.test(appScroll));

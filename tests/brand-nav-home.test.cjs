@@ -16,7 +16,8 @@ const fs = require('fs');
 const path = require('path');
 const React = require('react');
 const { render, fireEvent, cleanup } = require('@testing-library/react');
-const { Sidebar } = require('../components/InventoryDashboard.js');
+// Refactor Phase 8 — Sidebar extracted verbatim to its own module.
+const { Sidebar } = require('../components/inventory/Sidebar.jsx');
 
 let PASS = 0, FAIL = 0;
 const ok = (name, cond, detail = '') => {
@@ -24,23 +25,26 @@ const ok = (name, cond, detail = '') => {
   else { FAIL++; console.log(`  ✗ ${name}${detail ? `\n      → ${detail}` : ''}`); }
 };
 const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+// Refactor Phase 8 — Sidebar (with the brand button + go() helper) moved verbatim
+// to its own module; the container keeps activeTab state + hash routing.
+const side = fs.readFileSync(path.resolve(__dirname, '../components/inventory/Sidebar.jsx'), 'utf8');
 
 console.log('\nbrand → home navigation\n');
 
 // ── SOURCE ────────────────────────────────────────────────────────────────
 ok('the brand block is a <button>, not the old inert <div>',
-  /<button type="button" onClick=\{\(\) => go\('overview'\)\}/.test(dash) &&
-  !/<div className="flex items-center gap-2 px-4 py-4 border-b border-white\/8">\s*<span[^>]*>\s*<img src="\/icons\/icon-512/.test(dash));
+  /<button type="button" onClick=\{\(\) => go\('overview'\)\}/.test(side) &&
+  !/<div className="flex items-center gap-2 px-4 py-4 border-b border-white\/8">\s*<span[^>]*>\s*<img src="\/icons\/icon-512/.test(side));
 ok('brand navigates to the app home tab (overview), not an arbitrary module',
-  /onClick=\{\(\) => go\('overview'\)\}/.test(dash));
+  /onClick=\{\(\) => go\('overview'\)\}/.test(side));
 ok('go() follows existing routing — setActiveTab + close mobile drawer, no reload',
-  /const go = \(id\) => \{ setActiveTab\(id\); setMobileOpen\(false\); \};/.test(dash));
+  /const go = \(id\) => \{ setActiveTab\(id\); setMobileOpen\(false\); \};/.test(side));
 ok('brand keeps an accessible name',
-  /aria-label="Go to Dashboard home"/.test(dash));
+  /aria-label="Go to Dashboard home"/.test(side));
 ok('brand exposes focus-visible styling for keyboard users',
-  /aria-label="Go to Dashboard home"[\s\S]{0,400}focus-visible:ring/.test(dash));
+  /aria-label="Go to Dashboard home"[\s\S]{0,400}focus-visible:ring/.test(side));
 ok('brand marks itself current when already on the dashboard',
-  /aria-current=\{activeTab === 'overview' \? 'page' : undefined\}/.test(dash));
+  /aria-current=\{activeTab === 'overview' \? 'page' : undefined\}/.test(side));
 ok('overview is the app default/home tab',
   /useState\('overview'\)/.test(dash) && /#overview/.test(dash));
 

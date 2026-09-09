@@ -70,7 +70,7 @@ ok('<main> has no mx-auto/max-w/padding classes — it is purely the scroll cont
 ok('the single SHELL_WIDTH_CLS constant now lives in constants/ui.js (reachable by Portal-rendered views too, not just <main>)',
   /export const SHELL_WIDTH_CLS = 'max-w-none 2xl:max-w-\[1800px\]';/.test(uiConstants));
 ok('InventoryDashboard.js imports SHELL_WIDTH_CLS rather than re-declaring it locally',
-  /import \{ SEMANTIC, SHELL_WIDTH_CLS, statusColor \} from '\.\.\/constants\/ui';/.test(inv) &&
+  /import \{[^}]*\bSHELL_WIDTH_CLS\b[^}]*\} from '\.\.\/constants\/ui';/.test(inv) &&
   !/const SHELL_WIDTH_CLS = /.test(inv));
 ok('a dedicated inner wrapper div owns width-capping/centering via that constant, unconditionally (no activeTab ternary)',
   /<div className=\{`mx-auto w-full \$\{SHELL_WIDTH_CLS\} px-4 sm:px-6 py-6 pb-20 md:pb-6`\}>/.test(inv));
