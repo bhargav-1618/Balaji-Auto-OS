@@ -19,6 +19,12 @@ require('./setup.cjs');
 const {
   nonNegInt, nonNegNum, sanitizeStock, classifyStockLevel,
   cardReservedQtys, reserveDelta, computeStockAdjustment, buildRestockRecord,
+  // Refactor Phase 9 — shared inventory-analytics helpers moved verbatim from
+  // InventoryDashboard.js. No existing assertion proved their behaviour (the only
+  // mention was a call-site regex in AnalyticsView), so pin it here.
+  lockedCapital, expectedProfit, ageDays, isDeadStock, deadStockReason,
+  asList, flattenVehicles, compatStr, categoriesStr, partIsUniversal, brandsOf,
+  getDeadStockDays, getReorderMultiplier,
 } = require('../services/inventoryService.js');
 
 let PASS = 0, FAIL = 0;
@@ -86,6 +92,59 @@ console.log('\nbuildRestockRecord — shared restock-entry shape\n');
   const c = buildRestockRecord({ id: 'r3', qty: '5', unitCost: '10' });
   ok('numeric coercion for string qty/unitCost', c.total === 50 && c.qty === 5 && c.unitCost === 10);
 }
+
+// ── Refactor Phase 9 — shared inventory-analytics helpers ──────────────────
+console.log('\nlockedCapital / expectedProfit — capital math with || 0 fallbacks\n');
+ok('lockedCapital = purchasePrice * stock', lockedCapital({ purchasePrice: 120, stock: 4 }) === 480);
+ok('lockedCapital missing fields → 0 (never NaN)', lockedCapital({}) === 0 && lockedCapital({ stock: 5 }) === 0);
+ok('expectedProfit = (sell - cost) * stock', expectedProfit({ sellingPrice: 200, purchasePrice: 120, stock: 3 }) === 240);
+ok('expectedProfit missing fields → 0', expectedProfit({}) === 0);
+ok('expectedProfit can be negative (below-cost pricing)', expectedProfit({ sellingPrice: 80, purchasePrice: 120, stock: 2 }) === -80);
+
+console.log('\nageDays — Timestamp/ISO → whole days, lastRestockedAt preferred, null when unknown\n');
+const daysAgoIso = (n) => new Date(Date.now() - n * 86400000).toISOString();
+ok('no date fields → null', ageDays({}) === null && ageDays(null) === null);
+ok('createdAt 10 days ago → 10', ageDays({ createdAt: daysAgoIso(10) }) === 10);
+ok('lastRestockedAt wins over createdAt', ageDays({ lastRestockedAt: daysAgoIso(2), createdAt: daysAgoIso(365) }) === 2);
+ok('a future date floors at 0 (never negative)', ageDays({ createdAt: daysAgoIso(-5) }) === 0);
+
+console.log('\nisDeadStock / deadStockReason / getDeadStockDays\n');
+ok('getDeadStockDays default (no settings blob) = 90', getDeadStockDays() === 90);
+ok('sold at least once → NOT dead', isDeadStock({ salesCount: 1, stock: 3, createdAt: daysAgoIso(400) }) === false);
+ok('zero stock → NOT dead (nothing sitting)', isDeadStock({ salesCount: 0, stock: 0, createdAt: daysAgoIso(400) }) === false);
+ok('unsold, in stock, older than the threshold → dead', isDeadStock({ salesCount: 0, stock: 5, createdAt: daysAgoIso(120) }) === true);
+ok('unsold, in stock, but fresh (< threshold) → NOT dead yet', isDeadStock({ salesCount: 0, stock: 5, createdAt: daysAgoIso(10) }) === false);
+ok('unsold with no date → NOT dead (age unknown)', isDeadStock({ salesCount: 0, stock: 5 }) === false);
+ok('deadStockReason names the age + threshold', /unsold for 120 days \(≥ 90\)/.test(deadStockReason({ createdAt: daysAgoIso(120) })));
+ok('deadStockReason with no date → generic', deadStockReason({}) === 'No sales recorded.');
+
+console.log('\nasList — array passthrough / comma-string split / falsy → []\n');
+ok('array is returned as-is', asList(['a', 'b']).join(',') === 'a,b');
+ok('comma string → trimmed, blank-filtered list', JSON.stringify(asList('a, b ,, c')) === JSON.stringify(['a', 'b', 'c']));
+ok('falsy → []', JSON.stringify(asList('')) === '[]' && JSON.stringify(asList(null)) === '[]' && JSON.stringify(asList(undefined)) === '[]');
+
+console.log('\nflattenVehicles / compatStr / categoriesStr\n');
+ok('grouped [{brand,models}] → flat model list', JSON.stringify(flattenVehicles([{ brand: 'Maruti', models: ['Swift', 'Dzire'] }, { brand: 'Tata', models: ['Nexon'] }])) === JSON.stringify(['Swift', 'Dzire', 'Nexon']));
+ok('legacy flat array is passed through', JSON.stringify(flattenVehicles(['Swift', 'i20'])) === JSON.stringify(['Swift', 'i20']));
+ok('legacy comma string is split', JSON.stringify(flattenVehicles('Swift, i20')) === JSON.stringify(['Swift', 'i20']));
+ok('grouped with missing models array → []', JSON.stringify(flattenVehicles([{ brand: 'X' }])) === '[]');
+ok('compatStr joins the flat models with spaces', compatStr({ compatibleCars: [{ brand: 'M', models: ['Swift', 'Dzire'] }] }) === 'Swift Dzire');
+ok('categoriesStr joins the categories with spaces', categoriesStr({ categories: ['Brake Pad', 'Filter'] }) === 'Brake Pad Filter');
+
+console.log('\npartIsUniversal — normalized text contains "universal"\n');
+ok('vehicle field says Universal', partIsUniversal({ vehicle: 'Universal / All Vehicles' }) === true);
+ok('a compatible model says universal', partIsUniversal({ compatibleCars: ['Universal'] }) === true);
+ok('a specific-fitment part is NOT universal', partIsUniversal({ vehicle: 'Maruti Swift', compatibleCars: [{ brand: 'Maruti', models: ['Swift'] }] }) === false);
+ok('empty part is NOT universal', partIsUniversal({}) === false);
+
+console.log('\nbrandsOf — grouped brands / legacy vehicle string / empty\n');
+ok('grouped → the brand names', JSON.stringify(brandsOf({ compatibleCars: [{ brand: 'Maruti', models: ['Swift'] }, { brand: 'Tata', models: ['Nexon'] }] })) === JSON.stringify(['Maruti', 'Tata']));
+ok('grouped with a blank brand is filtered out', JSON.stringify(brandsOf({ compatibleCars: [{ brand: '', models: ['x'] }, { brand: 'Kia', models: ['Sonet'] }] })) === JSON.stringify(['Kia']));
+ok('no compatibleCars → the single legacy vehicle string', JSON.stringify(brandsOf({ vehicle: 'Hyundai' })) === JSON.stringify(['Hyundai']));
+ok('nothing → []', JSON.stringify(brandsOf({})) === '[]');
+
+console.log('\ngetReorderMultiplier — default when no settings blob\n');
+ok('default = 2', getReorderMultiplier() === 2);
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

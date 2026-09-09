@@ -67,6 +67,9 @@ import {
   nonNegInt, nonNegNum, sanitizeStock,
   cardReservedQtys, reserveDelta, computeStockAdjustment, buildRestockRecord,
   getFastMoverMin, isFastMover, pricesDiffer,
+  lockedCapital, expectedProfit, ageDays, isDeadStock, deadStockReason,
+  asList, flattenVehicles, compatStr, categoriesStr, partIsUniversal, brandsOf,
+  getReorderMultiplier,
 } from '../services/inventoryService';
 import { nextJobCardNumber } from '../services/jobCardService';
 import { withCustomerDefaults, countCustomerReminders } from '../services/customerService';
@@ -404,54 +407,10 @@ const APP_VERSION = '1.0.0';
 // A part qualifies as a Fast Mover only after this many units sold — see
 // getFastMoverMin/isFastMover in services/inventoryService.js (shared with
 // InventoryCategories.jsx so the category "Fast" count agrees with this badge).
-const DEAD_STOCK_DAYS = 90; // default; owner can override in Settings
-const REORDER_MULTIPLIER = 2; // default reorder top-up = minStock × this − stock
-// Settings QA fix: these used to read standalone legacy keys
-// (maruti_dead_stock_days/maruti_reorder_mult) that nothing has written to since
-// Settings moved to the single maruti_settings[_demo] JSON blob (biz.deadDays/
-// biz.reorderMult) — so Settings -> Inventory's Dead Stock/Reorder Top-up fields
-// saved correctly but never actually changed Dead Stock badges or suggested reorder
-// quantities. These are module-scope pure helpers (no React props to carry
-// demoMode down through every caller), so demo/production is read the same
-// lightweight way AuthContext bootstraps it initially — sessionStorage's
-// 'maruti_demo' flag — rather than threading a new parameter through every call
-// site down multiple layers of other pure helpers.
-function currentSettingsKey() { try { return sessionStorage.getItem('maruti_demo') === '1' ? 'maruti_settings_demo' : 'maruti_settings'; } catch { return 'maruti_settings'; } }
-function currentBizSettings() { try { return JSON.parse(localStorage.getItem(currentSettingsKey()) || '{}'); } catch { return {}; } }
-function getDeadStockDays() { const v = parseInt(currentBizSettings().deadDays, 10); return Number.isFinite(v) && v > 0 ? v : DEAD_STOCK_DAYS; }
-function getReorderMultiplier() { const v = parseFloat(currentBizSettings().reorderMult); return Number.isFinite(v) && v >= 1 ? v : REORDER_MULTIPLIER; }
-const lockedCapital = (p) => (p.purchasePrice || 0) * (p.stock || 0);
-const expectedProfit = (p) => ((p.sellingPrice || 0) - (p.purchasePrice || 0)) * (p.stock || 0);
-// Issue 5: dead stock is about STALENESS, not quantity. A never-sold item that
-// has been sitting (since last restock / creation) past the threshold. A fresh
-// never-sold item is NOT dead stock yet.
-const isDeadStock = (p) => {
-  if ((p.salesCount || 0) !== 0 || (p.stock || 0) <= 0) return false;
-  const age = ageDays(p);
-  return age != null && age >= getDeadStockDays();
-};
-const deadStockReason = (p) => {
-  const age = ageDays(p);
-  return age != null ? `No sales recorded · unsold for ${age} days (≥ ${getDeadStockDays()}).` : 'No sales recorded.';
-};
-// Firestore Timestamp → JS Date → age in days (uses createdAt as the stock-in date).
-const ageDays = (p) => { const d = tsToDate(p?.lastRestockedAt) || tsToDate(p?.createdAt); return d ? Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000)) : null; };
-// Array-safe readers — compatibleCars/categories may be arrays (tree-select) or
-// legacy comma strings.
-const asList = (v) => (Array.isArray(v) ? v : v ? String(v).split(',').map((x) => x.trim()).filter(Boolean) : []);
-// #3: compatibleCars is stored grouped as [{ brand, models:[...] }]. These read
-// it back into a flat model list (also tolerating legacy flat arrays/strings).
-const flattenVehicles = (v) => {
-  if (Array.isArray(v) && v.length && typeof v[0] === 'object') {
-    return v.flatMap((g) => (Array.isArray(g?.models) ? g.models : []));
-  }
-  return asList(v);
-};
-const compatModels = (p) => flattenVehicles(p?.compatibleCars);
-const compatStr = (p) => compatModels(p).join(' ');
-const categoriesStr = (p) => asList(p.categories).join(' ');
-const partIsUniversal = (p) =>
-  normalizeText([p.vehicle, compatStr(p)].join(' ')).includes('universal');
+// REFACTOR PHASE 9 — DEAD_STOCK_DAYS/REORDER_MULTIPLIER, the settings readers,
+// lockedCapital, expectedProfit, ageDays, isDeadStock, deadStockReason, asList,
+// flattenVehicles, compat*, categoriesStr, partIsUniversal (and brandsOf, below)
+// moved verbatim to services/inventoryService.js — imported at the top of this file.
 
 // #5 + #6: built-in Indian-market taxonomies for the Tree-Selects.
 const VEHICLE_TREE = [
@@ -3410,12 +3369,7 @@ const AGING_BUCKETS = [
   { key: '180+ Days', min: 181, max: Infinity },
 ];
 
-const brandsOf = (p) => {
-  if (Array.isArray(p.compatibleCars) && typeof p.compatibleCars[0] === 'object') {
-    return p.compatibleCars.map((g) => g.brand).filter(Boolean);
-  }
-  return p.vehicle ? [p.vehicle] : [];
-};
+// brandsOf moved to services/inventoryService.js (Refactor Phase 9).
 
 // Issues 6/7/8: audit log with search, filter, and Load-More pagination so the
 // panel stays fast as entries grow. (The live subscription caps the loaded set;

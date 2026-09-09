@@ -5,6 +5,7 @@
 import { doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { formatINR, tsToDate, asArray } from '../lib/format';
+import { normalizeText } from '../lib/search';
 
 // ---------------------------------------------------------------------------
 // H-5A — pure inventory business logic extracted from InventoryDashboard.js.
@@ -135,6 +136,79 @@ export function computeStockAdjustment({ currentStock, qty, direction = 'reduce'
   const signedQty = isCorrection ? delta : -delta;
   return { before, after, delta, signedQty, isCorrection };
 }
+
+// ---------------------------------------------------------------------------
+// REFACTOR PHASE 9 — shared inventory-analytics helpers, moved VERBATIM out of
+// InventoryDashboard.js so the container, MobilePartCard and (later) AnalyticsView
+// all resolve ONE definition of each. Pure value-from-input functions; the only
+// external reads are the same Settings blob `getFastMoverMin` above already reads
+// (via the `maruti_demo` sessionStorage bootstrap flag — no React prop to thread
+// demoMode through a module-scope helper), documented on `currentSettingsKey`.
+// ---------------------------------------------------------------------------
+
+const DEAD_STOCK_DAYS = 90;      // default; owner can override in Settings
+const REORDER_MULTIPLIER = 2;    // default reorder top-up = minStock × this − stock
+
+// Settings QA fix: these used to read standalone legacy keys
+// (maruti_dead_stock_days/maruti_reorder_mult) that nothing has written to since
+// Settings moved to the single maruti_settings[_demo] JSON blob (biz.deadDays/
+// biz.reorderMult) — so Settings -> Inventory's Dead Stock/Reorder Top-up fields
+// saved correctly but never actually changed Dead Stock badges or suggested reorder
+// quantities. These are module-scope pure helpers (no React props to carry
+// demoMode down through every caller), so demo/production is read the same
+// lightweight way AuthContext bootstraps it initially — sessionStorage's
+// 'maruti_demo' flag — rather than threading a new parameter through every call
+// site down multiple layers of other pure helpers. (Same rationale, and the same
+// DOM-read exception, as getFastMoverMin above.)
+function currentSettingsKey() { try { return sessionStorage.getItem('maruti_demo') === '1' ? 'maruti_settings_demo' : 'maruti_settings'; } catch { return 'maruti_settings'; } }
+function currentBizSettings() { try { return JSON.parse(localStorage.getItem(currentSettingsKey()) || '{}'); } catch { return {}; } }
+export function getDeadStockDays() { const v = parseInt(currentBizSettings().deadDays, 10); return Number.isFinite(v) && v > 0 ? v : DEAD_STOCK_DAYS; }
+export function getReorderMultiplier() { const v = parseFloat(currentBizSettings().reorderMult); return Number.isFinite(v) && v >= 1 ? v : REORDER_MULTIPLIER; }
+
+export const lockedCapital = (p) => (p.purchasePrice || 0) * (p.stock || 0);
+export const expectedProfit = (p) => ((p.sellingPrice || 0) - (p.purchasePrice || 0)) * (p.stock || 0);
+
+// Firestore Timestamp → JS Date → age in days (uses lastRestockedAt, else createdAt).
+export const ageDays = (p) => { const d = tsToDate(p?.lastRestockedAt) || tsToDate(p?.createdAt); return d ? Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000)) : null; };
+
+// Issue 5: dead stock is about STALENESS, not quantity. A never-sold item that
+// has been sitting (since last restock / creation) past the threshold. A fresh
+// never-sold item is NOT dead stock yet.
+export const isDeadStock = (p) => {
+  if ((p.salesCount || 0) !== 0 || (p.stock || 0) <= 0) return false;
+  const age = ageDays(p);
+  return age != null && age >= getDeadStockDays();
+};
+export const deadStockReason = (p) => {
+  const age = ageDays(p);
+  return age != null ? `No sales recorded · unsold for ${age} days (≥ ${getDeadStockDays()}).` : 'No sales recorded.';
+};
+
+// Array-safe readers — compatibleCars/categories may be arrays (tree-select) or
+// legacy comma strings.
+export const asList = (v) => (Array.isArray(v) ? v : v ? String(v).split(',').map((x) => x.trim()).filter(Boolean) : []);
+// #3: compatibleCars is stored grouped as [{ brand, models:[...] }]. These read
+// it back into a flat model list (also tolerating legacy flat arrays/strings).
+export const flattenVehicles = (v) => {
+  if (Array.isArray(v) && v.length && typeof v[0] === 'object') {
+    return v.flatMap((g) => (Array.isArray(g?.models) ? g.models : []));
+  }
+  return asList(v);
+};
+export const compatModels = (p) => flattenVehicles(p?.compatibleCars);
+export const compatStr = (p) => compatModels(p).join(' ');
+export const categoriesStr = (p) => asList(p.categories).join(' ');
+export const partIsUniversal = (p) =>
+  normalizeText([p.vehicle, compatStr(p)].join(' ')).includes('universal');
+
+// The vehicle brands a part fits — the grouped [{brand,models}] shape's brands,
+// else the single legacy `vehicle` string.
+export const brandsOf = (p) => {
+  if (Array.isArray(p.compatibleCars) && typeof p.compatibleCars[0] === 'object') {
+    return p.compatibleCars.map((g) => g.brand).filter(Boolean);
+  }
+  return p.vehicle ? [p.vehicle] : [];
+};
 
 // ---------------------------------------------------------------------------
 // H-5D — workflow orchestration extracted from InventoryDashboard.js.
