@@ -61,6 +61,7 @@ import { getGarageSeed } from '../lib/demoGarageSeed';
 import { computeRange, computeInventoryHealth, computeWorkshopScore, computeAlerts, computeInsights, computeAchievements, computeWorkshopProgress } from '../services/analyticsService';
 import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, toIndianPhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, isSameDay, trendPct, asArray, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
 import { buildPO, poCreateDoc, poAdvanceDoc, poReceiveDoc, poCancelDoc, nextPOStatus } from '../services/purchaseOrderService';
+import { toNum } from '../services/billingService';
 import {
   catMatches, remapCatFields, renameCategoryDocs, deleteCategoryDocs,
   nonNegInt, nonNegNum, sanitizeStock,
@@ -5394,10 +5395,11 @@ const txn = (step, msg, data) => {
   else console.log(`%c[TXN ${step}] ${msg}`, style);
 };
 
-const toNum = (v) => {
-  const n = typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(/[^0-9.\-]/g, ''));
-  return Number.isFinite(n) ? n : 0;
-};
+// `toNum` — the ledger-maths numeric coercion — is imported from
+// services/billingService (Refactor Phase 4). It was a byte-for-byte copy of that
+// canonical helper; consolidating means invTotals / invoiceRevenueLines /
+// planInvoiceRealization here and billingService.invoiceTotals (the oracle-tested
+// version) now coerce numbers through exactly one implementation.
 
 function invTotals(iv) {
   // COMPUTE FROM THE LINES. Never trust a stored total.
