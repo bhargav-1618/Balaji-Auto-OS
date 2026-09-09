@@ -81,9 +81,10 @@ ok('Customers: Export + New Customer are grouped in one inner flex div (wrap tog
 const billingSuppliers = ['components/billing/BillingModule.jsx', 'components/inventory/SupplierDirectory.jsx'];
 ok('Billing/Suppliers filters remain short native <select> (no long/data-driven filter list there needs the MiniSelect fix)',
   billingSuppliers.every((f) => !/<MiniSelect[^>]*labels=\{\{ All:/.test(R(f))));
+// Refactor Phase 10 — AnalyticsView moved verbatim to ./inventory/views/AnalyticsView.jsx.
 ok('Inventory Analytics Category/Brand filters (data-driven, can run long) use MiniSelect with the All-sentinel — not a native <select>',
-  /<MiniSelect[^>]*labels=\{\{ All: 'All Categories' \}\}/.test(R('components/InventoryDashboard.js')) &&
-  /<MiniSelect[^>]*labels=\{\{ All: 'All Brands' \}\}/.test(R('components/InventoryDashboard.js')));
+  /<MiniSelect[^>]*labels=\{\{ All: 'All Categories' \}\}/.test(R('components/inventory/views/AnalyticsView.jsx')) &&
+  /<MiniSelect[^>]*labels=\{\{ All: 'All Brands' \}\}/.test(R('components/inventory/views/AnalyticsView.jsx')));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

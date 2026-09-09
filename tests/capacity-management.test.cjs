@@ -219,9 +219,10 @@ ok('CapacityCleanupModal filters its offered methods through allowedCleanupMetho
   /const allowed = new Set\(allowedCleanupMethods\(moduleKey\)\);/.test(modal));
 ok('auditLog has an EXPORT_COLUMNS entry reusing the same writeSheet path as every other module',
   /auditLog: \{[\s\S]{0,100}head: \['Action', 'Entity', 'Entity ID', 'Performed By', 'Details', 'Date'\],/.test(svc));
+// Refactor Phase 10 — AuditLogPanel moved verbatim with AnalyticsView.
 ok('Analytics/Audit Log: CapacityBanner wired into AuditLogPanel, sharing the same refresh/actorEmail plumbing as every other tab',
-  /function AuditLogPanel\(\{ auditLog, demoMode, actorEmail, capacityRefreshTick = 0, onCleanupComplete \}\)/.test(inv) &&
-  /<CapacityBanner\s*\n\s*moduleKey="auditLog"/.test(inv));
+  /function AuditLogPanel\(\{ auditLog, demoMode, actorEmail, capacityRefreshTick = 0, onCleanupComplete \}\)/.test(R('components/inventory/views/AnalyticsView.jsx')) &&
+  /<CapacityBanner\s*\n\s*moduleKey="auditLog"/.test(R('components/inventory/views/AnalyticsView.jsx')));
 ok('auditLog cleanup refresh is wired through the SAME refreshCapacityCollection/CAPACITY_STATE_SETTERS map as every other module (no bespoke audit-refresh path)',
   /auditLog: setAuditLog,/.test(inv));
 ok('the Analytics tab (and therefore Audit Log capacity cleanup) stays admin-gated at the tab level — no new unauthenticated destructive surface introduced',

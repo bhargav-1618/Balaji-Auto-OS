@@ -328,8 +328,9 @@ ok('RevenueTrend formula WOULD produce "NaN" at 1 point / be empty at 0 (latent,
 }
 
 // -- 6c. Monthly Profit Trend (Analytics) — empty guard + maxBar floor
+// Refactor Phase 10 — AnalyticsView moved verbatim to ./inventory/views/AnalyticsView.jsx.
 {
-  const inv = read('../components/InventoryDashboard.js');
+  const inv = read('../components/inventory/views/AnalyticsView.jsx');
   ok('Analytics Monthly Profit Trend has an explicit `series.length === 0` empty state',
     /trend\.series\.length === 0 \? \(/.test(inv));
   ok('Analytics trend bar heights divide by `maxBar = Math.max(1, ...)` (never 0)',

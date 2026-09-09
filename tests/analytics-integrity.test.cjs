@@ -47,6 +47,8 @@ const ok = (name, cond, detail = '') => {
 const near = (a, b, eps = 0.011) => Math.abs((a || 0) - (b || 0)) <= eps;
 const read = (p) => fs.readFileSync(path.resolve(__dirname, p), 'utf8');
 const dash = read('../components/InventoryDashboard.js');
+// Refactor Phase 10 — AnalyticsView (trend / ledgerByPart / pMargin) moved verbatim here.
+const an = read('../components/inventory/views/AnalyticsView.jsx');
 
 // =====================================================================
 // 0 — INDEPENDENT ORACLE  (never calls a production analytics helper)
@@ -135,11 +137,11 @@ console.log('\n1  Truth table — Revenue / Cost / Gross Profit / Margin agree a
   ok('salesRollups revenue increment == ledger revenue', near(rollup.revenue, 3500));
   ok('salesRollups profit increment == revenue − cost (no rollup drift)', near(rollup.profit, rollup.revenue - rollup.cost));
 
-  // dashboard periodAgg / Reports trend both do: totProfit = Σrev − Σcost ; margin = totProfit/totRev
-  ok('Reports "Monthly Profit Trend" totProfit is defined as totRev − totCost in the shipped code',
-    /const totProfit = totRev - totCost;/.test(dash));
-  ok('Reports trend margin guards divide-by-zero (totRev > 0 ? … : 0)',
-    /const margin = totRev > 0 \? \(totProfit \/ totRev\) \* 100 : 0;/.test(dash));
+  // Analytics "Monthly Profit Trend": totProfit = Σrev − Σcost ; margin = totProfit/totRev
+  ok('"Monthly Profit Trend" totProfit is defined as totRev − totCost in the shipped code',
+    /const totProfit = totRev - totCost;/.test(an));
+  ok('trend margin guards divide-by-zero (totRev > 0 ? … : 0)',
+    /const margin = totRev > 0 \? \(totProfit \/ totRev\) \* 100 : 0;/.test(an));
 }
 
 // =====================================================================
@@ -227,7 +229,7 @@ console.log('\n4  Margin — bounded on every degenerate input\n');
     ok(`margin (${label}) = ${expect}% and is finite`, Number.isFinite(m) && Math.abs(m - expect) < 0.01, `got ${m}`);
   });
   // the shipped code's margin sites all guard `rev > 0`
-  ok('shipped: pMargin guards revenue > 0', /const r = L\(p\)\.revenue; return r > 0 \? \(L\(p\)\.profit \/ r\) \* 100 : 0;/.test(dash));
+  ok('shipped: pMargin guards revenue > 0', /const r = L\(p\)\.revenue; return r > 0 \? \(L\(p\)\.profit \/ r\) \* 100 : 0;/.test(an));
   // Refactor Phase 3 — SalesView moved verbatim to ./inventory/views/LedgerViews.
   ok('shipped: Sales avgMargin guards revenue > 0', /const avgMargin = revM > 0 \? \(proM \/ revM\) \* 100 : 0;/.test(read('../components/inventory/views/LedgerViews.jsx')));
   // negative profit is NEVER clamped to zero
@@ -378,10 +380,11 @@ console.log('\n10  Rollup reconciliation — demo salesRollups vs the demo sales
 console.log('\n11  Dashboard / Sales / Reports consistency — one revenue field, one profit field\n');
 {
   ok('OverviewView periodAgg revenue = s.revenue (?? s.total) and profit = s.profit', /const rev = \(s\) => s\.revenue \?\? s\.total \?\? 0;/.test(dash) && /revenue \+= rev\(s\); pro \+= s\.profit \|\| 0;/.test(dash));
-  ok('Reports ledgerByPart aggregates s.revenue / s.cost / s.profit from the same ledger', /e\.revenue \+= s\.revenue \|\| 0;\s*\n\s*e\.cost \+= s\.cost \|\| 0;/.test(dash));
+  // Refactor Phase 10 — Analytics ledgerByPart / trend moved verbatim to AnalyticsView.jsx.
+  ok('Analytics ledgerByPart aggregates s.revenue / s.cost / s.profit from the same ledger', /e\.revenue \+= s\.revenue \|\| 0;\s*\n\s*e\.cost \+= s\.cost \|\| 0;/.test(an));
   // Refactor Phase 3 — SalesView moved verbatim to ./inventory/views/LedgerViews.
   ok('SalesView cards read s.revenue / s.profit (same fields, same meaning)', (() => { const lv = read('../components/inventory/views/LedgerViews.jsx'); return /const rev = s\.revenue \|\| 0;.*\n?.*proT \+= s\.profit/.test(lv) || /revM \+= rev; proM \+= s\.profit \|\| 0;/.test(lv); })());
-  ok('Reports trend prefers unbounded salesRollups, falls back to the ledger — both carry revenue+cost+profit', /if \(rollups\.length\) \{/.test(dash) && /e\.profit \+= s\.profit \?\? \(s\.revenue \|\| 0\) - \(s\.cost \|\| 0\);/.test(dash));
+  ok('Analytics trend prefers unbounded salesRollups, falls back to the ledger — both carry revenue+cost+profit', /if \(rollups\.length\) \{/.test(an) && /e\.profit \+= s\.profit \?\? \(s\.revenue \|\| 0\) - \(s\.cost \|\| 0\);/.test(an));
 }
 
 // =====================================================================

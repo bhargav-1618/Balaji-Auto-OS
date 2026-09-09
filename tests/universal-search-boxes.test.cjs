@@ -63,8 +63,13 @@ console.log('\nUniversal Search Boxes — cross-app identifier isolation + ranki
 // --- Part 3: InventoryDashboard.js — Receive Stock/Shipment, Stock In/Out, Audit Log ---
 {
   const src = R('components/InventoryDashboard.js');
-  ok('InventoryDashboard imports rankIndexed/useSearchIndex/searchAndRank alongside the existing matchIndexed/normId',
-    /import \{ useDeferredSearch, normId, matchIndexed, rankIndexed, useSearchIndex, searchAndRank \} from '\.\.\/lib\/useSearch';/.test(src));
+  // Refactor Phase 10 — AuditLogPanel (the only matchIndexed consumer) moved verbatim to
+  // ./inventory/views/AnalyticsView.jsx; the dashboard's useSearch import lost matchIndexed.
+  const an = R('components/inventory/views/AnalyticsView.jsx');
+  ok('InventoryDashboard imports rankIndexed/useSearchIndex/searchAndRank alongside normId',
+    /import \{ useDeferredSearch, normId, rankIndexed, useSearchIndex, searchAndRank \} from '\.\.\/lib\/useSearch';/.test(src));
+  ok('AnalyticsView imports matchIndexed for the Audit Log search',
+    /import \{ [^}]*\bmatchIndexed\b[^}]*\} from '\.\.\/\.\.\/\.\.\/lib\/useSearch';/.test(an));
   ok('Receive Stock (QuickPickModal) picker: SKU/OEM/barcode/Part No. are a proper search index, not one flat substring string',
     /const partSearchIndex = useSearchIndex\(inventory, \(p\) => p\.id, \(p\) => \[p\.name\], \(p\) => \[p\.sku, p\.oemNo, p\.barcode, p\.partNo\]\);/.test(src));
   // Refactor Phase 2 — BulkReceiveModal extracted verbatim to ./inventory/modals/StockModals.
@@ -77,9 +82,9 @@ console.log('\nUniversal Search Boxes — cross-app identifier isolation + ranki
   ok('Stock Out (sales + adjustments merge): SKU/invoice no. are now searchable identifiers',
     /ids: \[o\.sku, o\.invoiceNo\],/.test(ledgerViews));
   ok('Audit Log: partId/supplierId/entityId are an exact-then-partial identifier index, isolated from name/user/action/reason free text',
-    /const auditSearchIndex = useSearchIndex\(\s*auditLog,\s*\(e\) => e\.id,\s*\(e\) => \[e\.name, e\.performedByEmail, e\.action, e\.details\?\.reason\],\s*\(e\) => \[e\.partId, e\.supplierId, e\.entityId\],\s*\);/.test(src));
+    /const auditSearchIndex = useSearchIndex\(\s*auditLog,\s*\(e\) => e\.id,\s*\(e\) => \[e\.name, e\.performedByEmail, e\.action, e\.details\?\.reason\],\s*\(e\) => \[e\.partId, e\.supplierId, e\.entityId\],\s*\);/.test(an));
   ok('Audit Log search is now debounced via the shared useDeferredSearch hook',
-    /const \[dq\] = useDeferredSearch\(q\);/.test(src.slice(src.indexOf('function AuditLogPanel'), src.indexOf('function AuditLogPanel') + 1000)));
+    /const \[dq\] = useDeferredSearch\(q\);/.test(an.slice(an.indexOf('function AuditLogPanel'), an.indexOf('function AuditLogPanel') + 1000)));
   ok('Audit Log\'s live subscription cap was corrected from a hardcoded 100 (silently blind to older history) to the already-defined LIMITS.AUDIT_LIVE constant',
     /limit\(LIMITS\.AUDIT_LIVE\)/.test(src) && !/limit\(100\)/.test(src));
   ok('the New PO part dropdown (DarkSelect) now supports an optional per-option `ids` array, ranked via rankIndexed instead of a flat label substring match',

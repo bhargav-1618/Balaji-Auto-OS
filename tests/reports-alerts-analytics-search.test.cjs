@@ -106,18 +106,20 @@ ok('the search input itself stays bound to the raw, uncontrolled-lag q (typing i
   /<input value=\{q\} onChange=\{\(e\) => setQ\(e\.target\.value\)\} placeholder=\{t\('alerts\.searchPlaceholder'/.test(avSrc));
 
 // --- 3. AnalyticsView (Top Profitable Parts / Fast Movers / Dead Stock) ---
-const anStart = src.indexOf('function AnalyticsView({');
-const anBlock = src.slice(anStart, anStart + 6000);
+// Refactor Phase 10 — AnalyticsView moved verbatim to ./inventory/views/AnalyticsView.jsx.
+const an = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/AnalyticsView.jsx'), 'utf8');
+const anStart = an.indexOf('function AnalyticsView({');
+const anBlock = an.slice(anStart, anStart + 6000);
 ok('a shared partMatchesQuery helper checks name AND sku/oemNo/barcode/partNo (was name-only)',
   /const partMatchesQuery = \(p, q\) => !q \|\| safeLower\(p\.name\)\.includes\(q\)/.test(anBlock) &&
   /\(p\.sku && safeLower\(p\.sku\)\.includes\(q\)\)/.test(anBlock));
-ok('Top Profitable Parts uses the shared helper', /parts\s*\n\s*\.filter\(\(p\) => pUnits\(p\) > 0 && partMatchesQuery\(p, q\)\)/.test(src));
-ok('Fast Movers uses the shared helper', /parts\.filter\(\(p\) => pUnits\(p\) > 0 && partMatchesQuery\(p, q\)\)\.sort\(\(a, b\) => pUnits\(b\) - pUnits\(a\)\)/.test(src));
-ok('Dead Stock uses the shared helper', /isDeadStock\(p\) && partMatchesQuery\(p, q\) && \(ageDays\(p\) == null \|\| ageDays\(p\) >= dsAge\)/.test(src));
+ok('Top Profitable Parts uses the shared helper', /parts\s*\n\s*\.filter\(\(p\) => pUnits\(p\) > 0 && partMatchesQuery\(p, q\)\)/.test(an));
+ok('Fast Movers uses the shared helper', /parts\.filter\(\(p\) => pUnits\(p\) > 0 && partMatchesQuery\(p, q\)\)\.sort\(\(a, b\) => pUnits\(b\) - pUnits\(a\)\)/.test(an));
+ok('Dead Stock uses the shared helper', /isDeadStock\(p\) && partMatchesQuery\(p, q\) && \(ageDays\(p\) == null \|\| ageDays\(p\) >= dsAge\)/.test(an));
 ok('no leftover name-only filter remains in any of the three widgets',
-  !/safeLower\(p\.name\)\.includes\(q\)\)\)/.test(src) || (src.match(/safeLower\(p\.name\)\.includes\(q\)/g) || []).length === 1); // the one remaining occurrence is inside partMatchesQuery's own OR-chain
+  !/safeLower\(p\.name\)\.includes\(q\)\)\)/.test(an) || (an.match(/safeLower\(p\.name\)\.includes\(q\)/g) || []).length === 1); // the one remaining occurrence is inside partMatchesQuery's own OR-chain
 ok('these three widgets deliberately keep their metric-based sort (profit/units/locked capital) — search only filters, does not re-rank by relevance',
-  /\.sort\(\(a, b\) => \(ppSort === 'margin' \? pMargin\(b\) - pMargin\(a\) : ppSort === 'revenue' \? pRev\(b\) - pRev\(a\) : pProfit\(b\) - pProfit\(a\)\)\)/.test(src));
+  /\.sort\(\(a, b\) => \(ppSort === 'margin' \? pMargin\(b\) - pMargin\(a\) : ppSort === 'revenue' \? pRev\(b\) - pRev\(a\) : pProfit\(b\) - pProfit\(a\)\)\)/.test(an));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);
