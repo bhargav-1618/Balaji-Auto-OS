@@ -49,7 +49,9 @@ ok('createPortal targets document.body',
 ok('the modal keeps its own backdrop, centering, and close-on-backdrop-click behavior (portaling only changes WHERE it mounts, not its own markup/behavior)',
   /style=\{\{ background: 'rgba\(0,0,0,0\.85\)', backdropFilter: 'blur\(6px\)' \}\} onClick=\{onClose\}/.test(block));
 ok('LedgerPage is confirmed shared by Sales/Services/Stock In/Stock Out (one fix, four modules)',
-  (dashSrc.match(/<LedgerPage/g) || []).length === 4);
+  // Refactor Phase 3 — the four <LedgerPage> consumer views (SalesView/ServicesView/
+  // StockInView/StockOutView) moved verbatim to ./inventory/views/LedgerViews.
+  (fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/LedgerViews.jsx'), 'utf8').match(/<LedgerPage/g) || []).length === 4);
 ok('LedgerDetailDrawer is confirmed shared by the Inventory Stock tab + per-part Movement History too (one portal fix, six consumers total)',
   // Refactor Phase 2 — the per-part Movement History (ProductLedgerModal) moved verbatim
   // to ./inventory/modals/UtilityModals; it still renders <LedgerDetailDrawer>.

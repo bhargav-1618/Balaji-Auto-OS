@@ -86,8 +86,8 @@ ok('resetDemoScope also clears demo read/archived alert-tracking state for the a
 ok('cleanup uses pushAudit (the dual-mode demo/production helper), never writeAudit (which is hardcoded to write straight to production Firestore with no demo branch at all)',
   /pushAudit\(\{ action: 'capacity_delete', entity: 'Alerts',/.test(inv));
 ok('AlertsView wires the banner through with canManage tied to the SAME canDestroy permission already used for the archive-alert action (no new, weaker permission surface introduced)',
-  /capacityStatus, capacityGetEntries, capacityOnConfirm, onCapacityCleanup \}\) \{/.test(inv) &&
-  /canManage=\{canDestroy\}/.test(inv));
+  // Refactor Phase 3 — AlertsView moved verbatim to ./inventory/views/AlertsView.
+  (() => { const av = R('components/inventory/views/AlertsView.jsx'); return /capacityStatus, capacityGetEntries, capacityOnConfirm, onCapacityCleanup \}\) \{/.test(av) && /canManage=\{canDestroy\}/.test(av); })());
 
 // --- Part 4: Reminders — eligibility is "done", never creation age alone (must survive a
 // reminder created in January with a December due date — the brief's own example) ---

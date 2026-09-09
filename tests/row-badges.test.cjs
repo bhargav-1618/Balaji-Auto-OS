@@ -6,7 +6,9 @@
 const fs = require('fs'), path = require('path');
 let PASS = 0, FAIL = 0;
 const ok = (n, c, d = '') => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}${d ? `\n      → ${d}` : ''}`); } };
-const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+// Refactor Phase 3 — SalesView / ServicesView moved verbatim from InventoryDashboard.js
+// to ./inventory/views/LedgerViews. Every assertion here targets that row/detail content.
+const dash = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/LedgerViews.jsx'), 'utf8');
 
 console.log('\nSales/Services — redundant type badge removal\n');
 

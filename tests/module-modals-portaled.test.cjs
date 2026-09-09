@@ -62,9 +62,11 @@ ok('Purchase Orders: New PO keeps its Cancel / Save Draft / Create PO buttons',
 ok('Purchase Orders: Receive PO keeps its Confirm Receipt button',
   /Receive \{po\.poNumber\}/.test(po) && /Confirm Receipt/.test(po));
 
-// ── Alerts: alert-detail drawer (InventoryDashboard.js / AlertsView) ──────────
+// ── Alerts: alert-detail drawer (AlertsView) ──────────
+// Refactor Phase 3 — AlertsView moved verbatim from InventoryDashboard.js to
+// ./inventory/views/AlertsView.
 const dash = read('../components/InventoryDashboard.js');
-const alertsBlock = slice(dash, 'function AlertsView', 30000);
+const alertsBlock = slice(read('../components/inventory/views/AlertsView.jsx'), 'function AlertsView', 30000);
 ok('Alerts: the alert-detail drawer is portaled via createPortal to document.body',
   /\{drawer && typeof document !== 'undefined' && createPortal\(\(/.test(alertsBlock) &&
   /\), document\.body\)\}/.test(alertsBlock));

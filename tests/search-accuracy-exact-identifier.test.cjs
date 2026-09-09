@@ -213,9 +213,11 @@ console.log('\nPart 2 — every module migrated to the shared exact-identifier f
       return /const entryOf = \(it\) => \(\{ hay: safeLower\(it\.s\), ids: \(it\.ids \|\| \[\]\)\.map\(normId\) \}\);/.test(lp)
         && /if \(needle && !matchIndexed\(entryOf\(it\), needle\)\) return false;/.test(lp);
     })());
+  // Refactor Phase 3 — SalesView / ServicesView moved verbatim to ./inventory/views/LedgerViews.
+  const ledgerViews = read('components/inventory/views/LedgerViews.jsx');
   ok('SalesView: SKU and Invoice No. moved into `ids` (exact-only), out of the partial `s` string',
-    /ids: \[s\.sku, s\.invoiceNo\],/.test(src));
-  ok('ServicesView: Invoice No. moved into `ids` (exact-only)', /ids: \[s\.invoiceNo\],/.test(src));
+    /ids: \[s\.sku, s\.invoiceNo\],/.test(ledgerViews));
+  ok('ServicesView: Invoice No. moved into `ids` (exact-only)', /ids: \[s\.invoiceNo\],/.test(ledgerViews));
   // Universal Search review: CommandPalette now builds one useSearchIndex per record
   // type (memoized once per data change, not rebuilt inline per keystroke) and ranks via
   // rankIndexed instead of the old inline matchIndexed({...}, needle) literal per push —

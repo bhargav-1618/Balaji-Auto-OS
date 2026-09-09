@@ -87,8 +87,11 @@ ok('every <ReportTable> call site now receives the debounced dq, not the raw q',
   (src.match(/<ReportTable q=\{dq\}/g) || []).length >= 10 && !/<ReportTable q=\{q\}/.test(src));
 
 // --- 2. AlertsView ---
-const avStart = src.indexOf('function AlertsView({');
-const avBlock = src.slice(avStart, avStart + 3200);
+// Refactor Phase 3 — AlertsView moved verbatim from InventoryDashboard.js to
+// ./inventory/views/AlertsView.
+const avSrc = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/AlertsView.jsx'), 'utf8');
+const avStart = avSrc.indexOf('function AlertsView({');
+const avBlock = avSrc.slice(avStart, avStart + 3200);
 ok('AlertsView debounces its search input via the shared useDeferredSearch hook',
   /const \[dq\] = useDeferredSearch\(q\);/.test(avBlock));
 ok('AlertsView ranks matches: title EQUALS query (3) > title STARTS WITH query (2) > substring-only (1)',
@@ -97,7 +100,7 @@ ok('the alerts filter itself still runs against the debounced dq, not the raw q'
   /const needle = safeLower\(dq\.trim\(\)\);/.test(avBlock));
 // Placeholder now routes through lib/i18n.js's t('key', 'English fallback').
 ok('the search input itself stays bound to the raw, uncontrolled-lag q (typing is never delayed)',
-  /<input value=\{q\} onChange=\{\(e\) => setQ\(e\.target\.value\)\} placeholder=\{t\('alerts\.searchPlaceholder'/.test(src));
+  /<input value=\{q\} onChange=\{\(e\) => setQ\(e\.target\.value\)\} placeholder=\{t\('alerts\.searchPlaceholder'/.test(avSrc));
 
 // --- 3. AnalyticsView (Top Profitable Parts / Fast Movers / Dead Stock) ---
 const anStart = src.indexOf('function AnalyticsView({');

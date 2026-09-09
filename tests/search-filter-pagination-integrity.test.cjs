@@ -172,9 +172,10 @@ function runSourceProofs() {
     && /if \(partsPage > partsPageCount\) setPartsPage\(partsPageCount\);/.test(sup));
 
   const dash = read('../components/InventoryDashboard.js');
+  // Refactor Phase 3 — AlertsView moved verbatim to ./inventory/views/AlertsView.
   ok('[fact] the main Parts list clamps invPage via effect; the alerts list now does too',
     /if \(invPage > invTotalPages\) setInvPage\(invTotalPages\);/.test(dash)
-    && /if \(page > pages\) setPage\(pages\);/.test(dash));
+    && /if \(page > pages\) setPage\(pages\);/.test(read('../components/inventory/views/AlertsView.jsx')));
 
   ok('[fact] the report-table pager already reset on `rows.length` (covers a live shrink) — unchanged',
     /useEffect\(\(\) => \{ setPage\(1\); \}, \[ql, sortCol, sortDir, per, rows\.length\]\);/.test(dash));

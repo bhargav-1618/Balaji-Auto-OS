@@ -152,7 +152,8 @@ ok('Purchase Orders: both independent creation entry points (main list + quick-c
 ok('Stock In / Stock Out: guarded at the shared write choke point (receiveStockLine / adjustStockLine), covering single AND bulk flows in one place',
   /checkCapacityGuard\('restocks', \{ demoMode \}\)/.test(inv) && /checkCapacityGuard\('stockAdjustments', \{ demoMode \}\)/.test(inv));
 ok('Sales & Services: banner present on both views (they share one `sales`-collection capacity), no independent create guard',
-  (inv.match(/CapacityBanner moduleKey="sales"/g) || []).length === 2);
+  // Refactor Phase 3 — SalesView / ServicesView moved verbatim to ./inventory/views/LedgerViews.
+  ((fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/LedgerViews.jsx'), 'utf8')).match(/CapacityBanner moduleKey="sales"/g) || []).length === 2);
 ok('one shared CapacityCleanupModal instance serves every capacity guard inside the InventoryDashboard monolith (not one per call site)',
   /const \[capacityCleanupModule, setCapacityCleanupModule\] = useState\(null\);/.test(inv) &&
   (inv.match(/setCapacityCleanupModule\(/g) || []).length >= 4);

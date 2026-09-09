@@ -29,7 +29,6 @@ const R = (p) => fs.readFileSync(path.resolve(__dirname, '..', p), 'utf8');
 console.log('\nAlert/Reminder rows — one shared NotificationRow, reusing the existing Badge design system\n');
 
 const row = R('components/common/NotificationRow.jsx');
-const inv = R('components/InventoryDashboard.js');
 const rem = R('components/reminders/RemindersModule.jsx');
 
 // --- The shared component itself ---
@@ -47,10 +46,13 @@ ok('optional left accent stripe (severity/kind colour) is supported for both cal
   /borderLeft: accentColor \? `3px solid \$\{accentColor\}` : undefined/.test(row));
 
 // --- Alert Center (InventoryDashboard.js AlertsView) wired into the shared row ---
-ok('InventoryDashboard.js imports NotificationRow',
-  /import NotificationRow from '\.\/common\/NotificationRow';/.test(inv));
-const alertsRowStart = inv.indexOf('{shown.map((a) => {');
-const alertsRowBlock = inv.slice(alertsRowStart, alertsRowStart + 1200);
+// Refactor Phase 3 — AlertsView moved verbatim from InventoryDashboard.js to
+// ./inventory/views/AlertsView; the NotificationRow import + row markup live there now.
+const alertsView = R('components/inventory/views/AlertsView.jsx');
+ok('AlertsView imports NotificationRow',
+  /import NotificationRow from '\.\.\/\.\.\/common\/NotificationRow';/.test(alertsView));
+const alertsRowStart = alertsView.indexOf('{shown.map((a) => {');
+const alertsRowBlock = alertsView.slice(alertsRowStart, alertsRowStart + 1200);
 ok('AlertsView renders each alert through NotificationRow',
   alertsRowStart !== -1 && /<NotificationRow/.test(alertsRowBlock));
 ok('Alert row keeps its severity colour as BOTH the icon-avatar tint and the left accent stripe',
@@ -82,7 +84,7 @@ ok('Reminder actions (WhatsApp/Call/Complete/Reopen/Snooze/Delete) are unchanged
 
 // --- Neither list hand-rolls its own row container any more ---
 ok('AlertsView no longer hand-rolls its own row <div> (the old rounded-xl px-3.5 py-3 box)',
-  !/className="group flex items-center gap-2\.5 px-3\.5 py-3 rounded-xl/.test(inv));
+  !/className="group flex items-center gap-2\.5 px-3\.5 py-3 rounded-xl/.test(alertsView));
 ok('RemindersModule no longer hand-rolls its own row <div> (the old p-3.5 flex items-center gap-3 box)',
   !/className=\{`rounded-2xl p-3\.5 flex items-center gap-3 \$\{r\.isDone/.test(rem));
 

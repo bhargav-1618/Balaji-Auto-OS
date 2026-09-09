@@ -223,7 +223,8 @@ console.log('\n4  Margin — bounded on every degenerate input\n');
   });
   // the shipped code's margin sites all guard `rev > 0`
   ok('shipped: pMargin guards revenue > 0', /const r = L\(p\)\.revenue; return r > 0 \? \(L\(p\)\.profit \/ r\) \* 100 : 0;/.test(dash));
-  ok('shipped: Sales avgMargin guards revenue > 0', /const avgMargin = revM > 0 \? \(proM \/ revM\) \* 100 : 0;/.test(dash));
+  // Refactor Phase 3 — SalesView moved verbatim to ./inventory/views/LedgerViews.
+  ok('shipped: Sales avgMargin guards revenue > 0', /const avgMargin = revM > 0 \? \(proM \/ revM\) \* 100 : 0;/.test(read('../components/inventory/views/LedgerViews.jsx')));
   // negative profit is NEVER clamped to zero
   const loss = paidCopy(inv({ invNo: 'INV-L', gstMode: 'exempt', lines: [mkLine({ partId: 'pl', qty: 1, rate: 500, purchasePrice: 900, gst: 0 })] }));
   const lAgg = ledgerNet(ledgerDelta(draftCopy(loss), loss));
@@ -373,7 +374,8 @@ console.log('\n11  Dashboard / Sales / Reports consistency — one revenue field
 {
   ok('OverviewView periodAgg revenue = s.revenue (?? s.total) and profit = s.profit', /const rev = \(s\) => s\.revenue \?\? s\.total \?\? 0;/.test(dash) && /revenue \+= rev\(s\); pro \+= s\.profit \|\| 0;/.test(dash));
   ok('Reports ledgerByPart aggregates s.revenue / s.cost / s.profit from the same ledger', /e\.revenue \+= s\.revenue \|\| 0;\s*\n\s*e\.cost \+= s\.cost \|\| 0;/.test(dash));
-  ok('SalesView cards read s.revenue / s.profit (same fields, same meaning)', /const rev = s\.revenue \|\| 0;.*\n?.*proT \+= s\.profit/.test(dash) || /revM \+= rev; proM \+= s\.profit \|\| 0;/.test(dash));
+  // Refactor Phase 3 — SalesView moved verbatim to ./inventory/views/LedgerViews.
+  ok('SalesView cards read s.revenue / s.profit (same fields, same meaning)', (() => { const lv = read('../components/inventory/views/LedgerViews.jsx'); return /const rev = s\.revenue \|\| 0;.*\n?.*proT \+= s\.profit/.test(lv) || /revM \+= rev; proM \+= s\.profit \|\| 0;/.test(lv); })());
   ok('Reports trend prefers unbounded salesRollups, falls back to the ledger — both carry revenue+cost+profit', /if \(rollups\.length\) \{/.test(dash) && /e\.profit \+= s\.profit \?\? \(s\.revenue \|\| 0\) - \(s\.cost \|\| 0\);/.test(dash));
 }
 

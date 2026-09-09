@@ -70,10 +70,12 @@ console.log('\nUniversal Search Boxes — cross-app identifier isolation + ranki
   // Refactor Phase 2 — BulkReceiveModal extracted verbatim to ./inventory/modals/StockModals.
   ok('Receive Shipment (BulkReceiveModal) picker: same identifier isolation as Receive Stock — was an independent, byte-for-byte duplicate of the same bug, now fixed the same way',
     /const pickerSearchIndex = useSearchIndex\(inventory, \(p\) => p\.id, \(p\) => \[p\.name\], \(p\) => \[p\.sku, p\.oemNo, p\.barcode, p\.partNo\]\);/.test(R('components/inventory/modals/StockModals.jsx')));
+  // Refactor Phase 3 — StockInView / StockOutView moved verbatim to ./inventory/views/LedgerViews.
+  const ledgerViews = R('components/inventory/views/LedgerViews.jsx');
   ok('Stock In (restocks): SKU/reference/PO number are now searchable identifiers, not silently absent from search entirely',
-    /ids: \[r\.sku, r\.reference, r\.poNumber\],/.test(src));
+    /ids: \[r\.sku, r\.reference, r\.poNumber\],/.test(ledgerViews));
   ok('Stock Out (sales + adjustments merge): SKU/invoice no. are now searchable identifiers',
-    /ids: \[o\.sku, o\.invoiceNo\],/.test(src));
+    /ids: \[o\.sku, o\.invoiceNo\],/.test(ledgerViews));
   ok('Audit Log: partId/supplierId/entityId are an exact-then-partial identifier index, isolated from name/user/action/reason free text',
     /const auditSearchIndex = useSearchIndex\(\s*auditLog,\s*\(e\) => e\.id,\s*\(e\) => \[e\.name, e\.performedByEmail, e\.action, e\.details\?\.reason\],\s*\(e\) => \[e\.partId, e\.supplierId, e\.entityId\],\s*\);/.test(src));
   ok('Audit Log search is now debounced via the shared useDeferredSearch hook',
