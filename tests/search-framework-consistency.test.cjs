@@ -40,11 +40,14 @@ let PASS = 0, FAIL = 0;
 const ok = (n, c, d = '') => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}${d ? `\n      → ${d}` : ''}`); } };
 const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
 const ledger = fs.readFileSync(path.resolve(__dirname, '../components/common/LedgerPage.jsx'), 'utf8');
+// Refactor Phase 13 — CommandPalette extracted verbatim to its own file; the container
+// still owns the global Ctrl+K listener and the Parts search's useDeferredSearch call.
+const cp = fs.readFileSync(path.resolve(__dirname, '../components/inventory/CommandPalette.jsx'), 'utf8');
 
 console.log('\nGlobal search framework — stale deps + duplicate debounce fixes\n');
 
 ok('Ctrl+K palette search useMemo depends on customers/invoices/jobCards (was missing — stale results for those three record types; the dep list has since grown further with the per-type search indexes added by the Universal Search review, but still includes all of these)',
-  /\}, \[dq, activeParts, suppliers, customers, invoices, jobCards, partIndex, supplierIndex, customerIndex, invoiceIndex, jobCardIndex\]\);/.test(dash));
+  /\}, \[dq, activeParts, suppliers, customers, invoices, jobCards, partIndex, supplierIndex, customerIndex, invoiceIndex, jobCardIndex\]\);/.test(cp));
 ok('Parts search now uses the shared useDeferredSearch hook (was a separate direct useDeferredValue call)',
   /const \[debouncedSearch, isSearchStale\] = useDeferredSearch\(search\);/.test(dash));
 ok('useDeferredValue is no longer imported directly (its only remaining use was the one just consolidated)',

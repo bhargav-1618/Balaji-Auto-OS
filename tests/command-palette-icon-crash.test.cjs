@@ -7,7 +7,8 @@
  * (search-framework-consistency.test.cjs) — typing a customer name that actually
  * matched a real record crashed the whole app.
  *
- * CommandPalette's `results` array (InventoryDashboard.js) can contain items with
+ * CommandPalette's `results` array (Refactor Phase 13 — extracted to
+ * components/inventory/CommandPalette.jsx) can contain items with
  * `type: 'customer' | 'invoice' | 'jobcard'` (added when customer/invoice/job-card
  * search was layered onto the palette), but its icon lookup map only ever had
  * entries for `part`/`supplier`/`category`/`vehicle`. `icon[r.type]` resolved to
@@ -18,12 +19,12 @@
 const fs = require('fs'), path = require('path');
 let PASS = 0, FAIL = 0;
 const ok = (n, c, d = '') => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}${d ? `\n      → ${d}` : ''}`); } };
-const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+const cp = fs.readFileSync(path.resolve(__dirname, '../components/inventory/CommandPalette.jsx'), 'utf8');
 
 console.log('\nCommandPalette — icon map covers every result type (no undefined-component crash)\n');
 
-const start = dash.indexOf('function CommandPalette');
-const block = dash.slice(start, start + 10000);
+const start = cp.indexOf('function CommandPalette');
+const block = cp.slice(start, start + 10000);
 
 ok('icon map has an entry for every result type the useMemo can produce (part/supplier/category/vehicle/customer/invoice/jobcard)',
   /const icon = \{ part: Package, supplier: Users, category: Filter, vehicle: Car, customer: User, invoice: Receipt, jobcard: ClipboardList \};/.test(block));

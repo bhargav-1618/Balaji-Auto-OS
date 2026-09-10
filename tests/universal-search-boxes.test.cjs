@@ -66,8 +66,13 @@ console.log('\nUniversal Search Boxes — cross-app identifier isolation + ranki
   // Refactor Phase 10 — AuditLogPanel (the only matchIndexed consumer) moved verbatim to
   // ./inventory/views/AnalyticsView.jsx; the dashboard's useSearch import lost matchIndexed.
   const an = R('components/inventory/views/AnalyticsView.jsx');
-  ok('InventoryDashboard imports rankIndexed/useSearchIndex/searchAndRank alongside normId',
-    /import \{ useDeferredSearch, normId, rankIndexed, useSearchIndex, searchAndRank \} from '\.\.\/lib\/useSearch';/.test(src));
+  // Refactor Phase 13 — CommandPalette (the dashboard's last rankIndexed consumer) moved
+  // verbatim to its own file; the dashboard's useSearch import lost rankIndexed.
+  const cp = R('components/inventory/CommandPalette.jsx');
+  ok('InventoryDashboard imports useSearchIndex/searchAndRank alongside normId (its Parts search still ranks via them)',
+    /import \{ useDeferredSearch, normId, useSearchIndex, searchAndRank \} from '\.\.\/lib\/useSearch';/.test(src));
+  ok('CommandPalette imports useDeferredSearch/useSearchIndex/rankIndexed for its per-type ranked search',
+    /import \{ useDeferredSearch, useSearchIndex, rankIndexed \} from '\.\.\/\.\.\/lib\/useSearch';/.test(cp));
   ok('AnalyticsView imports matchIndexed for the Audit Log search',
     /import \{ [^}]*\bmatchIndexed\b[^}]*\} from '\.\.\/\.\.\/\.\.\/lib\/useSearch';/.test(an));
   ok('Receive Stock (QuickPickModal) picker: SKU/OEM/barcode/Part No. are a proper search index, not one flat substring string',
@@ -92,7 +97,7 @@ console.log('\nUniversal Search Boxes — cross-app identifier isolation + ranki
   ok('the New PO part options now carry SKU/OEM as `ids` (supplier-aware grouping shares one option builder for both the flat and grouped picker)',
     /const toOpt = \(p\) => \(\{ value: p\.id, label: `\$\{p\.name\}\$\{p\.sku \? ` \(\$\{p\.sku\}\)` : ''\}`, ids: \[p\.sku, p\.oemNo\] \}\)/.test(R('components/inventory/InventoryPurchaseOrders.jsx')));
   ok('Command Palette search input is debounced via useDeferredSearch (was rebuilding the full per-keystroke, undebounced)',
-    /const \[dq\] = useDeferredSearch\(q\); \/\/ Universal Search review/.test(src));
+    /const \[dq\] = useDeferredSearch\(q\); \/\/ Universal Search review/.test(cp));
 }
 
 // --- Part 4: Vehicles — Add Vehicle owner picker + duplicate-check normalization ---

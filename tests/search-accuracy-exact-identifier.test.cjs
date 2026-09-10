@@ -179,6 +179,8 @@ console.log('\nPart 2 — every module migrated to the shared exact-identifier f
 // --- InventoryDashboard.js: Parts, Ledgers, Command Palette ---
 {
   const src = read('components/InventoryDashboard.js');
+  // Refactor Phase 13 — CommandPalette extracted verbatim to its own file.
+  const cp = read('components/inventory/CommandPalette.jsx');
   ok('Inventory Parts: SKU is excluded from the tokenized haystack and checked as a separate exact match',
     /sku: normId\(part\.sku\)/.test(src) && /entry\.sku && entry\.sku === rawQuery/.test(src));
   ok('Inventory Parts: OEM Number, Barcode and Manufacturer Part No. get the same exact-match treatment as SKU (Issue 6.8 — previously not searchable at all)',
@@ -223,17 +225,17 @@ console.log('\nPart 2 — every module migrated to the shared exact-identifier f
   // rankIndexed instead of the old inline matchIndexed({...}, needle) literal per push —
   // same identifier/free-text isolation, verified against the new shape.
   ok('CommandPalette: part SKU is exact-only (via a memoized useSearchIndex, not rebuilt per keystroke)',
-    /const partIndex = useSearchIndex\(activeParts, \(p\) => p\.id, \(p\) => \[p\.name\], \(p\) => \[p\.sku\]\);/.test(src));
+    /const partIndex = useSearchIndex\(activeParts, \(p\) => p\.id, \(p\) => \[p\.name\], \(p\) => \[p\.sku\]\);/.test(cp));
   ok('CommandPalette: supplier Code + GST are exact-only',
-    /const supplierIndex = useSearchIndex\(suppliers, \(s\) => s\.id, \(s\) => \[s\.name, \.\.\.(?:\(s\.altNames \|\| \[\]\)|asArray\(s\.altNames\))\], \(s\) => \[s\.code, s\.gst\]\);/.test(src));
+    /const supplierIndex = useSearchIndex\(suppliers, \(s\) => s\.id, \(s\) => \[s\.name, \.\.\.(?:\(s\.altNames \|\| \[\]\)|asArray\(s\.altNames\))\], \(s\) => \[s\.code, s\.gst\]\);/.test(cp));
   ok('CommandPalette: customer Code + registrations are exact-only, name/phone stay partial',
-    /const customerIndex = useSearchIndex\(customers, \(c\) => c\.id, \(c\) => \[c\.name, c\.phone\], \(c\) => \[c\.code, \.\.\.(?:\(c\.vehicles \|\| \[\]\)|asArray\(c\.vehicles\))\.flatMap\(\(v\) => \[v\.regNo, v\.reg\]\)\]\);/.test(src));
+    /const customerIndex = useSearchIndex\(customers, \(c\) => c\.id, \(c\) => \[c\.name, c\.phone\], \(c\) => \[c\.code, \.\.\.(?:\(c\.vehicles \|\| \[\]\)|asArray\(c\.vehicles\))\.flatMap\(\(v\) => \[v\.regNo, v\.reg\]\)\]\);/.test(cp));
   ok('CommandPalette: invoice No. + Registration No. are exact-only',
-    /const invoiceIndex = useSearchIndex\(invoices, \(iv\) => iv\.id, \(iv\) => \[iv\.customer, iv\.vehicle\], \(iv\) => \[iv\.invNo, iv\.regNo\]\);/.test(src));
+    /const invoiceIndex = useSearchIndex\(invoices, \(iv\) => iv\.id, \(iv\) => \[iv\.customer, iv\.vehicle\], \(iv\) => \[iv\.invNo, iv\.regNo\]\);/.test(cp));
   ok('CommandPalette: Job Card No. (full + digits-only) + Registration No. are exact-only',
-    /const jobCardIndex = useSearchIndex\(jobCards, \(j\) => j\.jobNo, \(j\) => \[j\.customer, j\.vehicle, j\.status\], \(j\) => \[j\.jobNo, String\(j\.jobNo \|\| ''\)\.replace\(\/\\D\/g, ''\), j\.regNo\]\);/.test(src));
+    /const jobCardIndex = useSearchIndex\(jobCards, \(j\) => j\.jobNo, \(j\) => \[j\.customer, j\.vehicle, j\.status\], \(j\) => \[j\.jobNo, String\(j\.jobNo \|\| ''\)\.replace\(\/\\D\/g, ''\), j\.regNo\]\);/.test(cp));
   ok('CommandPalette: results are ranked exact-first before the 30-result cap, so parts (pushed first) can no longer crowd out a better-matching customer/invoice/job-card',
-    /if \(needle\) out\.sort\(\(a, b\) => b\.score - a\.score\);/.test(src) && /return out\.slice\(0, 30\);/.test(src));
+    /if \(needle\) out\.sort\(\(a, b\) => b\.score - a\.score\);/.test(cp) && /return out\.slice\(0, 30\);/.test(cp));
 }
 
 // --- Suppliers (+ Purchase Orders) ---
