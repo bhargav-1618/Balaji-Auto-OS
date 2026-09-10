@@ -113,6 +113,10 @@ import { useRecordSync } from '../hooks/useRecordSync';
 import { useLiveCollection } from '../hooks/useLiveCollection';
 import { useLeaseReleaseToast } from '../hooks/useLeaseReleaseToast';
 import { useDurableOpId } from '../hooks/useDurableOpId';
+import { useImageHoverPreview } from '../hooks/useImageHoverPreview';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { useBootSplash } from '../hooks/useBootSplash';
+import { useVoiceSearch } from '../hooks/useVoiceSearch';
 import { clearOpId, readOrCreateOpId } from '../lib/durableOpId';
 import { withTimeout, TX_TIMEOUT_MS, isTxTimeout, timeoutMessage } from '../lib/txTimeout';
 import EditLeaseBanner from './common/EditLeaseBanner';
@@ -3886,8 +3890,10 @@ export default function InventoryDashboard() {
   const [customCategories, setCustomCategories] = useState([]); // Task 1: user-added categories
   const [customVehicles, setCustomVehicles] = useState([]); // Task 1: user-added vehicles
   const [loading, setLoading] = useState(true);
-  // ADD-08: connection + sync status
-  const [online, setOnline] = useState(true);
+  // ADD-08: connection + sync status.
+  // Refactor Phase 14 — the navigator.onLine tracking (window online/offline
+  // listeners) moved verbatim to hooks/useOnlineStatus.
+  const online = useOnlineStatus();
   const [pendingWrites, setPendingWrites] = useState(false);
   const [lastSync, setLastSync] = useState(null); // IMPORTANT: last successful sync
   const [lastBackup, setLastBackup] = useState(null); // Phase B: last backup timestamp
@@ -4030,14 +4036,6 @@ export default function InventoryDashboard() {
     return cols.length === 1 ? listenerErrors[cols[0]] : `${listenerErrors[cols[0]]} (${cols.length} collections affected: ${cols.join(', ')})`;
   }, [listenerErrors]);
   const [syncNonce, setSyncNonce] = useState(0); // Issue 6: bump to re-subscribe (Retry)
-  useEffect(() => {
-    const up = () => setOnline(true);
-    const down = () => setOnline(false);
-    if (typeof navigator !== 'undefined') setOnline(navigator.onLine);
-    window.addEventListener('online', up);
-    window.addEventListener('offline', down);
-    return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); };
-  }, []);
   // Phase 6b (PH6-02) — a soft, NON-BLOCKING heads-up before a mutation that needs
   // a live round-trip (a runTransaction call, or an awaited setDoc/updateDoc whose
   // promise won't resolve until the server acks). `navigator.onLine` is only a
@@ -4094,33 +4092,9 @@ export default function InventoryDashboard() {
   useEffect(() => {
     if (!demoMode) document.documentElement.style.setProperty('--demo-banner-h', '0px');
   }, [demoMode]);
-  // Continuous login→app transition: login sets maruti_arrival before departing;
-  // we settle in from the light bloom, then clear the flag.
-  const [arriving, setArriving] = useState(false);
-  // Keep a branded splash on top until the first data load resolves, then fade it
-  // out — this removes the blank/white content frame right after login.
-  const [bootFading, setBootFading] = useState(false);
-  const [bootHidden, setBootHidden] = useState(false);
-  useEffect(() => {
-    if (loading || bootHidden) return undefined;
-    // data has arrived — fade the splash, then unmount it
-    const t1 = setTimeout(() => setBootFading(true), 60);
-    const t2 = setTimeout(() => setBootHidden(true), 460);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [loading, bootHidden]);
-  useEffect(() => {
-    let t;
-    try {
-      if (sessionStorage.getItem('maruti_arrival') === '1') {
-        sessionStorage.removeItem('maruti_arrival');
-        if (!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
-          setArriving(true);
-          t = setTimeout(() => setArriving(false), 950);
-        }
-      }
-    } catch {}
-    return () => clearTimeout(t);
-  }, []);
+  // Refactor Phase 14 — the login→app splash/arrival lifecycle (arriving +
+  // bootFading/bootHidden, driven by `loading`) moved verbatim to hooks/useBootSplash.
+  const { arriving, bootFading, bootHidden } = useBootSplash(loading);
   // Apply saved appearance preferences on load (font size, reduce motion) so they persist across reloads and tabs.
   useEffect(() => {
     try {
@@ -4191,34 +4165,14 @@ export default function InventoryDashboard() {
   const [restoreConfirm, setRestoreConfirm] = useState(false); // typed-RESTORE modal
   const [restoreText, setRestoreText] = useState('');
   const pendingRestoreFile = useRef(null);
-  const [listening, setListening] = useState(false);
-  const [voiceLang, setVoiceLang] = useState('en-IN'); // CHANGE-04: en-IN | te-IN
-  const [liveTranscript, setLiveTranscript] = useState(''); // Fix 1: live voice feedback
   const [saving, setSaving] = useState(false); // Fix 3: loading state for save, owned by parent
-  const recognitionRef = useRef(null); // hold the recognition instance so it isn't GC'd
-  // Fix 5: single root-level hover preview, tracked by mouse coordinates
-  const [hoveredImage, setHoveredImage] = useState({ src: null, x: 0, y: 0 });
-  // Perf hardening: throttle mouse-move updates to one state change per frame
-  // (otherwise a large base64 preview re-renders the whole table on every pixel).
-  const hoverRafRef = useRef(0);
-  const hoverCoordsRef = useRef({ x: 0, y: 0 });
-  const handleImageHover = useCallback((src, x, y) => { if (src) setHoveredImage({ src, x, y }); }, []);
-  const handleImageMove = useCallback((x, y) => {
-    hoverCoordsRef.current = { x, y };
-    if (hoverRafRef.current) return;
-    hoverRafRef.current = requestAnimationFrame(() => {
-      hoverRafRef.current = 0;
-      const c = hoverCoordsRef.current;
-      setHoveredImage((h) => (h.src ? { ...h, x: c.x, y: c.y } : h));
-    });
-  }, []);
-  const handleImageLeave = useCallback(() => {
-    if (hoverRafRef.current) {
-      cancelAnimationFrame(hoverRafRef.current);
-      hoverRafRef.current = 0;
-    }
-    setHoveredImage({ src: null, x: 0, y: 0 });
-  }, []);
+  // Refactor Phase 14 — Web Speech API voice search (listening / voiceLang /
+  // liveTranscript + the start/stop toggle) moved verbatim to hooks/useVoiceSearch;
+  // `onTranscript` is the one adapter — it replaces the old direct `setSearch(text)`.
+  const { listening, voiceLang, setVoiceLang, liveTranscript, startVoiceSearch } = useVoiceSearch(setSearch);
+  // Refactor Phase 14 — the root-level image hover preview (rAF-throttled, tracked by
+  // mouse coordinates) moved verbatim to hooks/useImageHoverPreview.
+  const { hoveredImage, handleImageHover, handleImageMove, handleImageLeave } = useImageHoverPreview();
 
   // New: tabs, suppliers, logout confirmation
   // DEEP LINKING. All 16 modules live behind a single route, with the active module
@@ -8994,136 +8948,8 @@ export default function InventoryDashboard() {
     }
   }
 
-  // ---- Fix 8: Voice search (Web Speech API) ----
-  async function startVoiceSearch() {
-    const SpeechRecognition =
-      typeof window !== 'undefined' &&
-      (window.SpeechRecognition || window.webkitSpeechRecognition);
-
-    if (!SpeechRecognition) {
-      toast.error('Voice search needs Google Chrome or Microsoft Edge.');
-      return;
-    }
-
-    // ROOT CAUSE #1: the Web Speech API only works in a *secure context*.
-    // localhost is fine, but opening the dev server over a LAN IP like
-    // http://192.168.x.x:3000 (common when testing on a phone) is NOT secure,
-    // so recognition silently never captures. Tell the user exactly that.
-    if (typeof window !== 'undefined' && !window.isSecureContext) {
-      toast.error('Voice search needs HTTPS. Open the site over https:// (or localhost), not an http LAN address.');
-      return;
-    }
-
-    // Second tap stops immediately and reliably. We DETACH the handlers first so
-    // no late onresult/onend can revive state, then stop() AND abort() to kill the
-    // session instantly. The live transcript already sits in `search`, so the
-    // query is preserved.
-    if (recognitionRef.current) {
-      const rec = recognitionRef.current;
-      recognitionRef.current = null;
-      setListening(false);
-      setLiveTranscript('');
-      try {
-        rec.onresult = null;
-        rec.onerror = null;
-        rec.onend = null;
-        rec.stop();
-        rec.abort?.();
-      } catch (_) {}
-      return;
-    }
-
-    // ROOT CAUSE #2: permission / no warmed-up mic. Explicitly acquire the mic
-    // first via getUserMedia — this triggers the permission prompt reliably and
-    // confirms a working input device before we ever call recognition.start().
-    // (Guard mediaDevices itself: it's undefined on some older/insecure setups.)
-    if (navigator.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((t) => t.stop()); // release; recognition opens its own
-      } catch (err) {
-        console.error('Mic permission error:', err);
-        if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') {
-          toast.error('Microphone access denied. Please check browser permissions.');
-        } else if (err?.name === 'NotFoundError') {
-          toast.error('No microphone detected. Please connect/enable a mic.');
-        } else {
-          toast.error('Could not access the microphone.');
-        }
-        return;
-      }
-    }
-
-    let recognition;
-    try {
-      recognition = new SpeechRecognition();
-      recognition.lang = voiceLang; // CHANGE-04: EN (en-IN) or Telugu (te-IN)
-      recognition.continuous = true;      // keep listening — won't auto-stop on pauses
-      recognition.interimResults = true;  // stream partial words for live feedback
-      recognition.maxAlternatives = 1;
-    } catch (err) {
-      console.error('Voice init failed:', err);
-      toast.error('Could not initialise voice search on this device.');
-      return;
-    }
-
-    // Accumulated transcript lives on the recognition instance so the Stop
-    // handler (and onend) can read the final text.
-    recognition._finalText = '';
-
-    recognition.onstart = () => {
-      setListening(true);
-      setLiveTranscript('');
-    };
-
-    recognition.onresult = (e) => {
-      // FIX 1: don't grab only the first frame — join EVERY result frame so we
-      // never truncate "brake pads" down to "pads".
-      const fullTranscript = Array.from(e.results)
-        .map((r) => r[0]?.transcript || '')
-        .join('')
-        .trim();
-      recognition._finalText = fullTranscript;
-      setLiveTranscript(fullTranscript); // Fix 1: live feedback box
-      if (fullTranscript) setSearch(fullTranscript); // filter the table live
-    };
-
-    recognition.onerror = (e) => {
-      setListening(false);
-      recognitionRef.current = null;
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        toast.error('Microphone access denied. Please check browser permissions.');
-      } else if (e.error === 'audio-capture') {
-        toast.error('No microphone detected. Please enable a mic and try again.');
-      } else if (e.error === 'network') {
-        toast.error('Voice service needs internet. Check your connection.');
-      } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
-        toast.error('Voice search failed. Please try again.');
-      }
-    };
-
-    recognition.onend = () => {
-      setListening(false);
-      const finalText = (recognition._finalText || '').trim();
-      recognitionRef.current = null;
-      // Apply the captured transcript to the search query.
-      if (finalText) {
-        setSearch(finalText);
-        toast.success(`Search: “${finalText}”`);
-      }
-      setLiveTranscript('');
-    };
-
-    try {
-      recognitionRef.current = recognition; // retain reference (avoid GC)
-      recognition.start();
-    } catch (err) {
-      console.error('Voice start failed:', err);
-      setListening(false);
-      recognitionRef.current = null;
-      toast.error('Could not start voice search. Please try again.');
-    }
-  }
+  // Refactor Phase 14 — startVoiceSearch moved verbatim to hooks/useVoiceSearch
+  // (see the useVoiceSearch(setSearch) call near the top of this component).
 
   // ---- Requirement 1: bulletproof case-insensitive, null-safe search ----
   const categoryOptionsForFilter = useMemo(

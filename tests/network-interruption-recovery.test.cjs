@@ -79,6 +79,9 @@ const ok = (name, cond, detail = '') => {
 };
 const read = (p) => fs.readFileSync(path.resolve(__dirname, p), 'utf8');
 const dash = read('../components/InventoryDashboard.js');
+// Refactor Phase 14 — the navigator.onLine window online/offline tracking moved
+// verbatim to hooks/useOnlineStatus; the container still reads/branches on `online`.
+const onlineHook = read('../hooks/useOnlineStatus.js');
 const bill = read('../components/billing/BillingModule.jsx');
 const cust = read('../components/customers/CustomersModule.jsx');
 const firebase = read('../lib/firebase.js');
@@ -106,10 +109,11 @@ ok('[fact] Firestore uses persistentLocalCache + multi-tab manager (unchanged si
   /persistentLocalCache\(\{\s*tabManager:\s*persistentMultipleTabManager\(\)\s*\}\)/.test(firebase));
 ok('[fact] no enableNetwork/disableNetwork/waitForPendingWrites is imported or used anywhere — the app never explicitly manages the Firestore network layer',
   !/enableNetwork|disableNetwork|waitForPendingWrites/.test(firebase + dash + bill + repo + store));
-ok('[fact] the app tracks navigator.onLine via window online/offline events into a React `online` flag',
-  /const \[online, setOnline\] = useState\(true\)/.test(dash)
-  && /window\.addEventListener\('online', up\)/.test(dash)
-  && /window\.addEventListener\('offline', down\)/.test(dash));
+ok('[fact] the app tracks navigator.onLine via window online/offline events into a React `online` flag (hooks/useOnlineStatus, consumed as `const online = useOnlineStatus()`)',
+  /const \[online, setOnline\] = useState\(true\)/.test(onlineHook)
+  && /window\.addEventListener\('online', up\)/.test(onlineHook)
+  && /window\.addEventListener\('offline', down\)/.test(onlineHook)
+  && /const online = useOnlineStatus\(\);/.test(dash));
 ok('[fact] Quick Sell still branches explicitly on `online` (queues offline instead of attempting a transaction) — unchanged by Phase 6b',
   /if \(online\) \{/.test(slice(dash, 'async function handleSellInner', 'async function adjustStockLine')));
 
