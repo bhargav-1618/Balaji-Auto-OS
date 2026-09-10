@@ -121,8 +121,13 @@ const BUSINESS = ['parts', 'suppliers', 'categories', 'vehicles', 'customers', '
 for (const c of BUSINESS) {
   const m = rules.match(new RegExp(`match /${c}/\\{[^}]+\\} \\{([\\s\\S]*?)\\n    \\}`));
   const body = m ? m[1] : '';
+  // create/update is gated on signedIn() only — no role check. Some collections
+  // additionally chain a `&& listOrAbsent(...)` array-type assertion (PH21-D2),
+  // which is still authorization-equivalent to signedIn().
   ok(`${c}: read/create/update = any signed-in user (single-shop trust model)`,
-    /allow read: if signedIn\(\);/.test(body) && /allow create, update: if signedIn\(\);/.test(body));
+    /allow read: if signedIn\(\);/.test(body)
+    && /allow create, update: if signedIn\(\)[\s\S]*?;/.test(body)
+    && !/allow create, update:[^;]*isAdmin\(\)/.test(body));
   ok(`${c}: DELETE = isAdmin() only (Staff hard-delete denied at the data layer)`,
     /allow delete: if isAdmin\(\);/.test(body));
 }

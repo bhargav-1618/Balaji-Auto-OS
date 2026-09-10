@@ -8,15 +8,15 @@ Next.js 14 · React 18 · Firebase Firestore.
     next build            ✓ compiled successfully
     undefined-identifier  0 real (4 known false positives: CSS/self/caches, all guarded)
     TDZ scan              0
-    npm test              151/151 test files passing (Node/jsdom)
-    npm run test:rules    261/261 emulator assertions (2 files)
+    npm test              154/154 test files passing (Node/jsdom)
+    npm run test:rules    278/278 emulator assertions (2 files)
     ─────────────────────────────────────
-    CI (.github/workflows/ci.yml)  lint · build · test — green
+    CI (.github/workflows/ci.yml)  lint · build · test · test:rules — green
 
-The suite grew from 119 files at the original tag to 151 through the post-release
+The suite grew from 119 files at the original tag to 154 through the post-release
 reliability & integrity program (see [CHANGELOG.md](CHANGELOG.md) and
-[ROADMAP.md](ROADMAP.md)); `test:rules` runs against the Firestore emulator and is a
-local/CI-optional gate.
+[ROADMAP.md](ROADMAP.md)); `test:rules` now runs in CI against the Firestore emulator
+(a Java step provides the emulator runtime on the Linux runner).
 
 See [testing/TESTING.md](testing/TESTING.md) for what each suite covers and the
 verification ceiling.

@@ -397,10 +397,23 @@ ok('appSettings writes are admin-only (privilege-escalation lock)',
   /match \/appSettings\/\{docId\} \{[\s\S]{0,120}allow create, update: if isAdmin\(\)/.test(rulesSrc));
 ok('counters/next can never decrease (invoice-number monotonicity)',
   /request\.resource\.data\.next >= resource\.data\.next/.test(rulesSrc));
-ok('business collections are create/update: if signedIn() — NO field validation in rules (by design)',
-  /match \/customers\/\{customerId\} \{[\s\S]{0,120}allow create, update: if signedIn\(\);/.test(rulesSrc)
-  && /match \/invoices\/\{invoiceId\} \{[\s\S]{0,120}allow create, update: if signedIn\(\);/.test(rulesSrc)
-  && /match \/parts\/\{partId\} \{[\s\S]{0,120}allow create, update: if signedIn\(\);/.test(rulesSrc));
+// PH21-D2 — business-collection create/update is still authorization-gated on
+// signedIn() ONLY (no role check, single-shop trust model), but now ALSO chains a
+// `listOrAbsent(...)` array-type assertion on the fields the app always writes as
+// arrays. Other field-value validation (per-record business rules) stays in the
+// application transaction layer by design.
+ok('business collections stay create/update: if signedIn() (no role check)',
+  /match \/customers\/\{customerId\} \{[\s\S]{0,200}allow create, update: if signedIn\(\)/.test(rulesSrc)
+  && /match \/invoices\/\{invoiceId\} \{[\s\S]{0,200}allow create, update: if signedIn\(\)/.test(rulesSrc)
+  && /match \/parts\/\{partId\} \{[\s\S]{0,200}allow create, update: if signedIn\(\)/.test(rulesSrc)
+  && !/match \/(customers|invoices|parts)\/\{[^}]+\} \{[\s\S]{0,200}allow create, update:[^;]*isAdmin\(\)/.test(rulesSrc));
+ok('PH21-D2: rules now assert array-typed fields are lists (invoice lines/payments, customer vehicles, jobCard parts/labour, part suppliers, PO items)',
+  /function listOrAbsent\(m, k\) \{\s*return !\(k in m\) \|\| m\[k\] is list;\s*\}/.test(rulesSrc)
+  && /match \/invoices\/\{invoiceId\} \{[\s\S]{0,200}listOrAbsent\(request\.resource\.data, 'lines'\)[\s\S]{0,80}listOrAbsent\(request\.resource\.data, 'payments'\)/.test(rulesSrc)
+  && /match \/customers\/\{customerId\} \{[\s\S]{0,160}listOrAbsent\(request\.resource\.data, 'vehicles'\)/.test(rulesSrc)
+  && /match \/jobCards\/\{jobCardId\} \{[\s\S]{0,200}listOrAbsent\(request\.resource\.data, 'parts'\)[\s\S]{0,80}listOrAbsent\(request\.resource\.data, 'labour'\)/.test(rulesSrc)
+  && /match \/parts\/\{partId\} \{[\s\S]{0,160}listOrAbsent\(request\.resource\.data, 'suppliers'\)/.test(rulesSrc)
+  && /match \/purchaseOrders\/\{poId\} \{[\s\S]{0,200}listOrAbsent\(request\.resource\.data, 'items'\)/.test(rulesSrc));
 
 // ---------------------------------------------------------------------
 // 9. RETRY / durable op-id — an ambiguous failure + retry does not double-write

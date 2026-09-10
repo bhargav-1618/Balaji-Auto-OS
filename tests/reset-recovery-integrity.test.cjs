@@ -57,6 +57,18 @@ for (const c of MUST_RESET) {
 }
 ok('RECOVERY_COLLECTIONS includes purchaseOrders (the regression)', recovery.includes('purchaseOrders'));
 
+// ── 1b. exportFullBackup()'s COLLECTIONS list MUST match RECOVERY_COLLECTIONS ──
+// Same defect class: "Backup now" downloads a JSON of every collection; if a
+// collection is missing here the owner's backup silently omits it (and a
+// backup→restore round-trip loses it).
+const mb = dash.match(/const COLLECTIONS = \[([^\]]+)\];\s*\n\s*const dump = \{ app: 'sri-baba-balaji-maruti-care'/);
+ok('exportFullBackup declares its own COLLECTIONS list', !!mb);
+const backup = mb ? mb[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean) : [];
+ok('exportFullBackup COLLECTIONS === RECOVERY_COLLECTIONS (no drift)',
+  backup.slice().sort().join(',') === recovery.slice().sort().join(','),
+  `backup=[${backup.join(', ')}]  recovery=[${recovery.join(', ')}]`);
+ok('exportFullBackup COLLECTIONS includes purchaseOrders', backup.includes('purchaseOrders'));
+
 // ── 3. NO configuration / system / vault / transient collection may be reset ──
 const MUST_PRESERVE = [
   'counters',        // rules: delete=false — losing it restarts serials at 1
@@ -95,7 +107,8 @@ ok('snapshot is written BEFORE any delete (never destroy before the vault is saf
 ok('firestore.rules: purchaseOrders delete is admin-only (Reset All Data runs as owner)',
   /match \/purchaseOrders\/\{poId\} \{[\s\S]*?allow delete: if isAdmin\(\);/.test(rules));
 ok('firestore.rules: purchaseOrders create is signed-in (restore re-creates them)',
-  /match \/purchaseOrders\/\{poId\} \{[\s\S]*?allow create, update: if signedIn\(\);/.test(rules));
+  /match \/purchaseOrders\/\{poId\} \{[\s\S]{0,120}allow create, update: if signedIn\(\)/.test(rules)
+  && !/match \/purchaseOrders\/\{poId\} \{[\s\S]{0,220}allow create, update:[^;]*isAdmin\(\)/.test(rules));
 ok('firestore.rules: counters delete is permanently false (reset must never touch it)',
   /match \/counters\/\{sequence\} \{[\s\S]*?allow delete: if false;/.test(rules));
 

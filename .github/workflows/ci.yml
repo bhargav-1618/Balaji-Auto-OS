@@ -19,7 +19,7 @@ env:
 
 jobs:
   verify:
-    name: Lint, build & test
+    name: Lint, build, test & rules
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -30,6 +30,13 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+
+      # The Firestore emulator (used by `npm run test:rules`) is a Java process.
+      - name: Setup Java (Firestore emulator runtime)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Install dependencies
         run: npm ci
@@ -42,3 +49,8 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Firestore security-rules suite — runs the real emulator + the
+      # @firebase/rules-unit-testing assertions in tests/rules/.
+      - name: Firestore rules tests
+        run: npm run test:rules

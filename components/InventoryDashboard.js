@@ -7068,7 +7068,9 @@ export default function InventoryDashboard() {
   async function exportFullBackup() {
     const t = toast.loading('Building full backup…');
     try {
-      const COLLECTIONS = ['parts', 'suppliers', 'categories', 'vehicles', 'customers', 'invoices', 'jobCards', 'sales', 'salesRollups', 'restocks', 'stockAdjustments', 'auditLog', 'reorderRequests'];
+      // Every business + derived collection — keep in sync with RECOVERY_COLLECTIONS
+      // below (both must list every collection "Reset All Data" / a full backup owns).
+      const COLLECTIONS = ['parts', 'suppliers', 'categories', 'vehicles', 'customers', 'invoices', 'jobCards', 'purchaseOrders', 'sales', 'salesRollups', 'restocks', 'stockAdjustments', 'auditLog', 'reorderRequests'];
       const dump = { app: 'sri-baba-balaji-maruti-care', appName: getShopName(), schema: 1, exportedAt: new Date().toISOString(), exportedBy: user?.email || null, collections: {} };
       let total = 0;
       for (const name of COLLECTIONS) {

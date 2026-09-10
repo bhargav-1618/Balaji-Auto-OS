@@ -72,10 +72,22 @@ service cloud.firestore {
       );
     }
 
+    // PH21-D2 hardening — the collection fields the app ALWAYS writes as arrays
+    // (invoice lines/payments, customer vehicles, job-card parts/labour, part
+    // suppliers, PO items). A forged non-array value in one of these used to drop
+    // the module that renders it into the app-wide ErrorBoundary (only the
+    // client-side lib/format.asArray guard caught it — Phase 21). This closes the
+    // wrong-type-array class at the rules layer too: a field that is absent
+    // (partial / legacy doc) is fine; a field that is PRESENT must be a list.
+    function listOrAbsent(m, k) {
+      return !(k in m) || m[k] is list;
+    }
+
     // ---- Catalog data: any signed-in user reads/creates/updates; only admins delete.
     match /parts/{partId} {
       allow read: if signedIn();
-      allow create, update: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'suppliers');
       allow delete: if isAdmin();
     }
     match /suppliers/{supplierId} {
@@ -97,24 +109,30 @@ service cloud.firestore {
     // Signed-in staff create/update; only admins delete.
     match /customers/{customerId} {
       allow read: if signedIn();
-      allow create, update: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'vehicles');
       allow delete: if isAdmin();
     }
     match /invoices/{invoiceId} {
       allow read: if signedIn();
-      allow create, update: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'lines')
+        && listOrAbsent(request.resource.data, 'payments');
       allow delete: if isAdmin();
     }
     match /jobCards/{jobCardId} {
       allow read: if signedIn();
-      allow create, update: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'parts')
+        && listOrAbsent(request.resource.data, 'labour');
       allow delete: if isAdmin();
     }
     // ---- Purchase Orders: signed-in users create/advance; only admins delete.
     // Status transitions (pending→approved→received→cancelled) are updates.
     match /purchaseOrders/{poId} {
       allow read: if signedIn();
-      allow create, update: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'items');
       allow delete: if isAdmin();
     }
 

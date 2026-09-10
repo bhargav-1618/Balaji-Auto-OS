@@ -114,6 +114,45 @@ async function main() {
     }
 
     // =========================================================================
+    // PH21-D2 — array-field type assertions (listOrAbsent). The fields the app
+    // always writes as arrays (invoice lines/payments, customer vehicles,
+    // job-card parts/labour, part suppliers, PO items): PRESENT-but-not-a-list
+    // is denied at the rules layer; absent is fine (partial / legacy docs).
+    // =========================================================================
+    await testEnv.clearFirestore();
+    {
+      const db = testEnv.authenticatedContext('staff-uid', { email: STAFF_EMAIL }).firestore();
+
+      // absent → allowed (a bare/partial doc)
+      ok('invoice with no lines/payments field → allowed', await allow(setDoc(doc(db, 'invoices/i0'), { invNo: 'INV-1' })));
+      // present + list → allowed (the normal app write)
+      ok('invoice with lines:[] payments:[] → allowed', await allow(setDoc(doc(db, 'invoices/i1'), { invNo: 'INV-2', lines: [], payments: [] })));
+      ok('invoice with a populated lines list → allowed', await allow(setDoc(doc(db, 'invoices/i2'), { invNo: 'INV-3', lines: [{ name: 'Pad', qty: 2 }], payments: [{ amount: 100 }] })));
+      // present + non-list → DENIED
+      ok('invoice with lines as a STRING → denied', await deny(setDoc(doc(db, 'invoices/i3'), { invNo: 'INV-4', lines: 'oops' })));
+      ok('invoice with payments as an OBJECT → denied', await deny(setDoc(doc(db, 'invoices/i4'), { invNo: 'INV-5', lines: [], payments: { amount: 1 } })));
+      ok('invoice with lines as a NUMBER → denied', await deny(setDoc(doc(db, 'invoices/i5'), { invNo: 'INV-6', lines: 3 })));
+
+      ok('customer with vehicles:[] → allowed', await allow(setDoc(doc(db, 'customers/cc1'), { name: 'Anu', vehicles: [] })));
+      ok('customer with vehicles as a STRING → denied', await deny(setDoc(doc(db, 'customers/cc2'), { name: 'Anu', vehicles: 'KA01' })));
+
+      ok('jobCard with parts:[] labour:[] → allowed', await allow(setDoc(doc(db, 'jobCards/jc1'), { jobNo: 'J1', parts: [], labour: [] })));
+      ok('jobCard with parts as an OBJECT → denied', await deny(setDoc(doc(db, 'jobCards/jc2'), { jobNo: 'J2', parts: { partId: 'p1' } })));
+      ok('jobCard with labour as a STRING → denied', await deny(setDoc(doc(db, 'jobCards/jc3'), { jobNo: 'J3', parts: [], labour: 'oil change' })));
+
+      ok('part with suppliers:[] → allowed', await allow(setDoc(doc(db, 'parts/pp1'), { name: 'Filter', suppliers: [] })));
+      ok('part with suppliers as a STRING → denied', await deny(setDoc(doc(db, 'parts/pp2'), { name: 'Filter', suppliers: 'ACME' })));
+
+      ok('PO with items:[] → allowed', await allow(setDoc(doc(db, 'purchaseOrders/po1'), { status: 'pending', items: [] })));
+      ok('PO with items as an OBJECT → denied', await deny(setDoc(doc(db, 'purchaseOrders/po2'), { status: 'pending', items: { partId: 'p1' } })));
+
+      // an UPDATE that turns a valid list field into a non-list is also denied
+      await seedDoc(testEnv, 'invoices/iu1', { invNo: 'INV-U', lines: [{ name: 'x' }] });
+      ok('invoice UPDATE setting lines to a string → denied', await deny(updateDoc(doc(db, 'invoices/iu1'), { lines: 'nope' })));
+      ok('invoice UPDATE that leaves lines a list → allowed', await allow(updateDoc(doc(db, 'invoices/iu1'), { lines: [{ name: 'x' }, { name: 'y' }] })));
+    }
+
+    // =========================================================================
     // Append-only ledger pattern — sales (representative of sales/restocks/
     // stockAdjustments/auditLog): read/create signedIn, update ALWAYS false.
     // =========================================================================

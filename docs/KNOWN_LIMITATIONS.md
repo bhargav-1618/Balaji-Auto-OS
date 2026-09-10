@@ -40,6 +40,50 @@ The client already writes the correct values, so the deploy needs no code change
 npx firebase login
 npx firebase deploy --only firestore:rules --project balaji-auto-os-7
 ```
+*(Final closure phase — a production run signed in as the owner created ~13 `auditLog`
+entries with the correct `performedByEmail` + server `createdAt` and they were accepted;
+this is consistent with the delta being live OR with the client always writing the
+correct shape, so it does **not** resolve the question. Deployed-state verification of
+the field pins still needs the CLI login + Rules-Playground check above.)*
+
+## ⚙️ Final engineering-closure phase (single-location showcase / production-oriented release)
+
+- **GitHub Actions CI is green and now runs the Firestore-rules emulator suite.**
+  `.github/workflows/ci.yml` runs `npm ci → lint → build → npm test → npm run test:rules`
+  on Node 22 (a Java step is added for the emulator). The earlier three red runs were a
+  single `npm ci` root cause — a *nested* `overrides.firebase.undici` block whose lockfile
+  was written by npm 11 and which npm 10 (CI) rejects; switched to the scoped selector
+  `"undici@6"` which resolves identically on both.
+- **`salesRollups` is a client-maintained derived cache, not authoritative.** The
+  immutable `sales` collection (`update: if false`) is the authoritative parts-sales
+  ledger. `salesRollups/{month}` holds `{ revenue, cost, profit, units, orders }`
+  `increment()` deltas written by the **same** invoice-realization / Quick-Sell
+  transactions that append to `sales`; it drives only the Monthly-Trend chart and is
+  fully recomputable from `sales`. Its rule stays `read, create, update: if signedIn()`
+  (a non-admin staff sale must write it) — acceptable under the trusted-workshop model;
+  `delete` is admin-only. **KEEP + DOCUMENTED**, no rule change.
+- **PH29 (Duplicate-Tab op-id collision) — VERIFICATION BLOCKED for this phase.** Needs
+  a *real* Chrome with the native "Duplicate Tab" action (which serialises `window.name`
+  + PageState) and an authenticated session; the automation available here has no
+  connected logged-in Chrome and its in-app browser cannot perform native tab
+  duplication. Status is unchanged from `PHASE_29_PH29-01_VALIDATION.md`: the
+  `startPiCollisionWatch()` BroadcastChannel guard is shipped (`cc8a2e8`); real-Chrome
+  reproduction/closure is an owner probe. No `durableOpId` code was changed.
+- **Full-backup (Settings → Backup & Data → "Backup now") now includes `purchaseOrders`.**
+  Its collection list had drifted from `RECOVERY_COLLECTIONS` and silently omitted every
+  PO (a backup→restore round-trip lost them). Fixed + a test asserts the two lists match.
+- **ESLint: 0 errors, 63 warnings — all pre-existing and intentional.** 18 ×
+  `@next/next/no-img-element` (the app deliberately uses `<img>` for Firebase-Storage /
+  data / blob URLs — `next/image` would add Vercel image-optimisation cost and needs
+  config the Pages-Router build doesn't carry) + 45 × `react-hooks/exhaustive-deps` on
+  the orchestration container's intentionally once-/trigger-scoped effects (adding the
+  "missing" deps would cause re-subscription loops). None introduced by hardening; not
+  suppressed (45 disable-comments + an 18-image migration = churn with behaviour risk
+  for no correctness gain).
+- **Production data:** `balaji-auto-os-7` was reset to a clean state during the reset/
+  Dashboard lifecycle phase — the `CUST-0001` / `ZZ-QA-*` QA residue referenced in
+  older phase reports is **gone**. A Recovery-Vault snapshot of the closure-phase test
+  dataset auto-expires ~7 days after that run.
 
 ## 🟢 Concurrency (multi-terminal safe for the covered workflows)
 
@@ -719,15 +763,19 @@ npx firebase deploy --only firestore:rules --project balaji-auto-os-7
   (`1e308`) *before* the PH21-01 fix and never re-saved would still overflow the
   Valuation report — `num()` is finite-guarded but not magnitude-clamped; self-heals
   on the next edit; no such data in production. (2) **PH21-D2** — a forged document
-  with a wrong-type nested **scalar** (`vehicle.regNo = {}`) still crashes the
-  module that renders it (`{v.regNo}` → "Objects are not valid as a React child").
-  Each module also has its own local list/detail code beyond the shared calculators.
-  The complete fix is Firestore-rules type assertions
-  (`request.resource.data.lines is list`) — Phase 20's layer, which currently
-  asserts nothing — deferred because it needs a rules deployment (one is already
-  pending), does not cover legacy / bug-introduced data, and is a focused task of
-  its own. Until then a forged/corrupt document can still drop a secondary module
-  view into the ErrorBoundary; recovery is an admin deleting the offending document.
+  with a wrong-type nested **scalar** (`vehicle.regNo = {}`, inside `customer.vehicles[]`)
+  still crashes the module that renders it (`{v.regNo}` → "Objects are not valid as a
+  React child"). Firestore rules cannot deep-validate array *elements*, so this exact
+  nested-scalar case stays app-guarded only (each module also has local list/detail
+  code beyond the shared calculators; recovery is an admin deleting the document).
+  **Partially closed (final closure phase):** the wrong-type-**array** class *is* now
+  asserted at the rules layer — a new `listOrAbsent()` helper denies a `create`/`update`
+  that sets `invoices.lines` / `invoices.payments` / `customers.vehicles` /
+  `jobCards.parts` / `jobCards.labour` / `parts.suppliers` / `purchaseOrders.items` to
+  a present-but-non-list value (absent is still fine for partial/legacy docs). 17
+  emulator assertions in `tests/rules/firestore.rules.test.cjs` cover valid→ALLOWED /
+  non-list→DENIED. Deployment of this delta is an owner action (same
+  `firebase deploy --only firestore:rules` as the auditLog delta above).
 
 - **Every export matches the authoritative record it was generated from** (PHASE 22 —
   PDF / export integrity audit; two MEDIUM + two LOW fixed; see

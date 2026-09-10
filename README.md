@@ -20,7 +20,7 @@ demonstrations.
 - **Sales & Services** — parts-sales and labour ledgers with detail panels and Excel/CSV export.
 - **Inventory & Suppliers** — stock, low-stock alerts, stock-in/stock-out ledgers, supplier directory.
 - **Analytics & Reports** — revenue/profit KPIs, inventory health, workshop score, reminders.
-- **Roles & Permissions** — admin / staff / guest, enforced by Firestore security rules.
+- **Roles & Permissions** — role-based UI permissions (admin / staff / guest); Firestore rules enforce authentication, authorization and destructive-operation (delete) boundaries. Per-record business invariants are enforced in the application transaction layer.
 - **Demo Mode** — a fully isolated in-memory sandbox that cannot touch production data or config.
 
 ## Architecture
@@ -29,8 +29,13 @@ demonstrations.
 - **Firebase Firestore** for persistence; **Firebase Auth** for sign-in.
 - Business logic lives in framework-free pure functions under `services/` and `lib/`,
   so it is unit-testable without a browser.
-- The Firestore **security rules are the security boundary**; client-side role checks are
-  convenience only.
+- **Security model:** authenticated workshop staff are trusted operators. The Firestore
+  **security rules** enforce authentication, authorization and destructive-operation
+  boundaries (and array-typed field shapes); client-side role checks are convenience only.
+  Operational business invariants (overpayment guards, invoice-number monotonicity,
+  idempotency, `_rev` optimistic concurrency, PO-receive limits) are enforced in the
+  application **transaction layer**. The immutable `sales` ledger is authoritative;
+  `salesRollups` is a client-maintained derived cache, recomputable from `sales`.
 
 For a full breakdown of layers, data flow, authentication, navigation, and module
 relationships, see **[docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)**.
@@ -58,7 +63,7 @@ Balaji-Auto-OS/
 │   ├── development/     DEVELOPMENT.md — local setup, dev workflow, demo modes
 │   ├── testing/         TESTING.md — running suites, QA coverage, verification ceiling
 │   └── deployment/      DEPLOYMENT.md — build, env, Firebase rules, rollback
-├── .github/workflows/   CI (lint · build · test)
+├── .github/workflows/   CI (lint · build · test · Firestore rules emulator suite)
 ├── firebase.json        Firestore rules + indexes deploy config
 ├── .firebaserc          Default Firebase project for the CLI
 ├── firestore.rules      Security rules (the security boundary)

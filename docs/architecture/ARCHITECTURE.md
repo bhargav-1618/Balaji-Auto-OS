@@ -44,7 +44,8 @@ balaji-auto-os/
 ├── constants/       TAB_KEYS, collection names, limits, UI tokens
 ├── styles/          Global CSS + design tokens
 ├── public/          Static assets
-├── tests/           Node/jsdom suites (109 files, run by `npm test`)
+├── tests/           Node/jsdom suites (154 files, run by `npm test`) + tests/rules
+│                    (Firestore emulator, `npm run test:rules`)
 ├── tools/           Static scanners (undef, TDZ)
 ├── bench/           Micro-benchmarks
 ├── docs/            Guides, audits, release notes, this file
@@ -344,6 +345,10 @@ See `docs/KNOWN_LIMITATIONS.md`. In brief: the money, stock, invoice-numbering a
 duplicate-action paths are transaction-safe and were verified with concurrent clients
 (post-1.0 reliability program) — what remains under concurrency is a few low-severity
 field-level last-writer-wins races; no list virtualisation (pagination covers current
-scale); the shell is a large composition root (post-1.0 split); and all browser-only
-behaviour (render, print/PDF, live Firestore) requires manual QA. Publishing the Firestore
-rules and setting a strong owner password are deployment-time operational tasks.
+scale); `components/InventoryDashboard.js` remains the application's **orchestration
+container** (~11k lines — it owns the live Firestore subscriptions, the navigation
+authority, the dirty-state guards and all `runTransaction` closures; the tab views,
+modals, hooks and pure logic were extracted around it, it was not eliminated); and all
+browser-only behaviour (render, print/PDF, live Firestore) requires manual QA. Publishing
+the Firestore rules and setting a strong owner password are deployment-time operational
+tasks.
