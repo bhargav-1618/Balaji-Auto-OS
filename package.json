@@ -71,8 +71,6 @@
     "nanoid": "^3.3.19",
     "protobufjs": "^7.6.6",
     "dompurify": "^3.4.15",
-    "firebase": {
-      "undici": "^6.28.1"
-    }
+    "undici@6": "^6.28.1"
   }
 }
