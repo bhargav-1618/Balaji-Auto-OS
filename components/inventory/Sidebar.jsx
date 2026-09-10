@@ -5,8 +5,7 @@
 // routing logic — `activeTab` / `setActiveTab` stay in the container, and every
 // item just calls the `setActiveTab` prop (the container keeps the hash sync, the
 // history `onPop` guard, `blockingModalRef`, `snapBack` — none of that moved).
-// The NAV_GROUPS config + GROUP_OF_TAB lookup move here because nothing else uses
-// them; NAV_ITEMS is a long-dead flatten kept co-located with its source array.
+// The NAV_GROUPS config + GROUP_OF_TAB lookup move here because nothing else uses them.
 
 import { useState, useEffect } from 'react';
 import {
@@ -55,7 +54,6 @@ const NAV_GROUPS = [
     { id: 'settings', label: 'Settings', icon: Settings },
   ] },
 ];
-const NAV_ITEMS = NAV_GROUPS.flatMap((g) => g.items);
 // which group holds a given tab id (used to auto-expand the active section)
 const GROUP_OF_TAB = NAV_GROUPS.reduce((acc, g) => { g.items.forEach((it) => { acc[it.id] = g.key; }); return acc; }, {});
 

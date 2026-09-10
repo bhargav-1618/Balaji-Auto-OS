@@ -3,7 +3,6 @@
 // Single-file, production-ready. Next.js + Tailwind + Lucide + Firestore (offline-first, Base64 images).
 
 import { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react';
-import { createPortal } from 'react-dom';
 import Modal from './Modal';
 import InventoryOverview from './inventory/InventoryOverview';
 import InventoryArchive from './inventory/InventoryArchive';
@@ -45,7 +44,6 @@ import { checkCapacityGuard } from '../lib/useCapacity';
 import { CAPACITY_MODULES } from '../constants/capacity';
 import { getLocalCapacityStatus } from '../services/localCapacityService';
 import MiniSelect from './common/MiniSelect';
-import { stamp } from '../lib/exportSheet';
 import { APP_SCROLL_ID, appScrollTo, appScrollY, onAppScroll } from '../lib/appScroll';
 import { useDeferredSearch, normId, useSearchIndex, searchAndRank } from '../lib/useSearch';
 import { isValidGstin } from '../lib/gst';
@@ -53,20 +51,20 @@ import { resolveSelectedRecords } from '../lib/selectionScope';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { useIsMobile } from '../hooks/useIsMobile';
 import Toggle from './common/Toggle';
-import { useTranslation, LOCALES } from '../lib/i18n';
+import { useTranslation } from '../lib/i18n';
 import { lockBody, unlockBody } from './Modal';
 import BillingModule from './billing/BillingModule';
 import { getGarageSeed } from '../lib/demoGarageSeed';
-import { computeAlerts, computeAchievements } from '../services/analyticsService';
-import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, toIndianPhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, asArray, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
+import { computeAlerts } from '../services/analyticsService';
+import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
 import { buildPO, poCreateDoc, poAdvanceDoc, poReceiveDoc, poCancelDoc, nextPOStatus } from '../services/purchaseOrderService';
 import { toNum, invoiceTotals, invoiceStatus } from '../services/billingService';
 import {
   catMatches, remapCatFields, renameCategoryDocs, deleteCategoryDocs,
   nonNegInt, nonNegNum, sanitizeStock,
-  cardReservedQtys, reserveDelta, computeStockAdjustment, buildRestockRecord,
+  reserveDelta, computeStockAdjustment, buildRestockRecord,
   getFastMoverMin, isFastMover, pricesDiffer,
-  lockedCapital, expectedProfit, ageDays, isDeadStock, deadStockReason,
+  isDeadStock, deadStockReason,
   asList, flattenVehicles, compatStr, categoriesStr, partIsUniversal, brandsOf,
   getReorderMultiplier,
 } from '../services/inventoryService';
@@ -76,7 +74,7 @@ import {
   primaryVehicle, withVehicleDefaults, findVehicleIndex, buildVehicleHistoryUpdate,
   buildJobCardDraftFields, buildInvoicePrefillFields,
 } from '../services/vehicleService';
-import { normalizeText, tokenize, SLANG_MAP, expandToken } from '../lib/search';
+import { normalizeText, tokenize, expandToken } from '../lib/search';
 import {
   collection,
   doc,
@@ -136,7 +134,7 @@ import {
   X,
   Upload,
   PackageSearch,
-  AlertTriangle, Bell,
+  AlertTriangle,
   PackageX,
   Loader2,
   LogOut,
@@ -349,17 +347,6 @@ const DEFAULT_VEHICLES = [
 // functions further down this file — hoisted once so both share the same source.
 const CONTACT_LABELS = ['Primary', 'WhatsApp', 'Landline', 'Owner', 'Accounts', 'Workshop', 'Manager'];
 
-// Does the part's searchable text satisfy every spoken token (or its synonym)?
-function partMatchesTokens(part, tokens) {
-  if (!tokens.length) return true;
-  const hay = normalizeText(
-    [part.name, part.sku, part.category, categoriesStr(part), part.vehicle, compatStr(part), part.locationBin]
-      .filter(Boolean)
-      .join(' ')
-  );
-  return tokens.every((tok) => expandToken(tok).some((cand) => hay.includes(cand)));
-}
-
 // FEATURE 2 + 4: analytics + compatibility helpers
 const SHOP_NAME = 'SRI BABA BALAJI MARUTI CARE';
 // The owner can override the shop name / contact from Settings → Business Profile.
@@ -480,9 +467,6 @@ function getSupplierContacts(supplier) {
   }
   return legacy.filter((c) => c.number);
 }
-const getSupplierPrimaryPhone = (supplier) =>
-  normalizePhone(getSupplierContacts(supplier)[0]?.number || supplier?.primaryPhone || supplier?.phone || '');
-
 // Normalise a supplier record's phone list (new schema + legacy)
 function getSupplierPhones(supplier) {
   return [...new Set(getSupplierContacts(supplier).map((c) => c.number).filter(Boolean))];
@@ -7470,70 +7454,6 @@ export default function InventoryDashboard() {
     }
   }
 
-  // ---- Additional business reports (all Excel .xlsx) ----
-  // Named writeReportSheet (not writeSheet) — it takes positional args and writes
-  // the file directly, unlike lib/exportSheet.js's options-object writeSheet
-  // (which the extracted ReportsView still uses). Kept distinct to avoid confusion.
-  async function writeReportSheet(rows, sheetName, fileName, emptyMsg) {
-    if (demoMode && !demoAdmin && !demoPerms.exportExcel) { protectedDemoToast(true); return; }
-    if (!rows || rows.length === 0) { toast.error(emptyMsg || 'Nothing to export yet.'); return; }
-    try {
-      const XLSX = await import('xlsx');
-      const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
-      XLSX.writeFile(wb, `${fileName}_${new Date().toISOString().slice(0, 10)}.xlsx`);
-      notify.exported(`Exported ${rows.length} row${rows.length > 1 ? 's' : ''} to Excel`);
-    } catch (e) { console.error('Report export failed:', e); toast.error('Could not export the report.'); }
-  }
-
-  async function exportSalesReport() {
-    const rows = sales.map((s) => ({
-      'Date': s.createdAt?.toDate ? s.createdAt.toDate().toLocaleString('en-IN') : '',
-      'Part': s.partName || '', 'SKU': s.sku || '',
-      'Quantity': s.quantity ?? 0, 'Unit Price (₹)': s.unitPrice ?? 0,
-      'Total (₹)': s.totalPrice ?? 0, 'Profit (₹)': s.profit ?? 0,
-    }));
-    writeReportSheet(rows, 'Sales', 'Maruti_Care_Sales_Report', 'No sales to export yet.');
-  }
-
-  async function exportLowStockReport() {
-    const low = inventory.filter((p) => !p.archived && (p.stock || 0) <= (p.minStock || 5));
-    const rows = low.map((p) => ({
-      'Part': p.name || '', 'SKU': p.sku || '', 'Category': p.category || '',
-      'Current Stock': p.stock ?? 0, 'Min Stock': p.minStock ?? 5,
-      'Shortfall': Math.max(0, (p.minStock ?? 5) - (p.stock ?? 0)),
-      'Status': (p.stock ?? 0) === 0 ? 'Out of Stock' : 'Low',
-      'Suggested Order': suggestedOrderQty(p),
-      'Suppliers': getPartSuppliers(p).map((s) => s.name).filter(Boolean).join('; '),
-    }));
-    writeReportSheet(rows, 'Low Stock', 'Maruti_Care_Low_Stock_Report', 'No low-stock items — inventory is healthy.');
-  }
-
-  async function exportSupplierReport() {
-    const rows = suppliers.map((s) => {
-      const partsForSup = inventory.filter((p) => getPartSuppliers(p).some((x) => x.id === s.id || x.name === s.name));
-      return {
-        'Supplier': s.name || '',
-        'Contact': s.contactPerson || '',
-        'Phone': getSupplierContacts(s).map((c) => c.number).filter(Boolean).join('; '),
-        'GSTIN': s.gstin || '',
-        'Address': s.address || '',
-        'Parts Supplied': partsForSup.length,
-        'Low-Stock Parts': partsForSup.filter((p) => (p.stock || 0) <= (p.minStock || 5)).length,
-      };
-    });
-    writeReportSheet(rows, 'Suppliers', 'Maruti_Care_Supplier_Report', 'No suppliers to export yet.');
-  }
-
-  async function exportStockMovementReport() {
-    const inRows = restocks.map((r) => ({ 'Date': r.createdAt?.toDate ? r.createdAt.toDate().toLocaleString('en-IN') : '', 'Type': 'Stock In', 'Part': r.partName || '', 'SKU': r.sku || '', 'Quantity': r.quantity ?? 0, 'Reason': 'Received' }));
-    const adjRows = stockAdjustments.map((a) => ({ 'Date': a.createdAt?.toDate ? a.createdAt.toDate().toLocaleString('en-IN') : '', 'Type': (a.quantity || 0) < 0 ? 'Reduction' : 'Addition', 'Part': a.partName || '', 'SKU': a.sku || '', 'Quantity': a.quantity ?? 0, 'Reason': a.reason || 'Adjustment' }));
-    const saleRows = sales.map((s) => ({ 'Date': s.createdAt?.toDate ? s.createdAt.toDate().toLocaleString('en-IN') : '', 'Type': 'Sale', 'Part': s.partName || '', 'SKU': s.sku || '', 'Quantity': -(s.quantity ?? 0), 'Reason': 'Sold' }));
-    const rows = [...inRows, ...adjRows, ...saleRows].sort((a, b) => (a.Date < b.Date ? 1 : -1));
-    writeReportSheet(rows, 'Stock Movement', 'Maruti_Care_Stock_Movement_Report', 'No stock movements to export yet.');
-  }
-
   // ---- Part save: resolve multi-suppliers, bargain floor, offline-first ----
   // Mutation-safety pass — Part Save had NO synchronous in-flight guard at all: the
   // form's own submit button is `type="submit" form="part-form"`, so two rapid clicks
@@ -7849,11 +7769,6 @@ export default function InventoryDashboard() {
       updatedAt: serverTimestamp(),
     }).catch((e) => console.error('Reorder request failed:', e));
   }
-  // Combined action for the Overview "Order" button: log the request + open WA.
-  function handleReorderAndLog(part) {
-    logReorderRequest(part);
-    handleReorder(part);
-  }
   function advanceReorderStatus(req) {
     const idx = REORDER_FLOW.indexOf(req.status);
     const next = REORDER_FLOW[Math.min(idx + 1, REORDER_FLOW.length - 1)];
@@ -7868,43 +7783,6 @@ export default function InventoryDashboard() {
       setReorderRequests((prev) => prev.filter((r) => r.id !== req.id)); toast.success('Request cleared (demo)'); return;
     }
     deleteDoc(doc(db, COLLECTIONS.REORDER_REQUESTS, req.id)).catch((e) => console.error('Clear request failed:', e));
-  }
-
-  function handleReorder(part) {
-    // Resolve the part's primary supplier + their full contact registry.
-    const partSup = getPartSuppliers(part)[0];
-    const supName = partSup?.name || part.supplier || '';
-
-    // #2: if the part has a saved PREFERRED contact number, use it directly —
-    // the owner already chose where this part's PO should go.
-    if (partSup && tenDigits(partSup.phone)) {
-      openWhatsAppPO(part, supName, partSup.phone);
-      return;
-    }
-
-    // Otherwise resolve the directory supplier's contacts (id → phone → name).
-    const record =
-      suppliers.find((s) => partSup?.id && s.id === partSup.id) ||
-      suppliers.find(
-        (s) =>
-          getSupplierPhones(s).some((p) => normalizePhone(p) === normalizePhone(partSup?.phone)) ||
-          getSupplierNames(s).some((n) => safeLower(n) === safeLower(supName))
-      );
-
-    const contacts = record ? getSupplierContacts(record) : [];
-
-    // Strict guard clause: no usable contact → graceful operational block.
-    if (!supName || contacts.length === 0) {
-      setReorderTarget({ part, block: true });
-      return;
-    }
-    // Exactly one number → fire immediately.
-    if (contacts.length === 1) {
-      openWhatsAppPO(part, supName, contacts[0].number);
-      return;
-    }
-    // Multiple numbers → open the smart router modal to choose.
-    setReorderTarget({ part, supplierName: supName, contacts });
   }
 
   // ---- Real reorder workflow (dialog with supplier choice / WhatsApp / Create PO / manage existing) ----

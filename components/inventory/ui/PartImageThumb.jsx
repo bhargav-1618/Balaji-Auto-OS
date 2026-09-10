@@ -28,7 +28,6 @@ export default function PartImageThumb({ src, alt, demoMode = false, onHover, on
   // forced/demo image). Hover preview is enabled only when an image exists.
   const realSrc = (!src || errored) ? null : src;
   const effectiveSrc = realSrc || (demoMode ? imageForPartName(alt || '') : null);
-  const hasImage = !!effectiveSrc;
 
   if (!effectiveSrc) {
     return (
