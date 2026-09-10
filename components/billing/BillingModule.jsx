@@ -461,7 +461,7 @@ function Section({ title, sub, children, defaultOpen = true, badge }) {
   );
 }
 
-function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], onSave, onClose, demoMode, demoCanEditPricing = true, onQuickCustomer, onQuickVehicle, onDownloadPDF, onDuplicate, onCreditNote, readOnly = false, banner = null, onDirtyChange }) {
+function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], onSave, onClose, demoMode, demoCanEditPricing = true, onQuickCustomer, onQuickVehicle, onDownloadPDF, onDuplicate, onCreditNote, readOnly = false, banner = null, onDirtyChange, actorEmail }) {
   // Billing settings (admin-controlled): GST & discount can be switched off entirely.
   const SETTINGS_KEY = demoMode ? 'maruti_settings_demo' : 'maruti_settings';
   const billingCfg = useMemo(() => { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { return {}; } }, [SETTINGS_KEY]);
@@ -3107,7 +3107,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           the real outcome and only closes/toasts on confirmed success; on failure the modal
           stays open (so nothing typed is lost) and the shared persistence layer's own toast
           already told the user what happened. */}
-      {edit && <InvoiceModal key={`inv:${edit.id || 'new'}:${revOf(edit)}`} initial={edit} readOnly={invoiceViewOnly} banner={isPersistedEdit ? invoiceBanner : null} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { let saved; try { saved = await onPersist?.(iv); } catch (e) { return false; } const finalIv = saved || iv; invoiceLease.release(); setEdit(null); toast.success(`${finalIv.isEstimate ? 'Estimate' : 'Invoice'} ${finalIv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(finalIv), 120); return finalIv; }} onClose={closeInvoiceEditor} onDirtyChange={onDirtyChange} />}
+      {edit && <InvoiceModal key={`inv:${edit.id || 'new'}:${revOf(edit)}`} initial={edit} readOnly={invoiceViewOnly} banner={isPersistedEdit ? invoiceBanner : null} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} demoMode={demoMode} demoCanEditPricing={demoCanEditPricing} actorEmail={actorEmail} onQuickCustomer={onQuickCustomer} onQuickVehicle={onQuickVehicle} onDownloadPDF={downloadPDF} onDuplicate={(iv) => { setEdit(null); setTimeout(() => duplicateInvoice(iv), 60); }} onCreditNote={(iv) => { setEdit(null); setTimeout(() => changeStatus(iv, 'Returned', 'Returned'), 60); }} onSave={async (iv, thenPay) => { let saved; try { saved = await onPersist?.(iv); } catch (e) { return false; } const finalIv = saved || iv; invoiceLease.release(); setEdit(null); toast.success(`${finalIv.isEstimate ? 'Estimate' : 'Invoice'} ${finalIv.invNo} saved`); if (thenPay) setTimeout(() => setPayFor(finalIv), 120); return finalIv; }} onClose={closeInvoiceEditor} onDirtyChange={onDirtyChange} />}
       {invoiceReviewOpen && isPersistedEdit && invoiceSync.latest && (
         <ConflictReviewDialog
           mode="review"

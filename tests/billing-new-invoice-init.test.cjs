@@ -53,6 +53,19 @@ ok('editor header keys the "Edit" label on isPersisted, not inv.invNo',
   /isPersisted \? `Edit \$\{inv\.invNo\}` : \(inv\.invNo \? `New Invoice · \$\{inv\.invNo\}` : 'New Invoice'\)/.test(src) &&
   !/\{inv\.invNo \? `Edit \$\{inv\.invNo\}` : 'New Invoice'\}/.test(src));
 
+// ---- actorEmail is threaded into InvoiceModal ---------------------------
+// LIVE regression: InvoiceModal's save handler records the invoice's own history
+// entry as `by: demoMode ? 'Demo User' : (actorEmail || 'Staff')`, but `actorEmail`
+// was never a prop of InvoiceModal (only of the parent BillingModule) — so every
+// PRODUCTION invoice save threw `ReferenceError: actorEmail is not defined` before
+// onSave ran. InvoiceModal must destructure it AND the render must pass it down.
+ok('InvoiceModal destructures actorEmail (its save handler references it)',
+  /function InvoiceModal\(\{[^}]*\bactorEmail\b[^}]*\}\)/.test(src));
+ok('the <InvoiceModal> render forwards actorEmail from BillingModule',
+  /<InvoiceModal[^>]*\bactorEmail=\{actorEmail\}/.test(src));
+ok('the invoice-history "by" still resolves through actorEmail (real actor, not hardcoded "Staff")',
+  /by: demoMode \? 'Demo User' : \(actorEmail \|\| 'Staff'\) \}\];/.test(src));
+
 // ---- draft restore (Phase 5b: static key, adopts the draft's own id) ----
 ok('autosaved-draft restore is skipped when editing a persisted invoice', /if \(isPersisted\) return;\s*\n\s*try \{\s*\n\s*const d = JSON\.parse\(localStorage\.getItem\(DRAFT_KEY\)/.test(src));
 ok('a drafted invoice that already committed is cleared, not re-restored',
