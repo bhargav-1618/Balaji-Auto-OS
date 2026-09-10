@@ -3,10 +3,10 @@
  *
  * "Change a setting, change it back → Save Changes stays enabled."
  *
- * The normaliser below is the one shipped in InventoryDashboard.js. It is duplicated
- * here rather than exported, because SettingsView is a private function inside an
- * 11k-line module and exporting it just for a test would be a bigger change than the
- * fix. The test asserts the SHIPPED defaults table stays in sync with the accessors.
+ * The normaliser below is the one shipped in components/inventory/views/SettingsView.jsx
+ * (Refactor Phase 12 — extracted from InventoryDashboard.js). It is pulled out by regex
+ * and executed rather than imported, because normalizeSettings is a private helper in
+ * that module. The test asserts the SHIPPED defaults table stays in sync with the accessors.
  */
 const fs = require('fs');
 const path = require('path');
@@ -17,7 +17,7 @@ const ok = (name, cond, detail = '') => {
   else { FAIL++; console.log(`  ✗ ${name}${detail ? `\n      → ${detail}` : ''}`); }
 };
 
-const SRC = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+const SRC = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/SettingsView.jsx'), 'utf8');
 
 // Pull the real defaults + normaliser out of the shipped file and execute them.
 const defaultsBlock = SRC.match(/const SETTINGS_DEFAULTS = \{[\s\S]*?\n\};/);

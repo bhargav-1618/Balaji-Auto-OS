@@ -9,6 +9,9 @@ const fs = require('fs'), path = require('path');
 let PASS = 0, FAIL = 0;
 const ok = (n, c, d = '') => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}${d ? `\n      → ${d}` : ''}`); } };
 const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+// Refactor Phase 12 — SettingsView (SETTINGS_KEY + saveBiz) extracted verbatim to its
+// own file; the role-management write functions stay in the container (dash).
+const settings = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/SettingsView.jsx'), 'utf8');
 const billing = fs.readFileSync(path.resolve(__dirname, '../components/billing/BillingModule.jsx'), 'utf8');
 const auth = fs.readFileSync(path.resolve(__dirname, '../context/AuthContext.js'), 'utf8');
 
@@ -21,12 +24,12 @@ for (const fn of ['addStaffEmail', 'removeStaffEmail', 'setStaffPermission', 'ad
 }
 
 // 2. settings are namespaced by mode — demo can't overwrite production config
-ok('dashboard settings key is namespaced by mode',
-  /const SETTINGS_KEY = demoMode \? 'maruti_settings_demo' : 'maruti_settings'/.test(dash));
+ok('SettingsView settings key is namespaced by mode',
+  /const SETTINGS_KEY = demoMode \? 'maruti_settings_demo' : 'maruti_settings'/.test(settings));
 ok('saveBiz writes the namespaced key (not hardcoded production)',
-  /localStorage\.setItem\(SETTINGS_KEY, JSON\.stringify\(biz\)\)/.test(dash));
+  /localStorage\.setItem\(SETTINGS_KEY, JSON\.stringify\(biz\)\)/.test(settings));
 ok('no hardcoded production settings WRITE remains',
-  !/localStorage\.setItem\('maruti_settings',/.test(dash));
+  !/localStorage\.setItem\('maruti_settings',/.test(settings) && !/localStorage\.setItem\('maruti_settings',/.test(dash));
 ok('BillingModule reads the namespaced settings key',
   /const SETTINGS_KEY = demoMode \? 'maruti_settings_demo'/.test(billing));
 

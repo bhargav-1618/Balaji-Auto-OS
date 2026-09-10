@@ -53,6 +53,9 @@ const R = (p) => fs.readFileSync(path.resolve(__dirname, '..', p), 'utf8');
 console.log('\nWorkspace width architecture — universal budget, scroll decoupled from width cap\n');
 
 const inv = R('components/InventoryDashboard.js');
+// Refactor Phase 12 — SettingsView (+ the SETTINGS_* width-tier constants) extracted
+// verbatim to its own file. The <main> shell + its comment stay in the container (inv).
+const sv = R('components/inventory/views/SettingsView.jsx');
 const uiConstants = R('constants/ui.js');
 const detailsPanel = R('components/common/DetailsPanel.jsx');
 const cust = R('components/customers/CustomersModule.jsx');
@@ -90,23 +93,23 @@ ok('max-w-7xl is no longer used as a shell/tab width default anywhere in the app
 
 // --- Full-Workspace Settings Layout: per-SECTION width, not a blanket page-level cap ---
 ok('Settings\' content column itself no longer caps width — it takes the shell\'s full budget like every other tab',
-  /lg:flex-1 lg:min-w-0 space-y-4/.test(inv) && !/lg:flex-1 lg:min-w-0 lg:max-w-2xl/.test(inv));
+  /lg:flex-1 lg:min-w-0 space-y-4/.test(sv) && !/lg:flex-1 lg:min-w-0 lg:max-w-2xl/.test(sv));
 ok('a shared, named width-tier decides per-section width instead of scattered magic numbers',
-  /const SETTINGS_CARD_MAX = 'max-w-3xl';/.test(inv) &&
-  /const SETTINGS_WIDE_SECTIONS = new Set\(\['business', 'billing', 'jobcards', 'users', 'backup', 'demoperms'\]\);/.test(inv));
+  /const SETTINGS_CARD_MAX = 'max-w-3xl';/.test(sv) &&
+  /const SETTINGS_WIDE_SECTIONS = new Set\(\['business', 'billing', 'jobcards', 'users', 'backup', 'demoperms'\]\);/.test(sv));
 ok('multi-group sections (Business Profile, Billing, Job Cards, Users & Roles, Backup & Data) render as a responsive card grid, not one giant single-column card',
-  /const SETTINGS_GROUP_GRID = 'grid grid-cols-1 xl:grid-cols-2 gap-4';/.test(inv) &&
-  (inv.match(/className=\{SETTINGS_GROUP_GRID\}/g) || []).length >= 5);
+  /const SETTINGS_GROUP_GRID = 'grid grid-cols-1 xl:grid-cols-2 gap-4';/.test(sv) &&
+  (sv.match(/className=\{SETTINGS_GROUP_GRID\}/g) || []).length >= 5);
 ok('small sections (Inventory/Notifications/Appearance/Security/About) are wrapped in the shared cap, not a per-section magic max-width',
-  (inv.match(/<div className=\{SETTINGS_CARD_MAX\}>/g) || []).length >= 5);
+  (sv.match(/<div className=\{SETTINGS_CARD_MAX\}>/g) || []).length >= 5);
 // Card titles now route through lib/i18n.js's t('key', 'English fallback') for
 // localization — the literal English string is still the second argument, so the
 // same four-card grouping is still verifiable, just through the translated form.
 ok('Business Profile is grouped into Business Identity / Operational / Regional / Branding, not one flat field list (the brief\'s own worked example)',
-  /Card title=\{t\('settings\.businessIdentity\.title', 'Business Identity'\)\}/.test(inv) && /Card title=\{t\('settings\.operational\.title', 'Operational Settings'\)\}/.test(inv) &&
-  /Card title=\{t\('settings\.regional\.title', 'Regional Settings'\)\}/.test(inv) && /Card title=\{t\('settings\.branding\.title', 'Branding'\)\}/.test(inv));
+  /Card title=\{t\('settings\.businessIdentity\.title', 'Business Identity'\)\}/.test(sv) && /Card title=\{t\('settings\.operational\.title', 'Operational Settings'\)\}/.test(sv) &&
+  /Card title=\{t\('settings\.regional\.title', 'Regional Settings'\)\}/.test(sv) && /Card title=\{t\('settings\.branding\.title', 'Branding'\)\}/.test(sv));
 ok('the save bar\'s width matches whichever tier the active section uses, instead of a fixed unrelated width',
-  /className=\{`sticky bottom-0 flex items-center justify-between gap-3 rounded-2xl px-4 py-3 \$\{SETTINGS_WIDE_SECTIONS\.has\(section\) \? '' : SETTINGS_CARD_MAX\}`\}/.test(inv));
+  /className=\{`sticky bottom-0 flex items-center justify-between gap-3 rounded-2xl px-4 py-3 \$\{SETTINGS_WIDE_SECTIONS\.has\(section\) \? '' : SETTINGS_CARD_MAX\}`\}/.test(sv));
 ok('the shell-level comment above <main> no longer describes Settings as the one per-tab exception (it now shares the same unconditional budget)',
   !/Settings constrains its OWN content column instead \(see SettingsView's/.test(inv) &&
   /a per-SECTION content decision, not a per-PAGE exception to this/.test(inv));

@@ -26,6 +26,10 @@ const R = (p) => fs.readFileSync(path.resolve(__dirname, '..', p), 'utf8');
 const rules = R('firestore.rules');
 const auth = R('context/AuthContext.js');
 const dash = R('components/InventoryDashboard.js');
+// Refactor Phase 12 — SettingsView (its isAdmin section gating + the admin/staff UI)
+// extracted verbatim to its own file. Container-side auth (rules, demoCan, tab guards)
+// still reads from dash.
+const settings = R('components/inventory/views/SettingsView.jsx');
 const idx = R('pages/index.js');
 const billing = R('components/billing/BillingModule.jsx');
 const known = R('docs/KNOWN_LIMITATIONS.md');
@@ -79,10 +83,10 @@ ok('canDelete (UI) = isAdmin || perms.deletes (an admin may grant a staffer the 
 ok('bulk-delete has an explicit isAdmin re-check inside the handler, not just button visibility',
   /if \(!isAdmin\) return toast\.error\('Only admins can bulk-delete'\);/.test(billing));
 ok('Settings "Users & Roles" and "Backup & Data" tabs are isAdmin-gated (not in the tab list otherwise)',
-  /\.\.\.\(isAdmin \? \[\['users', 'Users & Roles'\]\] : \[\]\)/.test(dash)
-  && /\.\.\.\(isAdmin \? \[\['backup', 'Backup & Data'\]\] : \[\]\)/.test(dash));
+  /\.\.\.\(isAdmin \? \[\['users', 'Users & Roles'\]\] : \[\]\)/.test(settings)
+  && /\.\.\.\(isAdmin \? \[\['backup', 'Backup & Data'\]\] : \[\]\)/.test(settings));
 ok('Settings sections themselves re-check isAdmin (section === "users" && isAdmin, etc.)',
-  /section === 'users' && isAdmin/.test(dash) && /section === 'backup' && isAdmin/.test(dash) && /section === 'demoperms' && isAdmin/.test(dash));
+  /section === 'users' && isAdmin/.test(settings) && /section === 'backup' && isAdmin/.test(settings) && /section === 'demoperms' && isAdmin/.test(settings));
 ok('demo mode never starts a business-data Firestore listener (every inline onSnapshot effect returns early when demoMode)',
   (dash.match(/if \(demoMode\) return;\s*\n\s*const unsub = onSnapshot\(/g) || []).length >= 3);
 // Refactor Phase 6 — 8 of the simplest listeners now route through hooks/useLiveCollection.js.
@@ -205,7 +209,7 @@ ok('the doc that DETERMINES role (appSettings/roles) is writable ONLY by an exis
 ok('isAdmin() itself reads appSettings/roles.admins — it can only ever be satisfied by the owner email or an already-listed admin',
   /function isAdmin\(\)[\s\S]*?userEmail\(\) == ownerEmail\(\)[\s\S]*?userEmail\(\) in rolesDoc\(\)\.admins/.test(rules));
 ok('the client also refuses to render the owner a "Remove admin" control (belt-and-braces UI)',
-  /OWNER · Admin/.test(dash) && /admins\.filter\(\(e\) => !bootstrapAdmins/.test(dash));
+  /OWNER · Admin/.test(settings) && /admins\.filter\(\(e\) => !bootstrapAdmins/.test(settings));
 
 // ===================================================================
 // 6. EMULATOR COVERAGE CROSS-REFERENCE (tests/rules/firestore.rules.test.cjs)

@@ -79,6 +79,8 @@ const jc = read('../components/jobcards/JobCardModule.jsx');
 const bill = read('../components/billing/BillingModule.jsx');
 const veh = read('../components/vehicles/VehiclesModule.jsx');
 const dash = read('../components/InventoryDashboard.js');
+// Refactor Phase 12 — SettingsView (Business Profile phone/email validation) extracted verbatim.
+const settings = read('../components/inventory/views/SettingsView.jsx');
 
 ok('Customer wizard: phone uses isIndianMobile (loose /^\\d{10}$/ gone)',
   /isIndianMobile\(f\.phone\)/.test(cust) && !/\/\^\\d\{10\}\$\/\.test\(f\.phone/.test(cust));
@@ -111,9 +113,9 @@ ok('Vehicles: insurance agent phone is validated on save',
 ok('Billing: the invoice phone field is validated on save (same style as the GST check)',
   /if \(inv\.phone && !isIndianMobile\(inv\.phone\)\) return toast\.error\(MOBILE_ERROR\)/.test(bill));
 ok('Settings: business profile phone + email validated before save',
-  /bizPhoneErr = biz\.bizPhone && !isIndianMobile/.test(dash) &&
-  /bizEmailErr = biz\.bizEmail && !isValidEmail/.test(dash) &&
-  /if \(bizPhoneErr\)[\s\S]{0,90}if \(bizEmailErr\)/.test(dash));
+  /bizPhoneErr = biz\.bizPhone && !isIndianMobile/.test(settings) &&
+  /bizEmailErr = biz\.bizEmail && !isValidEmail/.test(settings) &&
+  /if \(bizPhoneErr\)[\s\S]{0,90}if \(bizEmailErr\)/.test(settings));
 ok('Reminders: optional contact phone validated before add',
   /f\.phone && !isIndianMobile\(f\.phone\)/.test(rem));
 ok('Suppliers + staff + admin email all use isValidEmail (no loose /\\S+@\\S+/ left)',
