@@ -32,6 +32,10 @@ const fs = require('fs'), path = require('path');
 let PASS = 0, FAIL = 0;
 const ok = (n, c, d = '') => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}${d ? `\n      → ${d}` : ''}`); } };
 const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+// Refactor Phase 11 — OverviewView was extracted verbatim to its own file. The container
+// still owns the `<OverviewView onNavigate={...}>` call site (window.open drill-down) and
+// the deep-link parser; OverviewView's OWN JSX ("View all N" links, grid rows) reads here.
+const overview = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/OverviewView.jsx'), 'utf8');
 
 console.log('\nUniversal Dashboard drill-down navigation (View All / KPI / Insights)\n');
 
@@ -72,15 +76,15 @@ ok('opts are applied scoped to the correct target tab (inventory vs suppliers vs
 
 // --- every Dashboard drill-down routes through the SAME onNavigate (one universal rule, not per-card logic) ---
 ok('the Reorder Center "View all N reorder items" link calls onNavigate (inherits the new-tab fix automatically, no separate patch needed)',
-  /onClick=\{\(\) => onNavigate\('inventory', \{ subView: 'parts', invFilter: 'reorder' \}\)\}/.test(dash));
+  /onClick=\{\(\) => onNavigate\('inventory', \{ subView: 'parts', invFilter: 'reorder' \}\)\}/.test(overview));
 ok('Insights list items with a nav target call the SAME onNavigate (one shared mechanism for every KPI drill-down)',
-  /onClick=\{\(\) => onNavigate\(it\.nav\.tab, it\.nav\.opts\)\}/.test(dash));
+  /onClick=\{\(\) => onNavigate\(it\.nav\.tab, it\.nav\.opts\)\}/.test(overview));
 
 // --- confirmed gap fixed: Low Stock Alerts had no way to see beyond its top-5 cap ---
 ok('Low Stock Alerts now has a "View all" link once the list exceeds the shown top-5, using the distinct (narrower) invFilter=\'low\', not a duplicate of Reorder Center\'s \'reorder\' filter',
-  /lowStock\.length > 5\) \{[\s\S]{0,20}<button onClick=\{\(\) => onNavigate\('inventory', \{ subView: 'parts', invFilter: 'low' \}\)\}/.test(dash) || /onClick=\{\(\) => onNavigate\('inventory', \{ subView: 'parts', invFilter: 'low' \}\)\}/.test(dash));
+  /lowStock\.length > 5\) \{[\s\S]{0,20}<button onClick=\{\(\) => onNavigate\('inventory', \{ subView: 'parts', invFilter: 'low' \}\)\}/.test(overview) || /onClick=\{\(\) => onNavigate\('inventory', \{ subView: 'parts', invFilter: 'low' \}\)\}/.test(overview));
 ok('Top Suppliers links to the real, already-existing Supplier Performance workspace rather than a fake/duplicate destination',
-  /onClick=\{\(\) => onNavigate\('suppliers', \{ subView: 'performance' \}\)\}/.test(dash));
+  /onClick=\{\(\) => onNavigate\('suppliers', \{ subView: 'performance' \}\)\}/.test(overview));
 
 // --- Workspace Optimization (Part 7/8), REVISED: an earlier pass here added
 // items-start to these two rows so a shorter sibling card (e.g. Quick Actions'
@@ -99,23 +103,23 @@ ok('Top Suppliers links to the real, already-existing Supplier Performance works
 // taller outer box. ---
 console.log('\nWorkspace Optimization — row-equal-height via default grid stretch (revised)\n');
 ok('Reorder Center + Quick Actions row no longer uses items-start (reversed: same-row-equal-height now outranks per-card content-sizing; Quick Actions\' outer card grows to match Reorder Center, its 5 buttons stay naturally positioned at the top)',
-  /Reorder Center \+ Quick Actions[\s\S]{0,1100}className="grid grid-cols-1 lg:grid-cols-3 gap-4"/.test(dash) &&
-  !/Reorder Center \+ Quick Actions[\s\S]{0,1100}className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start"/.test(dash));
+  /Reorder Center \+ Quick Actions[\s\S]{0,1100}className="grid grid-cols-1 lg:grid-cols-3 gap-4"/.test(overview) &&
+  !/Reorder Center \+ Quick Actions[\s\S]{0,1100}className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start"/.test(overview));
 ok('Low Stock Alerts + Recent Activity + Top Selling row no longer uses items-start (the flagship reported case — all three cards in this row now share the same outer height, with DashEmpty centering itself inside whatever height that turns out to be for a 0-record widget)',
-  /Low Stock \+ Recent Activity \+ Top Selling[\s\S]{0,900}className="grid grid-cols-1 lg:grid-cols-3 gap-4"/.test(dash) &&
-  !/Low Stock \+ Recent Activity \+ Top Selling[\s\S]{0,900}className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start"/.test(dash));
+  /Low Stock \+ Recent Activity \+ Top Selling[\s\S]{0,900}className="grid grid-cols-1 lg:grid-cols-3 gap-4"/.test(overview) &&
+  !/Low Stock \+ Recent Activity \+ Top Selling[\s\S]{0,900}className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start"/.test(overview));
 ok('the Insights + Workshop Progress row (the original reference fix this pattern was extended from) has ALSO had items-start removed — the newer brief applies uniformly, not just to the two later rows',
-  !/className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start"/.test(dash));
+  !/className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start"/.test(overview));
 // The Overview/Inventory Health row never carried items-start (it was already
 // naturally balanced) — still true and still untouched under the new rule too,
 // since default stretch was already its behavior.
 ok('the Overview + Inventory Health row is unchanged — plain grid stretch, as it always was',
-  /Overview \(date-range driven\) \+ Inventory Health \(live\) \*\/\}\s*\n\s*<div className="grid grid-cols-1 lg:grid-cols-3 gap-4">/.test(dash));
+  /Overview \(date-range driven\) \+ Inventory Health \(live\) \*\/\}\s*\n\s*<div className="grid grid-cols-1 lg:grid-cols-3 gap-4">/.test(overview));
 // Every multi-column Dashboard row now uses the exact same plain grid className
 // — one consistent mechanism, not per-row special-casing.
 ok('all four multi-column Dashboard rows share the identical plain grid className (no row-specific items-start/items-stretch overrides remain anywhere in the component)',
-  (dash.match(/className="grid grid-cols-1 lg:grid-cols-3 gap-4"/g) || []).length >= 4 &&
-  !/grid grid-cols-1 lg:grid-cols-3 gap-4 items-start/.test(dash));
+  (overview.match(/className="grid grid-cols-1 lg:grid-cols-3 gap-4"/g) || []).length >= 4 &&
+  !/grid grid-cols-1 lg:grid-cols-3 gap-4 items-start/.test(overview));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

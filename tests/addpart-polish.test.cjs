@@ -39,9 +39,11 @@ ok('audit export shows a clear demo message instead of a Firestore error',
 // ── ADDENDUM: freeze-completion items ──────────────────────────────────────
 (function freezeCompletion() {
   const s = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
+  // Refactor Phase 11 — OverviewView (Top Selling card) moved verbatim to its own file.
+  const ov = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/OverviewView.jsx'), 'utf8');
   ok('Top Selling is a true 3-column grid (Product | Qty | Revenue)',
-    (s.match(/grid-cols-\[1fr_auto_auto\]/g) || []).length >= 2);
-  ok('Top Selling has a column header row', /Product<\/span>[\s\S]{0,120}Qty<\/span>[\s\S]{0,120}Revenue<\/span>/.test(s));
+    (ov.match(/grid-cols-\[1fr_auto_auto\]/g) || []).length >= 2);
+  ok('Top Selling has a column header row', /Product<\/span>[\s\S]{0,120}Qty<\/span>[\s\S]{0,120}Revenue<\/span>/.test(ov));
   ok('Supplier immediate-create handler exists (createSupplierNow)', /function createSupplierNow\(name\)/.test(s));
   // H-9: the container now sources the collection name from COLLECTIONS.SUPPLIERS
   // (constants/index.js) instead of the raw literal — same value, single source of truth.

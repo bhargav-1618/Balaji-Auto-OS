@@ -49,6 +49,8 @@ const read = (p) => fs.readFileSync(path.resolve(__dirname, p), 'utf8');
 const dash = read('../components/InventoryDashboard.js');
 // Refactor Phase 10 — AnalyticsView (trend / ledgerByPart / pMargin) moved verbatim here.
 const an = read('../components/inventory/views/AnalyticsView.jsx');
+// Refactor Phase 11 — OverviewView (periodAgg) moved verbatim here.
+const overview = read('../components/inventory/views/OverviewView.jsx');
 
 // =====================================================================
 // 0 — INDEPENDENT ORACLE  (never calls a production analytics helper)
@@ -379,7 +381,7 @@ console.log('\n10  Rollup reconciliation — demo salesRollups vs the demo sales
 // =====================================================================
 console.log('\n11  Dashboard / Sales / Reports consistency — one revenue field, one profit field\n');
 {
-  ok('OverviewView periodAgg revenue = s.revenue (?? s.total) and profit = s.profit', /const rev = \(s\) => s\.revenue \?\? s\.total \?\? 0;/.test(dash) && /revenue \+= rev\(s\); pro \+= s\.profit \|\| 0;/.test(dash));
+  ok('OverviewView periodAgg revenue = s.revenue (?? s.total) and profit = s.profit', /const rev = \(s\) => s\.revenue \?\? s\.total \?\? 0;/.test(overview) && /revenue \+= rev\(s\); pro \+= s\.profit \|\| 0;/.test(overview));
   // Refactor Phase 10 — Analytics ledgerByPart / trend moved verbatim to AnalyticsView.jsx.
   ok('Analytics ledgerByPart aggregates s.revenue / s.cost / s.profit from the same ledger', /e\.revenue \+= s\.revenue \|\| 0;\s*\n\s*e\.cost \+= s\.cost \|\| 0;/.test(an));
   // Refactor Phase 3 — SalesView moved verbatim to ./inventory/views/LedgerViews.

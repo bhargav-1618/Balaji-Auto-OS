@@ -71,10 +71,12 @@ ok('price_change entries carry a from → to detail',
 
 // AuditRow's labelMap and OverviewView's ACT_LABEL must both map every action used.
 // Refactor Phase 1 — AuditRow was extracted verbatim to ./inventory/ui/AuditRow; its
-// labelMap lives there now, OverviewView's ACT_LABEL still lives in InventoryDashboard.js.
+// labelMap lives there now. Refactor Phase 11 — OverviewView (and its ACT_LABEL) moved
+// verbatim to ./inventory/views/OverviewView.jsx.
 const dash = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
 const auditRowSrc = fs.readFileSync(path.resolve(__dirname, '../components/inventory/ui/AuditRow.jsx'), 'utf8');
-const labelMaps = dash + '\n' + auditRowSrc;
+const overviewSrc = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/OverviewView.jsx'), 'utf8');
+const labelMaps = dash + '\n' + auditRowSrc + '\n' + overviewSrc;
 const used = [...new Set(auditLog.map((e) => e.action))];
 ok('AuditRow labelMap covers create_part / sell_part / create_supplier',
   /create_part: 'Created part'/.test(auditRowSrc) && /sell_part: 'Recorded sale'/.test(auditRowSrc) && /create_supplier: 'Added supplier'/.test(auditRowSrc));

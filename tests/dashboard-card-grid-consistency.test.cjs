@@ -19,18 +19,15 @@
 const fs = require('fs'), path = require('path');
 let PASS = 0, FAIL = 0;
 const ok = (n, c, d = '') => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}${d ? `\n      → ${d}` : ''}`); } };
-const inv = fs.readFileSync(path.resolve(__dirname, '../components/InventoryDashboard.js'), 'utf8');
 // Refactor Phase 1 — the pure card shells (OverviewCard / DashEmpty / ScoreCard /
 // DASH_CARD_MIN_H) were extracted verbatim to ./inventory/ui/DashboardCards. Checks on
-// their DEFINITION read `cards`; checks on how OverviewView USES them still read `inv`.
+// their DEFINITION read `cards`; checks on how OverviewView USES them read `overview`.
 const cards = fs.readFileSync(path.resolve(__dirname, '../components/inventory/ui/DashboardCards.jsx'), 'utf8');
-// Scope to OverviewView's own source for checks that would otherwise false-positive
-// against unrelated components elsewhere in this file that happen to reuse similar
-// wording (e.g. Analytics' own "No sales recorded yet" table rows, the Parts table's
-// own filter-empty message) — those are legitimately out of this task's scope.
-const ovStart = inv.indexOf('function OverviewView({');
-const ovEnd = inv.indexOf('\n}\n', ovStart);
-const overview = inv.slice(ovStart, ovEnd);
+// Refactor Phase 11 — OverviewView was extracted verbatim to its own file. The whole
+// file IS OverviewView now, so no in-file slicing is needed to scope these checks away
+// from unrelated components (Analytics' own "No sales recorded yet" rows, the Parts
+// table's filter-empty message) that live in other files entirely.
+const overview = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/OverviewView.jsx'), 'utf8');
 
 console.log('\nDashboard — universal card height, empty-state & grid consistency\n');
 
@@ -42,8 +39,8 @@ ok('OverviewCard applies the floor + flex-col to every card that renders through
 ok('ScoreCard (Inventory Health / Workshop Score) now renders through the SAME shared shell instead of its own hand-rolled div',
   /function ScoreCard\(\{ title, icon: Icon, score, suffix = '%', factors, note \}\) \{\s*const r = ratingFor\(score\);\s*return \(\s*<OverviewCard>/.test(cards));
 ok('the two previously hand-rolled Insights/Workshop Progress divs are gone — both now use OverviewCard',
-  !/lg:col-span-2 rounded-2xl p-4 backdrop-blur-sm" style=\{\{ background: 'rgba\(var\(--fg-rgb\),0\.03\)'/.test(inv) &&
-  (inv.match(/<OverviewCard(?:\s+className="lg:col-span-2")?>/g) || []).length >= 6);
+  !/lg:col-span-2 rounded-2xl p-4 backdrop-blur-sm" style=\{\{ background: 'rgba\(var\(--fg-rgb\),0\.03\)'/.test(overview) &&
+  (overview.match(/<OverviewCard(?:\s+className="lg:col-span-2")?>/g) || []).length >= 6);
 ok('no divergent card background (0.02 vs 0.03 alpha / with-or-without backdrop-blur) remains — every Dashboard card uses the one OverviewCard shape now',
   !/rounded-2xl p-4 \$\{className\}.*rgba\(var\(--fg-rgb\),0\.02\)/.test(cards)
   && /background: 'rgba\(var\(--fg-rgb\),0\.03\)'/.test(cards));
@@ -52,12 +49,12 @@ ok('no divergent card background (0.02 vs 0.03 alpha / with-or-without backdrop-
 ok('DashEmpty exists as the one shared empty-state body (icon + title + optional hint), centered via flex-1 in the parent\'s flex column',
   /function DashEmpty\(\{ icon: Icon, title, hint \}\) \{\s*return \(\s*<div className="flex-1 flex flex-col items-center justify-center text-center gap-1\.5 py-4">/.test(cards));
 ok('every Dashboard widget\'s empty state now renders DashEmpty, not a bare `<p className="text-sm text-white/40 py-4 text-center">`',
-  (inv.match(/<DashEmpty icon=\{/g) || []).length >= 7);
+  (overview.match(/<DashEmpty icon=\{/g) || []).length >= 7);
 ok('the old bare-<p> empty-state idiom is gone from EVERY Dashboard widget (Reorder Center/Low Stock/Recent Activity/Top Selling/Top Suppliers/Pending Supplier) — scoped to OverviewView only, since unrelated views elsewhere in this file (Analytics\' own sales tables, the Parts table\'s own filter-empty message) legitimately keep their own bare <p> for a different context',
   !/text-sm text-white\/45 py-4 text-center/.test(overview) &&
   !/text-sm text-white\/45 py-6 text-center/.test(overview));
 ok('Insights\' own "no insights yet" branch also uses DashEmpty (was a bare <p>, inconsistent with its sibling "All caught up" branch which already had an icon)',
-  /No insights yet.*hint="Add parts and record sales to see trends here\."/.test(inv) || /title="No insights yet" hint="Add parts and record sales to see trends here\."/.test(inv));
+  /No insights yet.*hint="Add parts and record sales to see trends here\."/.test(overview) || /title="No insights yet" hint="Add parts and record sales to see trends here\."/.test(overview));
 ok('Insights\' "All caught up" branch is also flex-1 so IT vertically centers too (previously py-4, top-aligned like the bug case)',
   /\) : \(inventory\.length === 0 && sales\.length === 0 && suppliers\.length === 0\) \? \(\s*<DashEmpty[\s\S]{0,120}\/>\s*\) : \(\s*<div className="flex-1 flex items-center gap-2\.5 text-sm text-white\/60">/.test(overview));
 
@@ -87,9 +84,9 @@ ok('no items-start override survives anywhere in OverviewView — one uniform gr
 // --- Part 4: information density preserved — DashEmpty replaces the empty MESSAGE only,
 // never removes real rows/values/actions from the populated branch ---
 ok('Top Selling\'s populated branch (product/qty/revenue table) is completely untouched by the empty-state change',
-  /topSelling\.map\(\(t\) => \(\s*<div key=\{t\.partId\} className="grid grid-cols-\[1fr_auto_auto\] gap-x-4 items-center text-sm">/.test(inv));
+  /topSelling\.map\(\(t\) => \(\s*<div key=\{t\.partId\} className="grid grid-cols-\[1fr_auto_auto\] gap-x-4 items-center text-sm">/.test(overview));
 ok('Reorder Center\'s populated branch ("View all N reorder items" link, per-row Order button) is untouched',
-  /reorder\.length > 6 && \(\s*<button onClick=\{\(\) => onNavigate\('inventory', \{ subView: 'parts', invFilter: 'reorder' \}\)\}/.test(inv));
+  /reorder\.length > 6 && \(\s*<button onClick=\{\(\) => onNavigate\('inventory', \{ subView: 'parts', invFilter: 'reorder' \}\)\}/.test(overview));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);
