@@ -473,8 +473,10 @@ console.log('\n7  Cardinality transition — no stale carry, correct at every st
     const invoices = N === 0 ? [] : genInvoices(N, parts, 3);
     const stats = billingStats(invoices);
     const health = computeInventoryHealth(N === 0 ? [] : parts);
-    // independent: count must equal what we generated; grand must be finite
-    const okStep = stats.count === (N === 0 ? 0 : N) && Number.isFinite(stats.grand) && Number.isFinite(health.score);
+    // independent: count must equal what we generated; grand must be finite.
+    // health.score is null when N===0 (empty inventory is unmeasurable), else finite 0-100.
+    const healthOk = N === 0 ? health.score === null : Number.isFinite(health.score);
+    const okStep = stats.count === (N === 0 ? 0 : N) && Number.isFinite(stats.grand) && healthOk;
     if (!okStep) allOk = false;
     results.push(`${N}:${stats.count}`);
   }

@@ -7149,7 +7149,14 @@ export default function InventoryDashboard() {
   // restore with one click. Admin-only. Snapshot lives in Firestore so it works
   // across devices and survives refresh/logout.
   // ===========================================================================
-  const RECOVERY_COLLECTIONS = ['parts', 'suppliers', 'categories', 'vehicles', 'customers', 'invoices', 'jobCards', 'sales', 'salesRollups', 'restocks', 'stockAdjustments', 'auditLog', 'reorderRequests'];
+  // Every APPLICATION BUSINESS + DERIVED collection. Reset snapshots each into the
+  // Recovery Vault, writes the meta, then deletes the live docs — restore/purge loop
+  // over the same list. Must stay in sync with COLLECTIONS in constants/index.js.
+  // PRESERVED (deliberately absent): counters (rules forbid delete — losing it
+  // restarts serials at 1), appSettings/roles (config), recoveryVault/recoveryMeta
+  // (the vault itself), editLocks (transient self-expiring leases), pendingSales
+  // (transient, per-creator-scoped by rules — self-reconciled, not owner-visible data).
+  const RECOVERY_COLLECTIONS = ['parts', 'suppliers', 'categories', 'vehicles', 'customers', 'invoices', 'jobCards', 'purchaseOrders', 'sales', 'salesRollups', 'restocks', 'stockAdjustments', 'auditLog', 'reorderRequests'];
   const RECOVERY_DAYS = 7;
 
   // Snapshot every live record into recoveryVault (one vault doc per record),

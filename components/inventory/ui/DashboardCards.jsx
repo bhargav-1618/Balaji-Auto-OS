@@ -50,15 +50,20 @@ export function DashEmpty({ icon: Icon, title, hint }) {
 
 export function ScoreCard({ title, icon: Icon, score, suffix = '%', factors, note }) {
   const r = ratingFor(score);
+  // A null / non-finite score is the genuine empty state (e.g. a shop with no
+  // inventory yet). Show a dash and a 0-width bar — never "null%" or a coloured
+  // band for a number that was never measured.
+  const hasScore = score != null && Number.isFinite(score);
+  const barPct = hasScore ? score : 0;
   return (
     <OverviewCard>
       <h3 className="text-xs uppercase tracking-wider text-white/45 mb-2 flex items-center gap-2"><Icon size={14} className="text-[#d4af37]" /> {title}</h3>
       <div className="flex items-end gap-2">
-        <span className="text-3xl font-bold leading-none" style={{ color: r.color }}>{score}<span className="text-lg">{suffix}</span></span>
+        <span className="text-3xl font-bold leading-none" style={{ color: r.color }}>{hasScore ? score : '—'}{hasScore && <span className="text-lg">{suffix}</span>}</span>
         <span className="text-sm font-semibold mb-0.5" style={{ color: r.color }}>{r.label}</span>
       </div>
       <div className="h-2 rounded-full mt-2.5 overflow-hidden" style={{ background: 'rgba(var(--fg-rgb),0.08)' }}>
-        <div className="h-full rounded-full transition-all duration-700 ease-out" style={{ width: `${score}%`, background: `linear-gradient(90deg, ${r.color}, ${r.color}aa)` }} />
+        <div className="h-full rounded-full transition-all duration-700 ease-out" style={{ width: `${barPct}%`, background: `linear-gradient(90deg, ${r.color}, ${r.color}aa)` }} />
       </div>
       {note && <p className="text-[11px] text-white/45 mt-2">{note}</p>}
       {factors && (

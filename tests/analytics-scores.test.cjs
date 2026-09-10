@@ -25,7 +25,13 @@ console.log('\nPART-2 — dashboard scores are REAL calculations\n');
 // ── computeInventoryHealth reflects actual data completeness ────────────────
 {
   const empty = A.computeInventoryHealth([]);
-  ok('empty inventory → 100 (nothing to be unhealthy)', empty.score === 100);
+  ok('empty inventory → null + noData (unmeasurable, NOT a fabricated 100)',
+    empty.score === null && empty.noData === true && empty.factors.length === 0);
+  // …and that null must not poison the composite: a totally empty shop has no
+  // Workshop Score either, rather than a misleading "Fair" propped up by IH=100.
+  const emptyWs = A.computeWorkshopScore({ inventory: [], sales: [], suppliers: [], alertsCount: 0 });
+  ok('empty shop → Workshop Score is null + noData (not a number)',
+    emptyWs.score === null && emptyWs.noData === true);
 
   const bare = A.computeInventoryHealth([
     { id: 'p1', name: 'x', stock: 10, minStock: 5 }, // no sku/img/supplier/price/vehicle/cat
@@ -92,6 +98,57 @@ console.log('\nPART-2 — dashboard scores are REAL calculations\n');
   const some = A.computeAchievements({ sales: [{}], suppliers: [{ id: 's' }] });
   ok('First Sale unlocks from real sales data', some.find((a) => a.label === 'First Sale').done);
   ok('100 Parts stays locked below 100', !some.find((a) => a.label === '100 Parts Added').done);
+  // computeInventoryHealth now returns score:null when empty — this must not crash
+  // the "Inventory Complete" milestone (null >= 90 → false, still gated on length).
+  ok('computeAchievements: "Inventory Complete" stays locked on an empty inventory',
+    !none.find((a) => a.label === 'Inventory Complete').done);
+}
+
+// ── ZERO-DATA EDGE MATRIX — score is meaningful & monotone as data appears ──
+// The defect: a freshly-reset shop showed "Inventory Health 100% Excellent" and
+// "Workshop Score 69/100 Fair" with NOTHING in it. Correct: both are "No data yet"
+// until real data exists, then they compute normally.
+{
+  const rNull = A.ratingFor(null);
+  ok('ratingFor(null) → "No data yet" band, not a green/orange colour band',
+    rNull.label === 'No data yet');
+  ok('ratingFor(NaN) → "No data yet" (never "Needs work" red for a non-number)',
+    A.ratingFor(NaN).label === 'No data yet');
+  ok('ratingFor(0) is still a real band (a measured 0 is "Needs work", not "No data")',
+    A.ratingFor(0).label === 'Needs work');
+
+  const part = { id: 'p1', name: 'Brake Pad', sku: 'BP-1', image: 'x', suppliers: [{ id: 's' }], sellingPrice: 500, compatibleCars: ['Swift'], category: 'Brakes', stock: 10, minStock: 3 };
+  const recentSale = { id: 'sale1', qty: 4, revenue: 2000, createdAt: Date.now() - 2 * 86400000 };
+
+  const cases = [
+    ['empty system',        { inventory: [], sales: [], suppliers: [] },              null, null],
+    ['1 part, no sales',     { inventory: [part], sales: [], suppliers: [] },          'num', 'num'],
+    ['1 part + 1 sale',      { inventory: [part], sales: [recentSale], suppliers: [] },'num', 'num'],
+    ['1 part + stock-out',   { inventory: [{ ...part, stock: 0 }], sales: [], suppliers: [] }, 'num', 'num'],
+  ];
+  for (const [label, input, expIH, expWS] of cases) {
+    const ih = A.computeInventoryHealth(input.inventory);
+    const ws = A.computeWorkshopScore({ ...input, alertsCount: 0 });
+    const chk = (v, exp) => exp === null ? v === null : (Number.isFinite(v) && v >= 0 && v <= 100);
+    ok(`[${label}] Inventory Health ${expIH === null ? 'null' : '0-100'}`, chk(ih.score, expIH), JSON.stringify(ih.score));
+    ok(`[${label}] Workshop Score ${expWS === null ? 'null' : '0-100'}`, chk(ws.score, expWS), JSON.stringify(ws.score));
+    ok(`[${label}] no NaN / Infinity in either result`,
+      ![ih.score, ws.score].some((v) => typeof v === 'number' && !Number.isFinite(v)));
+  }
+
+  // Monotonic: a stock-out part is LESS healthy than a fully-stocked one (real signal).
+  const healthy = A.computeInventoryHealth([part]).score;
+  const stockedOut = A.computeInventoryHealth([{ ...part, stock: 0 }]).score;
+  ok('Inventory Health drops when a part goes out of stock (still a real calculation)',
+    healthy > stockedOut, `healthy=${healthy} stockedOut=${stockedOut}`);
+
+  // Populated-state calculation is UNCHANGED by the empty-state fix.
+  const populated = A.computeWorkshopScore({
+    inventory: [part], sales: [recentSale],
+    suppliers: [{ id: 's1', onTimePct: 90 }], alertsCount: 2,
+  });
+  ok('populated Workshop Score still computes a weighted number (fix is empty-only)',
+    Number.isFinite(populated.score) && populated.score > 0 && !populated.noData);
 }
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);

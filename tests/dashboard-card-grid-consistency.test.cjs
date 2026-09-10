@@ -37,7 +37,10 @@ ok('DASH_CARD_MIN_H is a single named floor, not a magic number inlined per widg
 ok('OverviewCard applies the floor + flex-col to every card that renders through it',
   /function OverviewCard\(\{ children, className = '' \}\) \{\s*return \(\s*<div className=\{`rounded-2xl p-4 backdrop-blur-sm \$\{DASH_CARD_MIN_H\} flex flex-col \$\{className\}`\}/.test(cards));
 ok('ScoreCard (Inventory Health / Workshop Score) now renders through the SAME shared shell instead of its own hand-rolled div',
-  /function ScoreCard\(\{ title, icon: Icon, score, suffix = '%', factors, note \}\) \{\s*const r = ratingFor\(score\);\s*return \(\s*<OverviewCard>/.test(cards));
+  /function ScoreCard\(\{ title, icon: Icon, score, suffix = '%', factors, note \}\) \{\s*const r = ratingFor\(score\);[\s\S]*?return \(\s*<OverviewCard>/.test(cards));
+ok('ScoreCard renders a dash (not "null%") and no coloured band when the score is the genuine empty state',
+  /const hasScore = score != null && Number\.isFinite\(score\);/.test(cards)
+  && /\{hasScore \? score : '—'\}/.test(cards));
 ok('the two previously hand-rolled Insights/Workshop Progress divs are gone — both now use OverviewCard',
   !/lg:col-span-2 rounded-2xl p-4 backdrop-blur-sm" style=\{\{ background: 'rgba\(var\(--fg-rgb\),0\.03\)'/.test(overview) &&
   (overview.match(/<OverviewCard(?:\s+className="lg:col-span-2")?>/g) || []).length >= 6);

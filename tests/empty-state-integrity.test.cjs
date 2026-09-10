@@ -159,12 +159,17 @@ const twoParts = [onePart, { id: 'p2', name: 'Oil Filter', sku: 'OF-1', stock: 0
 
 for (const [label, inv] of [['0 parts', []], ['1 part', [onePart]], ['2 parts', twoParts]]) {
   const h = computeInventoryHealth(inv);
-  ok(`computeInventoryHealth(${label}): score is a finite 0-100`, Number.isFinite(h.score) && h.score >= 0 && h.score <= 100, JSON.stringify(h));
+  // 0 parts → score is null + noData (genuinely unmeasurable); 1+ parts → finite 0-100.
+  ok(`computeInventoryHealth(${label}): score null-when-empty or finite 0-100`,
+    inv.length === 0 ? (h.score === null && h.noData === true) : (Number.isFinite(h.score) && h.score >= 0 && h.score <= 100), JSON.stringify(h));
   ok(`computeInventoryHealth(${label}): every factor pct finite`, scanFinite(h).length === 0, scanFinite(h).join('; '));
-  if (label === '0 parts') ok('computeInventoryHealth(0 parts): score 100, factors []', h.score === 100 && h.factors.length === 0);
+  if (label === '0 parts') ok('computeInventoryHealth(0 parts): score null, noData true, factors []', h.score === null && h.noData === true && h.factors.length === 0);
 
   const w = computeWorkshopScore({ inventory: inv, sales: [], suppliers: [], alertsCount: 0 });
-  ok(`computeWorkshopScore(${label}): score finite 0-100`, Number.isFinite(w.score) && w.score >= 0 && w.score <= 100, JSON.stringify(w.score));
+  // Completely empty shop → workshop score is null + noData (only alert-pressure has
+  // data, and that alone is not a workshop score); any inventory → finite 0-100.
+  ok(`computeWorkshopScore(${label}): score null-when-empty or finite 0-100`,
+    inv.length === 0 ? (w.score === null && w.noData === true) : (Number.isFinite(w.score) && w.score >= 0 && w.score <= 100), JSON.stringify(w.score));
   ok(`computeWorkshopScore(${label}): no NaN/Infinity anywhere`, scanFinite(w).length === 0, scanFinite(w).join('; '));
 
   const wp = computeWorkshopProgress({ inventory: inv, invoices: [], jobCards: [], vehicles: [], sales: [] });
@@ -453,7 +458,8 @@ console.log('\n9  Cardinality transitions — the count/pager/KPI stays correct 
   const empty1 = computeWorkshopScore({ inventory: [], sales: [], suppliers: [] }).score;
   const one = computeWorkshopScore({ inventory: [p], sales: [], suppliers: [] }).score;
   const empty2 = computeWorkshopScore({ inventory: [], sales: [], suppliers: [] }).score;
-  ok('computeWorkshopScore 0→1→0: pure function, 0-state is reproducible (no stale carry)', empty1 === empty2 && Number.isFinite(one));
+  ok('computeWorkshopScore 0→1→0: pure function, 0-state is reproducible (no stale carry)',
+    empty1 === empty2 && empty1 === null && Number.isFinite(one));
 }
 
 // =====================================================================
@@ -467,7 +473,10 @@ console.log('\n10  Guard tripwires — a future edit that removes one of these f
   ok('Pagination: renders nothing when a single page fits', /if \(pageCount <= 1\) return null;/.test(pag));
 
   const as = read('../services/analyticsService.js');
-  ok('analyticsService: computeInventoryHealth early-returns on 0 parts', /if \(!n\) return \{ score: 100, factors: \[\] \};/.test(as));
+  ok('analyticsService: computeInventoryHealth returns null+noData on 0 parts (not a fabricated 100)',
+    /if \(!n\) return \{ score: null, factors: \[\], noData: true \};/.test(as));
+  ok('analyticsService: workshop score is null when only alert-pressure has data',
+    /if \(!hasRealFactor\) return \{ score: null, factors: parts, noData: true \};/.test(as));
   ok('analyticsService: workshop score divides by totalWeight only when non-zero', /const score = totalWeight \? Math\.round\(/.test(as));
   ok('analyticsService: every computeWorkshopProgress pct has a `.length ? ... : 0` guard', !/\/ (liveJobs|billable|active|activeJobs)\.length\) \* 100\)(?!.*: 0)/.test(as) || /liveJobs\.length \? /.test(as));
 

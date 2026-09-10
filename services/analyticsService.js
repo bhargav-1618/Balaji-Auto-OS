@@ -46,7 +46,11 @@ export function computeRange(key, custom) {
 }
 
 // --- Rating band for a 0-100 score ---
+// A null / non-finite score means "not enough data to measure" — an empty shop has
+// no inventory health and no workshop score, and must not be shown a fabricated band
+// (a green "Excellent" or an orange "Fair") for numbers that were never real.
 export function ratingFor(score) {
+  if (score == null || !Number.isFinite(score)) return { label: 'No data yet', color: '#9ca3af' };
   if (score >= 90) return { label: 'Excellent', color: '#34d399' };
   if (score >= 75) return { label: 'Good', color: '#d4af37' };
   if (score >= 50) return { label: 'Fair', color: '#fb923c' };
@@ -57,7 +61,12 @@ export function ratingFor(score) {
 export function computeInventoryHealth(inventory) {
   const active = inventory.filter((p) => !p.archived);
   const n = active.length;
-  if (!n) return { score: 100, factors: [] };
+  // No parts → health is genuinely UNMEASURABLE (every factor is a fraction over 0
+  // parts). It is not "100 / Excellent" — an empty catalogue is not a healthy one.
+  // Return null + noData so the card shows "No data yet" and the Workshop Score
+  // drops this factor (same treatment as an untracked supplier), rather than a
+  // fabricated 100 propping up a "Fair" composite for a shop that isn't operating.
+  if (!n) return { score: null, factors: [], noData: true };
   const frac = (f) => active.filter(f).length / n;
   const sku = frac((p) => String(p.sku || '').trim());
   const img = frac((p) => p.imageString || p.image);
@@ -82,13 +91,19 @@ export function computeInventoryHealth(inventory) {
 
 // --- Composite workshop score (0-100) ---
 export function computeWorkshopScore({ inventory, sales = [], suppliers = [], alertsCount = 0, invHealthScore }) {
-  const ih = invHealthScore != null ? invHealthScore : computeInventoryHealth(inventory).score;
+  const ihRaw = invHealthScore != null ? invHealthScore : computeInventoryHealth(inventory).score;
+  const ih = Number.isFinite(ihRaw) ? ihRaw : null; // null → "no data", dropped from the weighted average below
   const now = Date.now(); const d30 = 30 * 86400000;
   // PH21-D1 — coerce, don't `??`: a forged/legacy sales row with `qty: "abc"` used to
   // string-concat here and make the whole Workshop Score render "NaN/100".
   const qtyOf = (s) => { const n = Number(s.qty ?? s.quantity ?? 0); return Number.isFinite(n) ? n : 0; };
   const recentSales = sales.filter((s) => { const d = tsToDate(s.createdAt); return d && now - d.getTime() < d30; }).reduce((a, s) => a + qtyOf(s), 0);
-  const salesScore = Math.min(100, Math.round(recentSales / 2)); // ~200 units/30d => 100
+  // "Sales activity" is only measurable once the shop has recorded at least one sale.
+  // A brand-new / just-reset shop has no sales history to rate — that is "no data",
+  // not a real 0% (which would only be meaningful for a shop that HAS sold before and
+  // then stopped). Once any sale exists, 0 recent units genuinely scores 0.
+  const hasSalesData = asArray(sales).length > 0;
+  const salesScore = hasSalesData ? Math.min(100, Math.round(recentSales / 2)) : null; // ~200 units/30d => 100
   const withOt = suppliers.filter((s) => s.onTimePct != null);
   // Supplier on-time performance: only measurable when at least one supplier tracks it.
   // Previously this fell back to a hardcoded 80 — a fabricated number shown as if it were
@@ -100,15 +115,21 @@ export function computeWorkshopScore({ inventory, sales = [], suppliers = [], al
 
   // Weighted composite over only the factors that have real data.
   const parts = [
-    { label: 'Inventory health', pct: Math.round(ih), weight: 40 },
-    { label: 'Sales activity', pct: Math.round(salesScore), weight: 25 },
+    { label: 'Inventory health', pct: ih == null ? null : Math.round(ih), weight: 40, noData: ih == null },
+    { label: 'Sales activity', pct: salesScore == null ? null : Math.round(salesScore), weight: 25, noData: !hasSalesData },
     { label: 'Supplier performance', pct: supScore, weight: 20, noData: !hasSupData },
     { label: 'Alert pressure', pct: Math.round(alertScore), weight: 15 },
   ];
   const scored = parts.filter((p) => p.pct != null);
+  // Alert pressure ALONE is not a workshop score. With no inventory, no sales and no
+  // supplier data, the only surviving factor is "100 − alerts×5" ≈ 100, which used to
+  // render a misleading "69/100 Fair" for a completely empty shop. If nothing except
+  // alert pressure has data, the composite is "No data yet" (null), not a number.
+  const hasRealFactor = scored.some((p) => p.label !== 'Alert pressure');
+  if (!hasRealFactor) return { score: null, factors: parts, noData: true };
   const totalWeight = scored.reduce((a, p) => a + p.weight, 0);
-  const score = totalWeight ? Math.round(scored.reduce((a, p) => a + p.pct * p.weight, 0) / totalWeight) : 0;
-  return { score: Math.max(0, Math.min(100, score)), factors: parts };
+  const score = totalWeight ? Math.round(scored.reduce((a, p) => a + p.pct * p.weight, 0) / totalWeight) : null;
+  return { score: score == null ? null : Math.max(0, Math.min(100, score)), factors: parts };
 }
 
 // --- Single source of truth for alerts (Alert Center + sidebar badge) ---
