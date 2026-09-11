@@ -67,7 +67,8 @@ jobs:
       - name: Firestore rules tests
         run: |
           java -version
-          npm run test:rules
+          npx --no-install firebase --version
+          npx --no-install firebase emulators:exec --only firestore --project demo-rules-test --debug "node tests/rules/run-all.cjs"
 
       # Surface the emulator's own logs if the step above failed.
       - name: Emulator logs (on failure)
