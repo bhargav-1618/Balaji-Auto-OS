@@ -32,13 +32,17 @@ jobs:
           cache: 'npm'
 
       # The Firestore emulator (used by `npm run test:rules`) is a Java process.
-      # Java 11 is the version the Cloud Firestore emulator is validated against
-      # (newer Ubuntu images default to Java 21, which the emulator does not support).
+      # firebase-tools@15.24.0 (the version resolved by package.json's `^15.24.0`)
+      # hard-requires JDK 21+ at runtime ("firebase-tools no longer supports Java
+      # version before 21") — confirmed from the actual CI failure log on
+      # 2026-09-11. Java 11/17 (tried earlier) both fail identically; this is why
+      # `npm run test:rules` always passed locally (this machine has Java 21) but
+      # never on the GitHub runner.
       - name: Setup Java (Firestore emulator runtime)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '11'
+          java-version: '21'
 
       # Cache the downloaded Firestore emulator jar (~140 MB) so `emulators:exec`
       # doesn't re-fetch it every run.
