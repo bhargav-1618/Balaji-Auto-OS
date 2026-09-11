@@ -57,9 +57,16 @@ reliability program (see CHANGELOG.md). The automated suite is still Node/jsdom,
 browser-rendering / print / Lighthouse ceiling and full real-device browser coverage
 still stand and remain a manual release-QA step.
 
-## Before you go live — REQUIRED, not code
+## Production status
 
-See [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) § 1 "Security — DO THIS FIRST".
-Two configuration steps (publishing the Firestore rules to your Firebase project and
-setting a strong owner password) gate whether a deployment is safe, and neither can be
-fixed in the codebase.
+The reference deployment — `https://balaji-auto-os.vercel.app/`, Firebase project
+`balaji-auto-os-7` — has the current `firestore.rules` published and verified directly
+against the live project (forged `auditLog` writes denied, valid writes allowed,
+PH21-D2 array-shape guards denied — see `KNOWN_LIMITATIONS.md` § Deployment security).
+PH29 (multi-tab Duplicate-Tab operation-id safety) was verified by the project owner on
+a real Chrome browser against authenticated production.
+
+For any *new* deployment, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) § 1
+"Security — DO THIS FIRST": publishing the Firestore rules and setting a strong owner
+password are per-environment configuration steps, not code, and must be done for every
+new Firebase project this app is pointed at.

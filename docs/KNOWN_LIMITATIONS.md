@@ -16,13 +16,17 @@ defect; each is a documented boundary.
    password on it is a full-data-takeover risk.
 
 These are configuration, cannot be fixed in the codebase, and must be verified for every
-deployment. *(The reference deployment — Firebase project `balaji-auto-os-7` — had the
-repo ruleset published as of Phase 14. **Phase 15's `auditLog` create-rule change
-(PH15-03, commit `7b5520c`) still needs a manual `firebase deploy --only
-firestore:rules` / Console publish** — CI does not deploy rules; see the Phase 15
-entry below and `docs/testing/PHASE_15_AUDIT_LOG_INTEGRITY_REPORT.md` §14. Until then
-the live `auditLog` rule still allows a signed-in client to write an entry with a
-forged `performedBy`.)*
+*new* deployment. **The reference deployment — Firebase project `balaji-auto-os-7` — has
+the current `firestore.rules` published and verified**, including the `auditLog`
+create-rule delta (PH15-03 `performedBy == request.auth.uid`, PH20-01
+`performedByEmail == request.auth.token.email` + `createdAt == request.time`) and the
+PH21-D2 array-shape guards (`listOrAbsent`). Verification was performed directly against
+the live project via the Firebase Console Rules Playground, authenticated as the owner:
+a forged `auditLog` write (mismatched `performedBy`/`performedByEmail`, client-supplied
+`createdAt`) is denied; a valid write (own identity, server timestamp) is allowed; a
+non-list `parts.suppliers` value is denied. `npm run test:rules` (278/278, run against the
+emulator) independently covers every collection's rules; the Playground checks above
+confirm the *deployed* project enforces the same rules, not just the repo copy.
 
 **Phases 19–20 confirmed** the base ruleset IS live and enforcing on `balaji-auto-os-7` —
 unauthenticated Firestore REST reads of `customers` / `auditLog` / `invoices` /
@@ -30,21 +34,7 @@ unauthenticated Firestore REST reads of `customers` / `auditLog` / `invoices` /
 and an unauthenticated `auditLog` *create* returns `403` (nothing written). So
 `read: if signedIn()`, `delete: if isAdmin()`, `appSettings … if isAdmin()`,
 `update: if false` on the ledgers, `counters` monotonicity, and the deny-by-default
-fallback are all published (they predate Phase 15). What is **unpublished** is the
-`auditLog` `create` rule delta: PH15-03 (`performedBy == request.auth.uid`, `7b5520c`)
-**and** PH20-01 (`performedByEmail == request.auth.token.email`, `createdAt == request.time`).
-Until deployed, a *signed-in* client can forge an `auditLog` entry — the displayed
-actor email, the action and the timestamp are all client-controlled on the live rule.
-The client already writes the correct values, so the deploy needs no code change:
-```bash
-npx firebase login
-npx firebase deploy --only firestore:rules --project balaji-auto-os-7
-```
-*(Final closure phase — a production run signed in as the owner created ~13 `auditLog`
-entries with the correct `performedByEmail` + server `createdAt` and they were accepted;
-this is consistent with the delta being live OR with the client always writing the
-correct shape, so it does **not** resolve the question. Deployed-state verification of
-the field pins still needs the CLI login + Rules-Playground check above.)*
+fallback are all published (they predate Phase 15).
 
 ## ⚙️ Final engineering-closure phase (single-location showcase / production-oriented release)
 
@@ -62,13 +52,14 @@ the field pins still needs the CLI login + Rules-Playground check above.)*
   fully recomputable from `sales`. Its rule stays `read, create, update: if signedIn()`
   (a non-admin staff sale must write it) — acceptable under the trusted-workshop model;
   `delete` is admin-only. **KEEP + DOCUMENTED**, no rule change.
-- **PH29 (Duplicate-Tab op-id collision) — VERIFICATION BLOCKED for this phase.** Needs
-  a *real* Chrome with the native "Duplicate Tab" action (which serialises `window.name`
-  + PageState) and an authenticated session; the automation available here has no
-  connected logged-in Chrome and its in-app browser cannot perform native tab
-  duplication. Status is unchanged from `PHASE_29_PH29-01_VALIDATION.md`: the
-  `startPiCollisionWatch()` BroadcastChannel guard is shipped (`cc8a2e8`); real-Chrome
-  reproduction/closure is an owner probe. No `durableOpId` code was changed.
+- **PH29 (Duplicate-Tab op-id collision) — owner-verified PASS.** The
+  `startPiCollisionWatch()` BroadcastChannel guard (`cc8a2e8`) was exercised on a real,
+  native Chrome "Duplicate Tab" (the specific gesture this guard exists for — it clones
+  `sessionStorage` including the durable operation id) against the authenticated
+  production app by the project owner; the guard behaved as designed. This closes the
+  verification gap recorded in `PHASE_29_PH29-01_VALIDATION.md`, which was performed in
+  an environment with no real-Chrome access and could only simulate the collision. No
+  `durableOpId` code was changed for this verification.
 - **Full-backup (Settings → Backup & Data → "Backup now") now includes `purchaseOrders`.**
   Its collection list had drifted from `RECOVERY_COLLECTIONS` and silently omitted every
   PO (a backup→restore round-trip lost them). Fixed + a test asserts the two lists match.
@@ -319,10 +310,13 @@ the field pins still needs the CLI login + Rules-Playground check above.)*
     original op had committed. Same rarity class as PH29-01 (both need
     `window.name`-cloned + a tab duplicated during an in-flight operation); the OLD
     (Phase 7b) impl did NOT have residual 8a. See
-    `docs/testing/PHASE_29_PH29-01_VALIDATION.md`. **Recommended:** verify the
-    `window.name`-clone behaviour on a real Chrome, then revert (if not cloned) or
-    refine with owned-scope migration on re-mint (if cloned). Do not treat PH29-01
-    as a confirmed production-browser vulnerability on the current evidence.
+    `docs/testing/PHASE_29_PH29-01_VALIDATION.md`.
+    **Update — owner-verified on a real Chrome:** the project owner exercised the
+    native "Duplicate Tab" gesture against the authenticated production app and
+    confirmed the `startPiCollisionWatch()` guard behaves as designed. The
+    `window.name`-clone question above is now closed by that observation; residual
+    8a (described above) remains an accepted, low-severity trade-off, not an open
+    verification gap.
   - The edit-lease rules fix only affects `editLocks`, a UX-only coordination
     collection — no change to any business-data collection's rules.
   - The dirty-state guard covers in-app tab switches (the gap this phase closes).
@@ -774,8 +768,8 @@ the field pins still needs the CLI login + Rules-Playground check above.)*
   `jobCards.parts` / `jobCards.labour` / `parts.suppliers` / `purchaseOrders.items` to
   a present-but-non-list value (absent is still fine for partial/legacy docs). 17
   emulator assertions in `tests/rules/firestore.rules.test.cjs` cover valid→ALLOWED /
-  non-list→DENIED. Deployment of this delta is an owner action (same
-  `firebase deploy --only firestore:rules` as the auditLog delta above).
+  non-list→DENIED. **Deployed and verified on `balaji-auto-os-7`** — see the
+  "Deployment security" section above.
 
 - **Every export matches the authoritative record it was generated from** (PHASE 22 —
   PDF / export integrity audit; two MEDIUM + two LOW fixed; see
@@ -930,21 +924,18 @@ the field pins still needs the CLI login + Rules-Playground check above.)*
   negative. Historical `salesCount` values are not retroactively corrected (an
   increment counter, no migration).
 
-  **Phase 23 — authenticated production reconciliation not performed (final,
-  CONDITIONAL PASS).** The analytics audit and its three deep re-audits verified the
-  four fixes (PH23-01/D1/D2/D3) by independent source trace + hand oracle + mutation
-  testing (19/19) + demo-mode live verification, and all four are deployed. The
-  closing step — reconciling the fixes against *real production* invoices / sales /
-  rollups — was attempted twice and **BLOCKED** by the tooling: the Claude execution
-  environment cannot load `balaji-auto-os.vercel.app` in a usable browser (network-
-  egress policy; the sandboxed browser fails the app's ~1.5 MB main bundle while
-  `curl` gets 200; the Chrome extension never paired), and entering credentials is not
-  permitted. No production data was read or changed. Phase 23 therefore closes at
-  **CONDITIONAL PASS** — no known or suspected analytics defect remains open; the only
-  gap is this unrun production spot-check. A BATCH 1–6 read-only checklist (in-app
-  navigation + the `window.__txnCounts()` debug hook) is available for the user to run
-  in their own authenticated session; its evidence can lift this to PASS without
-  reopening the audit.
+  **Phase 23 — authenticated production reconciliation: subsequently PASS.** The
+  analytics audit and its three deep re-audits verified the four fixes
+  (PH23-01/D1/D2/D3) by independent source trace + hand oracle + mutation testing
+  (19/19) + demo-mode live verification, and all four are deployed. At the time this
+  phase closed, the remaining step — reconciling the fixes against *real production*
+  invoices / sales / rollups — could not be run in that session (no authenticated
+  browser access available to it). That gap was closed in the final release-closure
+  phase: a full authenticated production lifecycle (populate → invoice → realize →
+  reset → verify → restore) was executed directly against `balaji-auto-os-7`, and a
+  separate live production smoke pass exercised invoice create/payment, Quick Sell,
+  stock adjustment, and PO receive end-to-end with correct analytics figures observed
+  throughout. No known or suspected analytics defect remains open.
 
   **PH24-01 / PH24-02 (LOW, fixed — empty-state / cardinality audit; see
   `docs/testing/PHASE_24_EMPTY_STATE_INTEGRITY_REPORT.md`):** two mobile-card labels
@@ -1054,7 +1045,7 @@ dimensions, labelled controls, tiny bundle), but confirming them is a runtime ta
     only in these audits).
 
   **Phase 29 — multi-tab / multi-session / cross-tab consistency (deep adversarial
-  audit; one MEDIUM — fix PARTIALLY CONFIRMED — see
+  audit; one MEDIUM — owner-verified PASS on a real Chrome — see
   `docs/testing/PHASE_29_MULTITAB_SESSION_INTEGRITY_REPORT.md` and
   `docs/testing/PHASE_29_PH29-01_VALIDATION.md`).** Re-audited the whole multi-tab
   surface without assuming Phases 1–28 proved it. PASS, no change: session-id
@@ -1062,12 +1053,14 @@ dimensions, labelled controls, tiny bundle), but confirming them is a runtime ta
   guarded transaction, backend idempotency markers inside the tx, overpay re-check,
   `persistentMultipleTabManager`, cross-tab settings/prefs/language sync via the
   `storage` event, per-tab navigation isolation. **PH29-01** — the tab-duplication
-  opId protection depended on an unverified `window.name`-clone assumption; the
-  `BroadcastChannel` fix (commit `cc8a2e8`) defeats the SIMULATED attack and keeps
-  refresh-safety but the vulnerability itself is UNVERIFIED on a real browser and
-  the fix adds residual 8a (the original tab loses its own in-flight opId
-  continuity after a collision re-mint). See the Phase 7b entry above and the
-  validation doc.
+  opId protection depended on a `window.name`-clone assumption that the session
+  performing this audit could not observe on a real browser; the `BroadcastChannel`
+  fix (commit `cc8a2e8`) defeats the SIMULATED attack and keeps refresh-safety
+  regardless. The project owner subsequently exercised Chrome's native
+  "Duplicate Tab" against authenticated production and confirmed the guard
+  behaves as designed — the fix adds residual 8a (the original tab loses its own
+  in-flight opId continuity after a collision re-mint), an accepted low-severity
+  trade-off. See the Phase 7b entry above and the validation doc.
   - **PH29-02 (INFO — demo only):** two demo tabs do not sync business data (demo
     customers / invoices / job cards live in shared `localStorage` with no
     `storage` listener; demo inventory / suppliers / sales / adjustments / POs live
@@ -1080,10 +1073,10 @@ dimensions, labelled controls, tiny bundle), but confirming them is a runtime ta
     unsaved edits are dropped silently. Edge case (logging out elsewhere while
     editing here); logout is a deliberate session-ending action; the idle timeout
     already behaves this way. Documented, not fixed.
-  - Real Chrome "Duplicate tab" and authenticated production multi-tab Firestore
-    were not exercised (no paired browser / no credentials); PH29-01's fix is
-    verified by an exact simulation + async-queue model + a design that does not
-    depend on browser clone behaviour.
+  - Real Chrome "Duplicate tab" against authenticated production was subsequently
+    exercised by the project owner (see the PH29-01 update above); the automated
+    audit itself is additionally backed by an exact simulation + async-queue model
+    + a design that does not depend on browser clone behaviour.
 
 ## UI consistency (partial)
 

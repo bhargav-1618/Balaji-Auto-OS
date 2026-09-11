@@ -247,16 +247,21 @@ ok('emulator: PHASE 19 section present (staff-writes-staff-perms, salesRollups, 
   emuHas(/PHASE 19 — authorization matrix/));
 
 // ===================================================================
-// 7. DEPLOYMENT GAP — must stay visible until the owner publishes
+// 7. DEPLOYMENT STATUS — must stay accurate: neither falsely claim
+//    deployment before it happened, nor keep flagging it as pending
+//    after it's confirmed. (Deployed + verified on balaji-auto-os-7 via
+//    the Firebase Console Rules Playground — see the "Final repository
+//    polish" release-closure work.)
 // ===================================================================
-console.log('\n7. Rules deployment status (owner action required)\n');
+console.log('\n7. Rules deployment status\n');
 ok('firestore.rules in the repo IS the hardened ruleset (auditLog actor self-attribution present — uid + displayed email + server time)',
   /request\.resource\.data\.performedBy == request\.auth\.uid\s*&& request\.resource\.data\.performedByEmail == request\.auth\.token\.email/.test(rules));
-ok('KNOWN_LIMITATIONS still flags the auditLog rule delta as NOT yet published to balaji-auto-os-7',
-  /auditLog.{0,120}(still needs a manual `firebase deploy|unpublished|not.{0,20}published)/is.test(known)
-  || /PH15-03.{0,200}needs a manual `firebase deploy/is.test(known)
-  || /forged `performedBy`/is.test(known));
-ok('the client already writes performedBy = the real uid, so publishing the rule needs NO code change',
+ok('KNOWN_LIMITATIONS documents the auditLog + PH21-D2 rule deltas as deployed and verified on balaji-auto-os-7',
+  /balaji-auto-os-7.{0,120}(published and verified|deployed and verified)/is.test(known)
+  || /(published and verified|deployed and verified).{0,120}balaji-auto-os-7/is.test(known));
+ok('KNOWN_LIMITATIONS no longer flags the auditLog rule delta as unpublished',
+  !/auditLog.{0,120}(still needs a manual `firebase deploy|unpublished)/is.test(known));
+ok('the client already writes performedBy = the real uid, matching the deployed rule',
   /performedBy: user\?\.uid \|\| null/.test(dash));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);

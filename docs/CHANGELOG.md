@@ -4,6 +4,32 @@ All notable changes to this project. Format loosely follows Keep a Changelog.
 This is the first public release; entries below summarise the stabilisation work that
 produced it, grouped by area rather than by date.
 
+## [1.0.0] — Final release-closure & production verification
+
+- **CI is fully green, including the Firestore-rules emulator suite.**
+  `.github/workflows/ci.yml` runs `npm ci → lint → build → npm test → npm run
+  test:rules` on every push; the rules step needed a JDK 21 runtime (a
+  `firebase-tools@15.24.0` requirement) — fixed after the actual CI failure log was
+  read directly from the job.
+- **`firestore.rules` (including PH21-D2's array-shape guards) is deployed to the
+  reference project (`balaji-auto-os-7`) and independently verified against it** — a
+  forged `auditLog` write (mismatched actor identity, client-supplied timestamp) is
+  denied, a valid write (own identity, server timestamp) is allowed, and a non-list
+  `parts.suppliers` value is denied, all confirmed via the Firebase Console Rules
+  Playground against the live project.
+- **PH29 (tab-duplication operation-id collision safety) verified by the project owner
+  on a real Chrome browser** using the native "Duplicate Tab" gesture against
+  authenticated production — the `startPiCollisionWatch()` guard behaved as designed.
+- A full authenticated production create→verify→reset→restore→verify lifecycle and a
+  separate live smoke pass (invoice/payment, Quick Sell, stock adjustment, PO receive,
+  customer/part/supplier/job-card CRUD) were executed directly against
+  `balaji-auto-os-7`, closing the Phase 23 production-reconciliation gap noted below.
+- `exportFullBackup()` was missing `purchaseOrders` from its collection list (a full
+  backup silently omitted every PO); fixed, with a test asserting it stays in sync with
+  the "Reset All Data" collection list.
+- `Reset All Data` now clears `purchaseOrders` (it was missing from
+  `RECOVERY_COLLECTIONS`); an empty shop no longer fabricates a dashboard score.
+
 ## [1.0.0] — Post-release reliability & integrity program
 
 After the initial 1.0.0 tag, a sustained audit-and-fix program (29 numbered phases;
@@ -60,8 +86,9 @@ migration. Remaining boundaries are in `docs/KNOWN_LIMITATIONS.md`. By area:
   and the ledgers is admin-only at the data layer; ledgers immutable; counters
   monotonic; actor identity pinned on `auditLog` / `pendingSales` / `editLocks`.
 - Full Owner / Admin / Staff / Unauthenticated matrix verified against the emulator
-  (261 assertions) and by unauthenticated production probes. Rules deployment to a
-  target project remains an operator step (`docs/KNOWN_LIMITATIONS.md` §🔴).
+  (278 assertions) and by unauthenticated production probes. Deployed and verified on
+  the reference project `balaji-auto-os-7` (`docs/KNOWN_LIMITATIONS.md` §🔴); rules
+  deployment remains a required per-environment step for any *new* Firebase project.
 
 ### Analytics
 - Revenue / Cost / Gross Profit / Margin reconcile to the authoritative invoices —

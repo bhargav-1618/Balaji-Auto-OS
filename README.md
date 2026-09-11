@@ -142,18 +142,26 @@ Test suites execute real shipped code in a Node/jsdom harness. The harness
 dependencies are ordinary devDependencies — `npm install` is all that's needed:
 
 ```bash
-npm test                           # run the full suite
+npm test                           # run the full suite — 154/154 test files
+npm run test:rules                 # Firestore rules, real emulator — 278/278 assertions
 node tests/<suite>.test.cjs        # run one suite
 node tools/scan-undef.cjs .        # undefined-identifier scan
 node tools/scan-tdz.cjs .          # temporal-dead-zone scan
 ```
 
-See [docs/testing/TESTING.md](docs/testing/TESTING.md) for details.
+Current status: **154/154** test files passing, **278/278** Firestore rules emulator
+assertions passing, **0** ESLint errors (63 pre-existing, intentional warnings — see
+`docs/KNOWN_LIMITATIONS.md`), CI green on every push. See
+[docs/testing/TESTING.md](docs/testing/TESTING.md) for details.
 
 ## Deployment
 
 The app is a standard Next.js build and is hosted on **Vercel**, backed by the
 **Firebase** project pinned in `.firebaserc`. Pushes to `main` deploy automatically.
+
+**Live reference deployment:** [balaji-auto-os.vercel.app](https://balaji-auto-os.vercel.app/)
+(Firebase project `balaji-auto-os-7`) — Firestore rules published and verified against
+the live project; PH29 multi-tab safety owner-verified on a real Chrome browser.
 
 To stand up a new environment:
 
@@ -233,9 +241,10 @@ Known boundaries are documented honestly in
 low-severity field-level last-writer-wins races under concurrent multi-terminal edits
 (the money, stock, invoice-numbering and idempotency paths are transaction-safe and
 were verified with concurrent clients), the absence of list virtualisation (pagination
-covers current scale), and the browser-only verification ceiling. Two deployment-time
-operational tasks (publishing the Firestore rules and setting a strong owner password)
-must be completed before go-live.
+covers current scale), and the browser-only verification ceiling. The reference
+deployment (`balaji-auto-os-7`) has the Firestore rules published and verified; for any
+*new* deployment, publishing the rules and setting a strong owner password are required
+per-environment configuration steps — see [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md).
 
 ## Author
 

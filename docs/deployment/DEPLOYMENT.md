@@ -26,6 +26,10 @@ or paste the file's contents into Firebase Console → Firestore → Rules → P
 Until this is done, any signed-in staff user can delete every invoice. The role checks
 in the UI are guards, not a security boundary.
 
+*(Status for the reference deployment: `balaji-auto-os-7` has the current
+`firestore.rules` published and independently verified against the live project via
+the Rules Playground. This step is required again for any new Firebase project.)*
+
 ### 1b. Change the owner password
 Set a strong password on the owner account before exposing the app publicly.
 
