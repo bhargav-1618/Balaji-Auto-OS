@@ -2917,9 +2917,20 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('billing.searchPlaceholder', 'Search invoice, customer, phone, vehicle, reg, VIN, job card, advisor…')} className={`${inputCls} pl-9`} />
         </div>
-        <select value={statusF} onChange={(e) => setStatusF(e.target.value)} className={`${inputCls} sm:w-36`}>{['All', 'Outstanding', 'Draft', 'Estimate', 'Unpaid', 'Partially Paid', 'Paid', 'Cancelled', 'Refunded', 'Returned', 'Archived'].map((s) => <option key={s} value={s} style={{ background: '#141414' }}>{s === 'All' ? t('customers.filter.allStatus', 'All Status') : t(`status.${s.toLowerCase().replace(/\s/g, '')}`, s)}</option>)}</select>
-        <select value={payModeF} onChange={(e) => setPayModeF(e.target.value)} className={`${inputCls} sm:w-32`}>{['All', ...PAYMENT_MODES].map((s) => <option key={s} value={s} style={{ background: '#141414' }}>{s === 'All' ? t('billing.filter.allPayments', 'All Payments') : s}</option>)}</select>
-        <select value={dateF} onChange={(e) => setDateF(e.target.value)} className={`${inputCls} sm:w-28`}>{[['All', t('billing.filter.allTime', 'All Time')], ['Today', t('billing.filter.today', 'Today')], ['Week', t('billing.filter.thisWeek', 'This Week')], ['Month', t('billing.filter.thisMonth', 'This Month')]].map(([v, l]) => <option key={v} value={v} style={{ background: '#141414' }}>{l}</option>)}</select>
+        {/* Dropdown-standardization pass: converted from native <select> to MiniSelect
+            — a native <select>'s open popup is OS-rendered and can't be themed to
+            match the app. hideSearch: these are short, fixed filter lists, not a
+            long catalog picker. Wrapper divs preserve each control's original fixed
+            desktop width (MiniSelect's own root has no width opinion of its own). */}
+        <div className="sm:w-36">
+          <MiniSelect value={statusF} placeholder={t('customers.filter.allStatus', 'All Status')} options={['All', 'Outstanding', 'Draft', 'Estimate', 'Unpaid', 'Partially Paid', 'Paid', 'Cancelled', 'Refunded', 'Returned', 'Archived']} labels={Object.fromEntries(['All', 'Outstanding', 'Draft', 'Estimate', 'Unpaid', 'Partially Paid', 'Paid', 'Cancelled', 'Refunded', 'Returned', 'Archived'].map((s) => [s, s === 'All' ? t('customers.filter.allStatus', 'All Status') : t(`status.${s.toLowerCase().replace(/\s/g, '')}`, s)]))} emptyValue="All" onPick={(v) => setStatusF(v || 'All')} inputCls={inputCls} hideSearch />
+        </div>
+        <div className="sm:w-32">
+          <MiniSelect value={payModeF} placeholder={t('billing.filter.allPayments', 'All Payments')} options={['All', ...PAYMENT_MODES]} labels={Object.fromEntries(['All', ...PAYMENT_MODES].map((s) => [s, s === 'All' ? t('billing.filter.allPayments', 'All Payments') : s]))} emptyValue="All" onPick={(v) => setPayModeF(v || 'All')} inputCls={inputCls} hideSearch />
+        </div>
+        <div className="sm:w-28">
+          <MiniSelect value={dateF} placeholder={t('billing.filter.allTime', 'All Time')} options={['All', 'Today', 'Week', 'Month']} labels={{ All: t('billing.filter.allTime', 'All Time'), Today: t('billing.filter.today', 'Today'), Week: t('billing.filter.thisWeek', 'This Week'), Month: t('billing.filter.thisMonth', 'This Month') }} emptyValue="All" onPick={(v) => setDateF(v || 'All')} inputCls={inputCls} hideSearch />
+        </div>
         <button onClick={() => runExport(exportCSV)} disabled={exporting} aria-busy={exporting} className="h-11 px-4 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-white/5 border border-white/10 text-white/75 hover:bg-white/10 disabled:opacity-50 disabled:cursor-wait"><FileDown size={13} /> {exporting ? t('billing.exporting', 'Exporting…') : t('common.export', 'Export')}</button>
         {canManage && (
           <button

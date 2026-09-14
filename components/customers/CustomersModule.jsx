@@ -1798,7 +1798,12 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
                 `typeF !== 'All' && c.type !== typeF` check would then exclude every
                 customer (no c.type is ever ''), silently emptying the table. */}
             <MiniSelect value={typeF} placeholder={t('customers.filter.allTypes', 'All Customer Types')} options={['All', ...TYPES]} labels={typeFilterLabels} emptyValue="All" onPick={(v) => setTypeF(v || 'All')} inputCls={inputCls} />
-            <select value={statusF} onChange={(e) => setStatusF(e.target.value)} className={inputCls}>{['All', 'Active', 'Inactive', 'Archived'].map((st) => <option key={st} value={st} style={{ background: '#141414' }}>{st === 'All' ? t('customers.filter.allStatus', 'All Status') : t(`status.${st.toLowerCase()}`, st)}</option>)}</select>
+            {/* Dropdown-standardization pass: converted from native <select> to
+                MiniSelect, matching the Customer Type picker right above it — a native
+                <select>'s open popup is OS-rendered and can't be themed to match the
+                app. hideSearch: a 4-option status list doesn't need a search box the
+                way the 17-type Customer Type picker does. */}
+            <MiniSelect value={statusF} placeholder={t('customers.filter.allStatus', 'All Status')} options={['All', 'Active', 'Inactive', 'Archived']} labels={{ All: t('customers.filter.allStatus', 'All Status'), Active: t('status.active', 'Active'), Inactive: t('status.inactive', 'Inactive'), Archived: t('status.archived', 'Archived') }} emptyValue="All" onPick={(v) => setStatusF(v || 'All')} inputCls={inputCls} hideSearch />
           </div>
           {/* Grouped so flex-wrap moves Export + New Customer to the next line TOGETHER
               (never splitting the pair) — same fix as Vehicles' toolbar, kept consistent

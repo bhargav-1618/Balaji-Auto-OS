@@ -40,7 +40,11 @@ ok('filter options carry explicit values (All resets, not filters-for-label)',
   // Capacity-archive review: 'Archived' was appended after 'Returned' so an archived
   // invoice (see services/capacityService.js's archiveRecords) stays reachable from
   // this same dropdown instead of just disappearing from the list.
-  /'Returned', 'Archived'\]\.map\(\(s\) => <option key=\{s\} value=\{s\}/.test(src) && /PAYMENT_MODES\]\.map\(\(s\) => <option key=\{s\} value=\{s\}/.test(src));
+  // Dropdown-standardization pass: Status/Payments converted from native <select> to
+  // MiniSelect — options ARE the value there (no value-vs-label ambiguity possible),
+  // so the guard now checks the real option arrays are still wired to their setters.
+  /options=\{\['All', 'Outstanding', 'Draft', 'Estimate', 'Unpaid', 'Partially Paid', 'Paid', 'Cancelled', 'Refunded', 'Returned', 'Archived'\]\}/.test(src)
+  && /options=\{\['All', \.\.\.PAYMENT_MODES\]\}/.test(src));
 ok('filtered derives from the precomputed master invoiceRows',
   /const filtered = useMemo\(\(\) => \{[\s\S]{0,200}invoiceRows\.filter/.test(src));
 ok('pagination clamps synchronously (safePage)', /const safePage = Math\.min\(page, pageCount\)/.test(src));

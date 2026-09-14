@@ -241,8 +241,22 @@ export default function RemindersModule({ customers = [], invoices = [], jobCard
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('reminders.searchPlaceholder', 'Search reminders by customer, detail, type…')} className={`${inputCls} pl-9`} />
         </div>
-        <select value={kindF} onChange={(e) => setKindF(e.target.value)} className={`${inputCls} sm:w-40`}>{['All', ...Object.keys(KIND)].map((kd) => <option key={kd} style={{ background: '#141414' }}>{kd === 'All' ? t('reminders.filter.allTypes', 'All Types') : kd}</option>)}</select>
-        <select value={statusF} onChange={(e) => setStatusF(e.target.value)} className={`${inputCls} sm:w-32`}>{[['active', t('status.active', 'Active')], ['completed', t('common.completed', 'Completed')], ['all', t('common.all', 'All')]].map(([v, l]) => <option key={v} value={v} style={{ background: '#141414' }}>{l}</option>)}</select>
+        {/* Dropdown-standardization pass: converted from native <select> to MiniSelect
+            — a native <select>'s open popup is OS-rendered and can't be themed to
+            match the app. hideSearch: short, fixed filter lists. The Kind filter's
+            native <option> elements previously had no explicit `value` (the browser
+            derived it from rendered text — "All Types" — instead of the 'All'
+            sentinel this file's own filter check assumes), which silently broke the
+            "show everything" state after picking a real kind and returning to "All
+            Types". MiniSelect requires an explicit value per option, so wiring the
+            correct 'All' sentinel here fixes that as a direct consequence of
+            implementing this equivalently, not a separate behavior change. */}
+        <div className="sm:w-40">
+          <MiniSelect value={kindF} placeholder={t('reminders.filter.allTypes', 'All Types')} options={['All', ...Object.keys(KIND)]} labels={{ All: t('reminders.filter.allTypes', 'All Types') }} emptyValue="All" onPick={(v) => setKindF(v || 'All')} inputCls={inputCls} hideSearch />
+        </div>
+        <div className="sm:w-32">
+          <MiniSelect value={statusF} placeholder={t('status.active', 'Active')} options={['active', 'completed', 'all']} labels={{ active: t('status.active', 'Active'), completed: t('common.completed', 'Completed'), all: t('common.all', 'All') }} emptyValue="active" onPick={(v) => setStatusF(v || 'active')} inputCls={inputCls} hideSearch />
+        </div>
       </div>
 
       <div className="space-y-2">

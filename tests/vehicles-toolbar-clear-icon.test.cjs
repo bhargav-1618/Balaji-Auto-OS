@@ -78,9 +78,20 @@ ok('Customers: Export + New Customer are grouped in one inner flex div (wrap tog
 // fix). Short, fixed-length filters (Billing's Status/Payment/Date, Suppliers' sort) are
 // intentionally left as native <select> — nothing wrong with a native select for a
 // handful of options, only for lists long enough to risk an unbounded native popup.
-const billingSuppliers = ['components/billing/BillingModule.jsx', 'components/inventory/SupplierDirectory.jsx'];
-ok('Billing/Suppliers filters remain short native <select> (no long/data-driven filter list there needs the MiniSelect fix)',
-  billingSuppliers.every((f) => !/<MiniSelect[^>]*labels=\{\{ All:/.test(R(f))));
+// UPDATE (dropdown-standardization pass) — Billing's Status/Payment/Date filters were
+// later converted from native <select> to MiniSelect too (a native select's open popup
+// can't be themed to match the app; see dropdown-native-to-minisel-conversion.test.cjs).
+// They use the SAME emptyValue="All" contract this file is about, so Clear correctly
+// stays hidden at the default "All" state there too — verify that directly instead of
+// asserting Billing has no MiniSelect at all, which is no longer true. Suppliers'
+// filters were out of scope for that pass and remain native, as originally noted.
+const bill = R('components/billing/BillingModule.jsx');
+ok('Billing Status/Payment/Date filters are now MiniSelect, and each uses emptyValue="All" (Clear correctly hidden at the default state, same contract as Vehicles/Customers)',
+  /<MiniSelect value=\{statusF\}[^\n]*?emptyValue="All"/.test(bill) &&
+  /<MiniSelect value=\{payModeF\}[^\n]*?emptyValue="All"/.test(bill) &&
+  /<MiniSelect value=\{dateF\}[^\n]*?emptyValue="All"/.test(bill));
+ok('Suppliers filters remain short native <select> (out of scope for the dropdown-standardization pass; no long/data-driven filter list there needs the MiniSelect fix)',
+  !/<MiniSelect[^>]*labels=\{\{ All:/.test(R('components/inventory/SupplierDirectory.jsx')));
 // Refactor Phase 10 — AnalyticsView moved verbatim to ./inventory/views/AnalyticsView.jsx.
 ok('Inventory Analytics Category/Brand filters (data-driven, can run long) use MiniSelect with the All-sentinel — not a native <select>',
   /<MiniSelect[^>]*labels=\{\{ All: 'All Categories' \}\}/.test(R('components/inventory/views/AnalyticsView.jsx')) &&
