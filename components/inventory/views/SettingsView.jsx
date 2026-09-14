@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import {
   Settings, Download, Upload, Trash2, AlertTriangle, ArchiveRestore,
   Package, Users, Car, ClipboardList, Receipt, Truck, ShieldCheck, BarChart3,
@@ -109,25 +109,61 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
     () => normalizeSettings(biz) !== normalizeSettings(bizSaved),
     [biz, bizSaved],
   );
-  // Surface dirty state to the navigation guard (prevents silent loss on tab switch).
-  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  const [prefs, setPrefsState] = useState(() => { try { return { theme: 'dark', fontSize: 'md', reduceMotion: false, density: 'comfortable', ...(JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}')) }; } catch { return { theme: 'dark', fontSize: 'md' }; } });
+
+  // Admin Settings — high-impact permissions review: Demo Permissions moved from
+  // "toggle -> immediate write" to the SAME draft+Save/Cancel model Business Profile/
+  // Billing/etc already use — a permission grant/revoke is exactly the change a stray
+  // click shouldn't be able to commit silently. `demoPerms` is now the DRAFT the
+  // toggles read/write; `demoPermsSaved` is the last-persisted baseline it's compared
+  // against and reverted to on Cancel.
+  const [demoPerms, setDemoPermsState] = useState(() => loadDemoPerms());
+  const [demoPermsSaved, setDemoPermsSaved] = useState(() => loadDemoPerms());
+  const demoPermsDirty = useMemo(
+    () => JSON.stringify(demoPerms) !== JSON.stringify(demoPermsSaved),
+    [demoPerms, demoPermsSaved],
+  );
+
+  // Same review, for the per-staff permission pills (See cost prices / Delete records /
+  // Run exports) under Users & Roles. "Make admin" / "Add staff" / "Remove" stay atomic
+  // one-click actions — each is already fully toast-covered and is a single, clearly-
+  // scoped operation on its own; turning THOSE into a multi-step form would add friction
+  // without adding safety. The per-permission PILLS are different: several can be
+  // toggled in sequence before the admin means to commit any of them, so they're staged
+  // the same way. `staffPerms` is Firestore-backed and can change from outside this
+  // component (another admin session, the live listener) — `staffPermsDraft` only
+  // re-syncs from the incoming prop while there is no local unsaved edit (tracked via a
+  // ref, read inside the sync effect so the effect doesn't need the dirty memo itself in
+  // its own dependency array), so an in-progress draft is never silently overwritten by
+  // an unrelated concurrent update.
+  const [staffPermsDraft, setStaffPermsDraft] = useState(staffPerms);
+  const staffPermsDirty = useMemo(
+    () => JSON.stringify(staffPermsDraft) !== JSON.stringify(staffPerms),
+    [staffPermsDraft, staffPerms],
+  );
+  const staffPermsDirtyRef = useRef(false);
+  useEffect(() => { staffPermsDirtyRef.current = staffPermsDirty; }, [staffPermsDirty]);
+  useEffect(() => { if (!staffPermsDirtyRef.current) setStaffPermsDraft(staffPerms); }, [staffPerms]);
+
+  // Surface dirty state to the navigation guard (prevents silent loss on tab switch) —
+  // spans all three staged-draft groups now, not just the business `biz` object.
+  const anyDirty = dirty || demoPermsDirty || staffPermsDirty;
+  useEffect(() => { onDirtyChange?.(anyDirty); }, [anyDirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   // BUG-LIVE-SETTINGS-02 fix — a comment elsewhere in this codebase (InventoryDashboard.js,
   // near settingsDirtyRef) claimed "the beforeunload handler already covers refresh/close"
   // for Settings, but no such handler existed anywhere — only PartModal and SupplierModal
   // register one for their OWN dirty state. A raw browser refresh/close while Business/
-  // Billing/Job Cards/Inventory/Notifications had unsaved edits silently discarded them
-  // with no warning at all, unlike an in-app tab switch (which IS guarded via
-  // onDirtyChange -> settingsDirtyRef -> window.confirm). Same minimal pattern as those
-  // two modals' own handler.
+  // Billing/Job Cards/Inventory/Notifications (or, now, Demo Permissions/staff perms) had
+  // unsaved edits silently discarded them with no warning at all, unlike an in-app tab
+  // switch (which IS guarded via onDirtyChange -> settingsDirtyRef -> window.confirm).
+  // Same minimal pattern as those two modals' own handler.
   useEffect(() => {
-    if (!dirty) return undefined;
+    if (!anyDirty) return undefined;
     const h = (e) => { e.preventDefault(); e.returnValue = ''; };
     window.addEventListener('beforeunload', h);
     return () => window.removeEventListener('beforeunload', h);
-  }, [dirty]);
-  const [prefs, setPrefsState] = useState(() => { try { return { theme: 'dark', fontSize: 'md', reduceMotion: false, density: 'comfortable', ...(JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}')) }; } catch { return { theme: 'dark', fontSize: 'md' }; } });
-  const [demoPerms, setDemoPermsState] = useState(() => loadDemoPerms());
+  }, [anyDirty]);
   const [newAdmin, setNewAdmin] = useState('');
   const [newStaff, setNewStaff] = useState('');
   const [resetStep, setResetStep] = useState(0);
@@ -228,8 +264,48 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
   }, [prefs.fontSize, prefs.reduceMotion, prefs.theme, prefs.density]);
   const setCompact = (v) => { updatePrefs({ compactSidebar: v }); setSidebarCollapsed?.(v); };
 
-  const saveDemoPerms = (next) => { setDemoPermsState(next); try { localStorage.setItem(DEMO_PERM_KEY, JSON.stringify(next)); window.dispatchEvent(new CustomEvent('maruti-demo-perms')); } catch {} };
-  const toggleDemoPerm = (key) => saveDemoPerms({ ...demoPerms, [key]: !demoPerms[key] });
+  // Draft-only: stages the toggle in local state without touching localStorage or
+  // notifying any live Demo session — see saveDemoPermsChanges for the actual commit.
+  const toggleDemoPerm = (key) => setDemoPermsState((d) => ({ ...d, [key]: !d[key] }));
+  const saveDemoPermsChanges = () => {
+    try {
+      localStorage.setItem(DEMO_PERM_KEY, JSON.stringify(demoPerms));
+      window.dispatchEvent(new CustomEvent('maruti-demo-perms'));
+      setDemoPermsSaved(demoPerms);
+      toast.success(t('toast.demoPermsSaved', 'Demo permissions saved'));
+    } catch (e) {
+      toast.error(t('toast.demoPermsSaveFailed', 'Could not save demo permissions.'));
+    }
+  };
+  const cancelDemoPermsChanges = () => setDemoPermsState(demoPermsSaved);
+
+  // Staff permission pills — same draft/Save/Cancel shape as Demo Permissions above,
+  // but committed by calling the container's existing per-permission Firestore write
+  // (onSetStaffPerm) once for every key that actually changed, instead of a single
+  // bulk write — reuses the exact already-tested/authorized write path unchanged,
+  // only batches WHEN it's invoked. Individual failures already surface their own
+  // error toast inside onSetStaffPerm; this only adds one success toast when every
+  // change in the batch actually committed.
+  const toggleStaffPermDraft = (email, key) => setStaffPermsDraft((d) => ({ ...d, [email]: { ...d[email], [key]: !d[email]?.[key] } }));
+  const saveStaffPermsDraft = async () => {
+    const changedEmails = Object.keys(staffPermsDraft).filter(
+      (email) => JSON.stringify(staffPermsDraft[email]) !== JSON.stringify(staffPerms[email]),
+    );
+    if (!changedEmails.length) return;
+    let allOk = true;
+    for (const email of changedEmails) {
+      const before = staffPerms[email] || {};
+      const after = staffPermsDraft[email] || {};
+      const changedKeys = Object.keys(after).filter((k) => after[k] !== before[k]);
+      for (const key of changedKeys) {
+        // eslint-disable-next-line no-await-in-loop
+        const ok = await onSetStaffPerm(email, key, after[key]);
+        if (!ok) allOk = false;
+      }
+    }
+    if (allOk) toast.success(t('toast.staffPermsSaved', 'Staff permissions updated.'));
+  };
+  const cancelStaffPermsDraft = () => setStaffPermsDraft(staffPerms);
 
   // ---- shared UI primitives (standardized switch used everywhere) ----
   // The one switch used app-wide. Old bespoke markup removed — this delegates to
@@ -502,12 +578,17 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
                   <p className="text-white/50">Create their login in <a href="https://console.firebase.google.com/project/_/authentication/users" target="_blank" rel="noreferrer" className="text-[#d4af37] underline">Firebase → Authentication</a>, then add the same email below and choose what they can do.</p>
                 </div>
                 <div className="space-y-2 mb-3">
-                  {Object.keys(staffPerms).length === 0 ? <p className="text-[11px] text-white/45 px-1">No staff members yet.</p> : Object.entries(staffPerms).map(([email, p]) => (
+                  {/* Reads/writes the DRAFT (staffPermsDraft), not the live staffPerms prop
+                      directly — see the draft/dirty setup above. A staffer's own row still
+                      reflects Add/Remove immediately (those stay atomic and flow straight
+                      through the prop), but the permission pills themselves only stage a
+                      change until Save Changes below actually commits it. */}
+                  {Object.keys(staffPermsDraft).length === 0 ? <p className="text-[11px] text-white/45 px-1">No staff members yet.</p> : Object.entries(staffPermsDraft).map(([email, p]) => (
                     <div key={email} className="rounded-lg p-3" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.08)' }}>
                       <div className="flex items-center justify-between mb-2"><span className="text-sm text-white/85 truncate">{email}</span><button onClick={() => onRemoveStaff(email)} className="text-[10px] font-semibold text-red-400 hover:text-red-300 flex-shrink-0 ml-2">Remove</button></div>
                       <div className="flex flex-wrap gap-2">
                         {[['costPrices', 'See cost prices'], ['deletes', 'Delete records'], ['exports', 'Run exports']].map(([key, label]) => (
-                          <button key={key} onClick={() => onSetStaffPerm(email, key, !p?.[key])} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition" style={p?.[key] ? { background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.4)', color: '#34d399' } : { background: 'rgba(var(--fg-rgb),0.04)', border: '1px solid rgba(var(--fg-rgb),0.1)', color: 'rgba(var(--fg-rgb),0.5)' }}>
+                          <button key={key} onClick={() => toggleStaffPermDraft(email, key)} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition" style={p?.[key] ? { background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.4)', color: '#34d399' } : { background: 'rgba(var(--fg-rgb),0.04)', border: '1px solid rgba(var(--fg-rgb),0.1)', color: 'rgba(var(--fg-rgb),0.5)' }}>
                             <span className="w-3 h-3 rounded-full flex items-center justify-center text-[8px]" style={{ background: p?.[key] ? '#34d399' : 'rgba(var(--fg-rgb),0.15)' }}>{p?.[key] ? '✓' : ''}</span>{label}
                           </button>
                         ))}
@@ -515,6 +596,9 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
                     </div>
                   ))}
                 </div>
+                {staffPermsDirty && (
+                  <p className="text-[11px] text-[#d4af37] mb-2 flex items-center gap-1.5"><AlertTriangle size={11} /> Unsaved permission changes — use Save Changes below to apply them.</p>
+                )}
                 <div className="flex gap-2">
                   <input value={newStaff} onChange={(e) => setNewStaff(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newStaff.trim()) onAddStaff(newStaff).then((ok) => ok && setNewStaff('')); }} placeholder="newstaff@email.com" className="flex-1 h-11 px-3 rounded-xl text-sm bg-white/5 border border-white/10 text-white outline-none focus:border-[#d4af37]/60" />
                   <button onClick={() => { if (newStaff.trim()) onAddStaff(newStaff).then((ok) => ok && setNewStaff('')); }} className="px-4 rounded-xl text-sm font-semibold text-black bg-[#d4af37] hover:bg-[#e8c84a] flex-shrink-0">Add staff</button>
@@ -524,7 +608,7 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
           )}
 
           {section === 'demoperms' && isAdmin && (
-            <Card title="Demo Permissions" desc="Control what a Demo User can do. Disabled actions still show their button, but clicking shows an “administrator disabled” message. Changes apply immediately to any active Demo User session on this device.">
+            <Card title="Demo Permissions" desc="Control what a Demo User can do. Disabled actions still show their button, but clicking shows an “administrator disabled” message. Toggling stages a change — nothing takes effect for any active Demo User session until you click Save Changes below.">
               {(() => {
                 const ICONS = { Package, Users, Car, ClipboardList, Receipt, Truck, ShieldCheck, BarChart3 };
                 const enabledCount = DEMO_PERM_GROUPS.reduce((n, g) => n + g.items.filter((it) => !!demoPerms[it.key]).length, 0);
@@ -533,7 +617,12 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
                   <div className="space-y-5">
                     <div className="flex items-center justify-between gap-2 pb-1">
                       <span className="text-[11px] text-white/45">{enabledCount} of {totalCount} permissions enabled</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)' }}><AlertTriangle size={10} /> High-risk</span>
+                      <div className="flex items-center gap-2">
+                        {demoPermsDirty && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 font-semibold" style={{ background: 'rgba(212,175,55,0.12)', color: '#d4af37', border: '1px solid rgba(212,175,55,0.3)' }}><AlertTriangle size={10} /> Unsaved</span>
+                        )}
+                        <span className="text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)' }}><AlertTriangle size={10} /> High-risk</span>
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
                       {DEMO_PERM_GROUPS.map((group) => {
@@ -623,15 +712,24 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
             </div>
           )}
 
-          {editableSections.includes(section) && (
-            <div className={`sticky bottom-0 flex items-center justify-between gap-3 rounded-2xl px-4 py-3 ${SETTINGS_WIDE_SECTIONS.has(section) ? '' : SETTINGS_CARD_MAX}`} style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.2)' }}>
-              <span className="text-[11px] text-white/45">{dirty ? t('state.unsavedChanges', 'You have unsaved changes') : t('state.allChangesSaved', 'All changes saved')}</span>
-              <div className="flex gap-2">
-                <button onClick={() => setBiz(bizSaved)} disabled={!dirty} className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 disabled:opacity-40">{t('common.cancel', 'Cancel')}</button>
-                <button onClick={saveBiz} disabled={!dirty} className="px-5 py-2 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] disabled:opacity-40">{t('common.saveChanges', 'Save Changes')}</button>
+          {/* Admin Settings review: Demo Permissions and the staff permission pills under
+              Users & Roles now stage a draft the same way Business/Billing/etc already do,
+              so they share this exact bar — just pointed at their OWN dirty flag and
+              save/cancel handlers instead of the `biz` draft's. */}
+          {(editableSections.includes(section) || section === 'demoperms' || section === 'users') && (() => {
+            const sectionDirty = section === 'demoperms' ? demoPermsDirty : section === 'users' ? staffPermsDirty : dirty;
+            const sectionCancel = section === 'demoperms' ? cancelDemoPermsChanges : section === 'users' ? cancelStaffPermsDraft : () => setBiz(bizSaved);
+            const sectionSave = section === 'demoperms' ? saveDemoPermsChanges : section === 'users' ? saveStaffPermsDraft : saveBiz;
+            return (
+              <div className={`sticky bottom-0 flex items-center justify-between gap-3 rounded-2xl px-4 py-3 ${SETTINGS_WIDE_SECTIONS.has(section) ? '' : SETTINGS_CARD_MAX}`} style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.2)' }}>
+                <span className="text-[11px] text-white/45">{sectionDirty ? t('state.unsavedChanges', 'You have unsaved changes') : t('state.allChangesSaved', 'All changes saved')}</span>
+                <div className="flex gap-2">
+                  <button onClick={sectionCancel} disabled={!sectionDirty} className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 disabled:opacity-40">{t('common.cancel', 'Cancel')}</button>
+                  <button onClick={sectionSave} disabled={!sectionDirty} className="px-5 py-2 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] disabled:opacity-40">{t('common.saveChanges', 'Save Changes')}</button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
 

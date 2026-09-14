@@ -19,7 +19,14 @@ console.log('\nPART-5.1 — unsaved-settings navigation guard\n');
 // Category B config uses explicit save, not auto-save
 ok('business config persists ONLY via saveBiz (explicit), never on edit',
   /const bset = \(patch\) => setBiz/.test(sv) && /const saveBiz = \(\) => \{/.test(sv) && !/bset[\s\S]{0,40}localStorage\.setItem\('maruti_settings'/.test(sv));
-ok('Save/Cancel are gated on dirty', /disabled=\{!dirty\}/.test(sv));
+// UPDATE (Admin Settings — high-impact permissions review): the bottom Save/Cancel
+// bar is now shared by Business/Billing/etc, Demo Permissions, and Users & Roles'
+// staff-permission pills — each pointed at its OWN dirty flag via a `sectionDirty`
+// local, rather than the bar always reading the bare `dirty` (business-only) memo.
+// Business Profile's own dirty computation itself (`dirty`, used to derive
+// `sectionDirty` for its own section) is unchanged — verified below.
+ok('Save/Cancel are gated on dirty (business, and — via the same shared bar — Demo Permissions/staff perms)',
+  /disabled=\{!sectionDirty\}/.test(sv) && /const sectionDirty = section === 'demoperms' \? demoPermsDirty : section === 'users' \? staffPermsDirty : dirty;/.test(sv));
 
 // safe prefs DO auto-save (Category A) — theme/density
 // H-9: the key now sources from STORAGE.PREFS (constants/index.js) instead of the raw
@@ -28,8 +35,12 @@ ok('appearance prefs auto-save (Category A) via updatePrefs',
   /const updatePrefs = [\s\S]{0,120}localStorage\.setItem\((?:'maruti_prefs'|STORAGE\.PREFS)/.test(sv));
 
 // the new nav guard
-ok('SettingsView reports dirty state upward (onDirtyChange)',
-  /onDirtyChange\?\.\(dirty\)/.test(sv));
+// UPDATE: onDirtyChange now reports the COMBINED dirty signal (`anyDirty` = business
+// draft OR Demo Permissions draft OR staff-permission draft) — a stray click on a
+// permission toggle must trigger the same "leave without saving?" protection as an
+// edited Business Profile field, not just Business Profile's own dirty state.
+ok('SettingsView reports the combined dirty state upward (onDirtyChange), spanning business + demo perms + staff perms',
+  /const anyDirty = dirty \|\| demoPermsDirty \|\| staffPermsDirty;/.test(sv) && /onDirtyChange\?\.\(anyDirty\)/.test(sv));
 ok('a dirty ref backs the memoized navigation guard (no stale closure)',
   /settingsDirtyRef\.current = settingsDirty/.test(src));
 ok('leaving settings while dirty confirms before discarding',
@@ -43,8 +54,11 @@ ok('the guard does not fire when navigating INTO settings',
 // dirty state, so this always matched regardless of whether Settings itself
 // had one — and it didn't. Now scoped to SettingsView.jsx (`sv`) and to a
 // handler actually keyed on Settings' own `dirty` flag.
-ok('beforeunload guard exists for SETTINGS\' own dirty state specifically (not just present somewhere in the container)',
-  /useEffect\(\(\) => \{\s*if \(!dirty\) return undefined;\s*const h = \(e\) => \{ e\.preventDefault\(\); e\.returnValue = ''; \};\s*window\.addEventListener\('beforeunload', h\);/.test(sv));
+// UPDATE: the beforeunload guard now keys off the same combined `anyDirty` signal —
+// a raw refresh/close with an unsaved permission-toggle draft must be protected too,
+// not just an unsaved Business Profile field.
+ok('beforeunload guard exists for SETTINGS\' own combined dirty state specifically (not just present somewhere in the container)',
+  /useEffect\(\(\) => \{\s*if \(!anyDirty\) return undefined;\s*const h = \(e\) => \{ e\.preventDefault\(\); e\.returnValue = ''; \};\s*window\.addEventListener\('beforeunload', h\);/.test(sv));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

@@ -7321,13 +7321,21 @@ export default function InventoryDashboard() {
       toast.success(`${email} removed. They can still log in but with no special access.`, { id: t });
     } catch (e) { console.error('removeStaffEmail failed:', e); toast.error('Could not remove staff. Check Firestore rules.', { id: t }); }
   }
+  // Admin Settings — high-impact permissions review: SettingsView now stages staff
+  // permission toggles as a local draft and calls this once per changed key on Save
+  // (see saveStaffPermsDraft there), instead of firing on every click as before. The
+  // write itself, its demo/isAdmin guard, and its Firestore shape are UNCHANGED — only
+  // WHEN it's called changed. The return value (added here, previously unused by any
+  // caller) lets that batched Save know whether every individual write actually
+  // succeeded, without duplicating this function's own error toast.
   async function setStaffPermission(rawEmail, key, value) {
-    if (demoMode || !isAdmin) { notify.permissionDenied('Not available in demo.'); return; }
+    if (demoMode || !isAdmin) { notify.permissionDenied('Not available in demo.'); return false; }
     const email = (rawEmail || '').trim().toLowerCase();
     try {
       const current = staffPerms[email] || { costPrices: false, deletes: false, exports: false };
       await setDoc(doc(db, 'appSettings', 'roles'), { staff: { ...staffPerms, [email]: { ...current, [key]: value } }, updatedAt: serverTimestamp(), updatedBy: user?.email || '' }, { merge: true });
-    } catch (e) { console.error('setStaffPermission failed:', e); toast.error('Could not update permission. Check Firestore rules.'); }
+      return true;
+    } catch (e) { console.error('setStaffPermission failed:', e); toast.error('Could not update permission. Check Firestore rules.'); return false; }
   }
 
   // ---- Staff & Access: manage admin emails (stored in appSettings/roles) ----
