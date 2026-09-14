@@ -56,9 +56,16 @@ ok('gross overpaid: paid ₹999990, balance 0 (never negative)', t999990.paid ==
 
 // ---- lock keys on persistence, not on a pre-allocated number (defect B) ---
 const src = fs.readFileSync(path.resolve(__dirname, '../components/billing/BillingModule.jsx'), 'utf8');
+// BUG-LIVE-P1-03 — savedStatus used to call deriveStatus(inv), where `inv` is the
+// live, unsaved DRAFT being edited — so typing a payment into the draft flipped
+// this to "Paid" (and the editor to locked) before anything was saved. It must be
+// derived from the PERSISTED record (looked up from the same `invoices` list
+// `isPersisted` already checks), not from the draft.
 ok('savedStatus keys on isPersisted, not inv.invNo',
-  /const savedStatus = isPersisted \? deriveStatus\(inv\) : null;/.test(src) &&
-  !/const savedStatus = inv\.invNo \? deriveStatus/.test(src));
+  /const persistedInvoice = isPersisted \? invoices\.find\(\(x\) => x\.id === initial\.id\) : null;/.test(src) &&
+  /const savedStatus = persistedInvoice \? deriveStatus\(persistedInvoice\) : null;/.test(src) &&
+  !/const savedStatus = inv\.invNo \? deriveStatus/.test(src) &&
+  !/const savedStatus = isPersisted \? deriveStatus\(inv\) : null;/.test(src));
 ok('locked keys on isPersisted, not !!inv.invNo',
   /const locked = !inv\.isEstimate && isPersisted && \[/.test(src));
 // Refactor Phase 5 — deriveStatus now delegates to the one canonical invoiceStatus
