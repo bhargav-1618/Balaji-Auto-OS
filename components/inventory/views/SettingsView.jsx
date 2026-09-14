@@ -112,6 +112,20 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
   // Surface dirty state to the navigation guard (prevents silent loss on tab switch).
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  // BUG-LIVE-SETTINGS-02 fix — a comment elsewhere in this codebase (InventoryDashboard.js,
+  // near settingsDirtyRef) claimed "the beforeunload handler already covers refresh/close"
+  // for Settings, but no such handler existed anywhere — only PartModal and SupplierModal
+  // register one for their OWN dirty state. A raw browser refresh/close while Business/
+  // Billing/Job Cards/Inventory/Notifications had unsaved edits silently discarded them
+  // with no warning at all, unlike an in-app tab switch (which IS guarded via
+  // onDirtyChange -> settingsDirtyRef -> window.confirm). Same minimal pattern as those
+  // two modals' own handler.
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const h = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [dirty]);
   const [prefs, setPrefsState] = useState(() => { try { return { theme: 'dark', fontSize: 'md', reduceMotion: false, density: 'comfortable', ...(JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}')) }; } catch { return { theme: 'dark', fontSize: 'md' }; } });
   const [demoPerms, setDemoPermsState] = useState(() => loadDemoPerms());
   const [newAdmin, setNewAdmin] = useState('');
@@ -202,7 +216,16 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
     document.documentElement.style.fontSize = sizes[prefs.fontSize] || '16px';
     document.documentElement.classList.toggle('reduce-motion', !!prefs.reduceMotion);
     document.documentElement.setAttribute('data-theme', prefs.theme || 'dark');
-  }, [prefs.fontSize, prefs.reduceMotion, prefs.theme]);
+    // BUG-LIVE-SETTINGS-01 fix — `prefs.density` was written to state and persisted
+    // to localStorage exactly like theme/fontSize/reduceMotion, but nothing ever
+    // read it back: no DOM attribute, no CSS class, no consumer anywhere in the
+    // app. Selecting "Compact" changed the control's own selected state and
+    // nothing else — a real "control -> state -> persistence" path with no
+    // "state -> styling" link at the end of it. Same data-attribute pattern as
+    // data-theme above; see globals.css's `[data-density="compact"]` block for
+    // the actual spacing overrides this now drives.
+    document.documentElement.setAttribute('data-density', prefs.density || 'comfortable');
+  }, [prefs.fontSize, prefs.reduceMotion, prefs.theme, prefs.density]);
   const setCompact = (v) => { updatePrefs({ compactSidebar: v }); setSidebarCollapsed?.(v); };
 
   const saveDemoPerms = (next) => { setDemoPermsState(next); try { localStorage.setItem(DEMO_PERM_KEY, JSON.stringify(next)); window.dispatchEvent(new CustomEvent('maruti-demo-perms')); } catch {} };

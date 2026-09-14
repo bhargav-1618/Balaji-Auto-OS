@@ -317,6 +317,32 @@ html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after 
   color: rgb(var(--fg-rgb)) !important;
 }
 
+/* ===== Density engine (BUG-LIVE-SETTINGS-01 fix) =====
+   Settings -> Appearance -> Density wrote `prefs.density` to state and localStorage
+   exactly like theme/fontSize/reduceMotion, but nothing ever read it back — no DOM
+   attribute, no CSS, no consumer anywhere. `data-density` is now set on <html> the
+   same way `data-theme` already is (see components/InventoryDashboard.js's
+   app-load effect and SettingsView.jsx's own effect). This block is the "styling"
+   half of that link: attribute-scoped overrides of the SAME widely-shared utility
+   classes tables/cards/forms already use everywhere (the exact technique the
+   theme engine above already uses for data-theme="light"), not a parallel
+   spacing system components have to opt into. Comfortable is the unchanged
+   default (zero rule needed); Compact tightens the most common vertical
+   padding/gap/margin classes app-wide — table rows, card padding, form/list gaps. */
+[data-density="compact"] .py-2\.5 { padding-top: .5rem !important; padding-bottom: .5rem !important; }
+[data-density="compact"] .py-3 { padding-top: .625rem !important; padding-bottom: .625rem !important; }
+[data-density="compact"] .py-4 { padding-top: .75rem !important; padding-bottom: .75rem !important; }
+[data-density="compact"] .p-3 { padding: .5rem !important; }
+[data-density="compact"] .p-4 { padding: .75rem !important; }
+[data-density="compact"] .p-5 { padding: 1rem !important; }
+[data-density="compact"] .gap-2 { gap: .375rem !important; }
+[data-density="compact"] .gap-3 { gap: .5rem !important; }
+[data-density="compact"] .gap-4 { gap: .625rem !important; }
+[data-density="compact"] .space-y-3 > * + * { margin-top: .5rem !important; }
+[data-density="compact"] .space-y-4 > * + * { margin-top: .625rem !important; }
+[data-density="compact"] .mb-3 { margin-bottom: .5rem !important; }
+[data-density="compact"] .mb-4 { margin-bottom: .625rem !important; }
+
 /* Continuous login→app arrival: fade the whole shell in gently. Opacity only —
    transforming children re-rasterizes decorative layers and exposes grid lines. */
 .arrival-bloom {

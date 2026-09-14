@@ -4096,6 +4096,13 @@ export default function InventoryDashboard() {
       if (p.fontSize) document.documentElement.style.fontSize = sizes[p.fontSize] || '16px';
       document.documentElement.classList.toggle('reduce-motion', !!p.reduceMotion);
       document.documentElement.setAttribute('data-theme', p.theme || 'dark');
+      // BUG-LIVE-SETTINGS-01 fix — density needs the SAME "apply on every app load"
+      // treatment as theme/fontSize/reduceMotion above, not only SettingsView's own
+      // effect (which only runs once Settings has actually been opened this
+      // session). Without this, a saved "Compact" preference silently reverted to
+      // Comfortable's styling on every fresh reload until the user happened to
+      // revisit Settings.
+      document.documentElement.setAttribute('data-density', p.density || 'comfortable');
     } catch {}
   }, []);
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
