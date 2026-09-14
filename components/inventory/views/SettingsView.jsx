@@ -141,9 +141,18 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
     () => JSON.stringify(staffPermsDraft) !== JSON.stringify(staffPerms),
     [staffPermsDraft, staffPerms],
   );
-  const staffPermsDirtyRef = useRef(false);
-  useEffect(() => { staffPermsDirtyRef.current = staffPermsDirty; }, [staffPermsDirty]);
-  useEffect(() => { if (!staffPermsDirtyRef.current) setStaffPermsDraft(staffPerms); }, [staffPerms]);
+  // Tracks an actual PENDING EDIT (set only by toggleStaffPermDraft, cleared only by
+  // Save/Cancel) — deliberately NOT derived from staffPermsDirty. Deriving it from
+  // staffPermsDirty created a same-commit race: Add staff/Remove staff change the
+  // `staffPerms` prop directly (they're atomic, not staged), which makes
+  // staffPermsDirty true for one render simply because the draft hasn't caught up
+  // yet — and a ref-mirroring effect reacting to that flag could set the ref before
+  // this sync effect (also firing off the same prop change) got to read it,
+  // permanently wedging the draft one entry behind (e.g. a freshly-added staffer
+  // never appearing until a hard reload). This ref only ever changes in response to
+  // the admin's own toggle/save/cancel, so it can't race the prop-driven sync below.
+  const hasPendingStaffEditRef = useRef(false);
+  useEffect(() => { if (!hasPendingStaffEditRef.current) setStaffPermsDraft(staffPerms); }, [staffPerms]);
 
   // Surface dirty state to the navigation guard (prevents silent loss on tab switch) —
   // spans all three staged-draft groups now, not just the business `biz` object.
@@ -286,12 +295,15 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
   // only batches WHEN it's invoked. Individual failures already surface their own
   // error toast inside onSetStaffPerm; this only adds one success toast when every
   // change in the batch actually committed.
-  const toggleStaffPermDraft = (email, key) => setStaffPermsDraft((d) => ({ ...d, [email]: { ...d[email], [key]: !d[email]?.[key] } }));
+  const toggleStaffPermDraft = (email, key) => {
+    hasPendingStaffEditRef.current = true;
+    setStaffPermsDraft((d) => ({ ...d, [email]: { ...d[email], [key]: !d[email]?.[key] } }));
+  };
   const saveStaffPermsDraft = async () => {
     const changedEmails = Object.keys(staffPermsDraft).filter(
       (email) => JSON.stringify(staffPermsDraft[email]) !== JSON.stringify(staffPerms[email]),
     );
-    if (!changedEmails.length) return;
+    if (!changedEmails.length) { hasPendingStaffEditRef.current = false; return; }
     let allOk = true;
     for (const email of changedEmails) {
       const before = staffPerms[email] || {};
@@ -303,9 +315,10 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
         if (!ok) allOk = false;
       }
     }
+    hasPendingStaffEditRef.current = false;
     if (allOk) toast.success(t('toast.staffPermsSaved', 'Staff permissions updated.'));
   };
-  const cancelStaffPermsDraft = () => setStaffPermsDraft(staffPerms);
+  const cancelStaffPermsDraft = () => { hasPendingStaffEditRef.current = false; setStaffPermsDraft(staffPerms); };
 
   // ---- shared UI primitives (standardized switch used everywhere) ----
   // The one switch used app-wide. Old bespoke markup removed — this delegates to
