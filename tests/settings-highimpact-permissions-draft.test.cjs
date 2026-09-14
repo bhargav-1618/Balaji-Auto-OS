@@ -52,12 +52,14 @@ ok('Demo Permissions: Cancel reverts the draft to the saved baseline',
   /const cancelDemoPermsChanges = \(\) => setDemoPermsState\(demoPermsSaved\);/.test(sv));
 
 ok('Staff permission pills: toggling only stages a draft, does not call onSetStaffPerm directly',
-  /const toggleStaffPermDraft = \(email, key\) => setStaffPermsDraft/.test(sv)
+  /const toggleStaffPermDraft = \(email, key\) => \{[\s\S]{0,200}setStaffPermsDraft/.test(sv)
   && !/onClick=\{\(\) => onSetStaffPerm\(email, key,/.test(sv));
 ok('Staff permission pills: Save reuses the existing per-permission write (onSetStaffPerm) once per changed key, and toasts success only if every call succeeded',
   /const saveStaffPermsDraft = async \(\) => \{[\s\S]{0,900}const ok = await onSetStaffPerm\(email, key, after\[key\]\);[\s\S]{0,200}if \(allOk\) toast\.success/.test(sv));
 ok('Staff permission pills: Cancel reverts the draft to the live staffPerms prop (Firestore truth)',
-  /const cancelStaffPermsDraft = \(\) => setStaffPermsDraft\(staffPerms\);/.test(sv));
+  /const cancelStaffPermsDraft = \(\) => \{[\s\S]{0,100}setStaffPermsDraft\(staffPerms\);[\s\S]{0,20}\};/.test(sv));
+ok('Staff permission pills: a pending-edit flag (not the derived dirty comparison itself) gates whether the draft auto-syncs from staffPerms — avoids the same-commit race where an atomic Add/Remove staff prop update could wedge the draft out of sync',
+  /const hasPendingStaffEditRef = useRef\(false\);\s*\n\s*useEffect\(\(\) => \{ if \(!hasPendingStaffEditRef\.current\) setStaffPermsDraft\(staffPerms\); \}, \[staffPerms\]\);/.test(sv));
 
 ok('The combined dirty signal spans business draft + Demo Permissions draft + staff-permission draft',
   /const anyDirty = dirty \|\| demoPermsDirty \|\| staffPermsDirty;/.test(sv));
@@ -189,6 +191,60 @@ act(() => {
 });
 ok('Save committed exactly the changed permission via the existing onSetStaffPerm path',
   setStaffPermCalls.length === 1 && setStaffPermCalls[0].email === 'staff@test.com' && setStaffPermCalls[0].key === 'costPrices' && setStaffPermCalls[0].value === true);
+
+// ---- Regression: an atomic Add/Remove staff prop change (staffPerms updates
+//    directly, not through the draft) must sync into staffPermsDraft on its very
+//    next render when there is no pending local edit — reproduces a real bug found
+//    during live verification: adding a brand-new staff member left "No staff
+//    members yet." on screen and a false "Unsaved permission changes" notice until
+//    a hard reload, because the old sync-skip flag was derived from staffPermsDirty
+//    itself and raced the very prop update it was supposed to react to. Uses a
+//    fresh, untouched mount (no toggle/Save has ever run against it, so there is no
+//    ambiguity about whether a pending-edit flag has been cleared yet) and re-renders
+//    the SAME root with a new `staffPerms` prop — exactly what the container does
+//    after Add staff succeeds and its Firestore listener delivers the update. -------
+const hostAdd = document.createElement('div');
+document.body.appendChild(hostAdd);
+let rootAdd;
+act(() => {
+  rootAdd = createRoot(hostAdd);
+  rootAdd.render(React.createElement(LanguageProvider, null,
+    React.createElement(SettingsView, {
+      onDirtyChange: () => {}, totalRecords: 0, isAdmin: true, userEmail: 'admin@test.com', online: true,
+      onBackup: () => {}, onRestore: () => {}, admins: [], bootstrapAdmins: ['admin@test.com'],
+      onAddAdmin: async () => true, onRemoveAdmin: async () => {},
+      staffPerms: {}, onAddStaff: async () => true, onRemoveStaff: async () => {},
+      onSetStaffPerm: onSetStaffPermMock, recoveryMeta: null, onResetAllData: async () => true, onRestoreVault: async () => {},
+      demoMode: false, demoAdmin: false, sidebarCollapsed: false, setSidebarCollapsed: () => {},
+      lastBackup: null, lastSync: null,
+    }),
+  ));
+});
+act(() => {
+  const usersTab = Array.from(hostAdd.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Users & Roles');
+  usersTab && usersTab.click();
+});
+ok('a fresh Users & Roles mount with no staff starts by showing "No staff members yet."',
+  hostAdd.textContent.includes('No staff members yet.'));
+act(() => {
+  rootAdd.render(React.createElement(LanguageProvider, null,
+    React.createElement(SettingsView, {
+      onDirtyChange: () => {}, totalRecords: 0, isAdmin: true, userEmail: 'admin@test.com', online: true,
+      onBackup: () => {}, onRestore: () => {}, admins: [], bootstrapAdmins: ['admin@test.com'],
+      onAddAdmin: async () => true, onRemoveAdmin: async () => {},
+      staffPerms: { 'qa_e2e_new@test.com': { costPrices: false, deletes: false, exports: false } },
+      onAddStaff: async () => true, onRemoveStaff: async () => {},
+      onSetStaffPerm: onSetStaffPermMock, recoveryMeta: null, onResetAllData: async () => true, onRestoreVault: async () => {},
+      demoMode: false, demoAdmin: false, sidebarCollapsed: false, setSidebarCollapsed: () => {},
+      lastBackup: null, lastSync: null,
+    }),
+  ));
+});
+ok('a newly-added staff member (an external staffPerms prop change with no pending local edit) appears immediately, without a reload',
+  hostAdd.textContent.includes('qa_e2e_new@test.com') && !hostAdd.textContent.includes('No staff members yet.'));
+ok('the draft resync from an atomic Add/Remove staff prop change does not falsely raise the unsaved-changes notice',
+  !hostAdd.textContent.includes('Unsaved permission changes'));
+act(() => { rootAdd.unmount(); });
 
 // ---- Reload simulation: a fresh mount reads straight from localStorage, exactly
 //    like a real browser refresh — proves the SAVED demo-permission value survives
