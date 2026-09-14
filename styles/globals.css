@@ -299,6 +299,24 @@ html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after 
 /* Keep placeholders readable in light */
 :root[data-theme="light"] input::placeholder, :root[data-theme="light"] textarea::placeholder { color: #9a917f !important; }
 
+/* Light mode: native <select> <option> rows across the app carry a hardcoded
+   near-black background — either inline `style={{ background: '#141414' }}` or
+   `className="bg-[#111]"` — left over from when the app was Dark-only. That's
+   invisible-but-harmless in Dark/Warm (their --fg-rgb text is light, so it still
+   reads against a dark option row), but in Light mode --fg-rgb is near-black, so
+   the option text renders near-black on a near-black row and effectively
+   disappears. A couple of call sites (SettingsControls.jsx's SetSel, the
+   rows-per-page pickers in InventoryDashboard.js/LedgerPage.jsx) already avoid
+   this by using a theme-aware `var(--surface-2)` background instead of the
+   hardcoded hex — this brings every other native <option> in line with that same
+   already-correct pattern in one place, rather than editing ~50 individual call
+   sites. Dark/Warm untouched; options using var(--surface-2) already are unaffected
+   (identical value). */
+:root[data-theme="light"] option {
+  background-color: var(--surface-2) !important;
+  color: rgb(var(--fg-rgb)) !important;
+}
+
 /* ===== Density engine (BUG-LIVE-SETTINGS-01 fix) =====
    Settings -> Appearance -> Density wrote `prefs.density` to state and localStorage
    exactly like theme/fontSize/reduceMotion, but nothing ever read it back — no DOM
