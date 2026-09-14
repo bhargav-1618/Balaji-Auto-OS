@@ -8,8 +8,9 @@
 // SearchSelect, the app's other shared production components — so any future module
 // that needs a combined date+time field reuses this instead of hand-rolling another.
 import React, { useState } from 'react';
+import { FILTER_FIELD_CLS } from './fieldStyles';
 
-const defaultInputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
+const defaultInputCls = FILTER_FIELD_CLS;
 
 export const toLocalInput = (d) => { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 

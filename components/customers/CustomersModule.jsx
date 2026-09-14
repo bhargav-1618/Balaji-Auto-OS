@@ -32,6 +32,7 @@ import EditLeaseBanner from '../common/EditLeaseBanner';
 import RecordUpdatedNotice from '../common/RecordUpdatedNotice';
 import RecordConflictBanner from '../common/RecordConflictBanner';
 import ConflictReviewDialog from '../common/ConflictReviewDialog';
+import { FILTER_FIELD_CLS } from '../common/fieldStyles';
 import { variantsFor, FUELS, TRANSMISSIONS } from '../../lib/vehicleCatalog';
 import { INDIAN_STATES } from '../../lib/indianStates';
 import { INDIAN_DISTRICTS, CITY_MASTER_DATA } from '../../lib/indianDistricts';
@@ -66,7 +67,7 @@ const TYPE_META = {
 const typeColor = (t) => (TYPE_META[t] ? TYPE_META[t].color : '#94a3b8');
 const TYPE_COLORS = Object.fromEntries(Object.entries(TYPE_META).map(([k, v]) => [k, v.color]));
 const TYPES = BASE_TYPES;
-const inputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
+const inputCls = FILTER_FIELD_CLS;
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
 const maskAadhar = (a) => { const d = String(a || '').replace(/\D/g, ''); return d.length >= 4 ? `XXXX XXXX ${d.slice(-4)}` : (a ? 'XXXX' : '—'); };
 // Batch 4A Defect 4 — live paste-artifact sanitizer for single-line text fields (Name,

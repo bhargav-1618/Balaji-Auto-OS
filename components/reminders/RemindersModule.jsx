@@ -12,12 +12,13 @@ import { useSearchIndex, matchIndexed, rankIndexed, useDeferredSearch } from '..
 import PageHeader from '../common/PageHeader';
 import MiniSelect from '../common/MiniSelect';
 import LocalCapacityBanner from '../common/LocalCapacityBanner';
+import { FILTER_FIELD_CLS } from '../common/fieldStyles';
 import { getLocalCapacityStatus } from '../../services/localCapacityService';
 import { SEMANTIC } from '../../constants/ui';
 import { useTranslation } from '../../lib/i18n';
 import { asArray, isIndianMobile, MOBILE_ERROR } from '../../lib/format';
 
-const inputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
+const inputCls = FILTER_FIELD_CLS;
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
 const days = (d) => { if (!d) return null; const t = new Date(d).getTime(); if (Number.isNaN(t)) return null; return Math.round((t - Date.now()) / 86400000); };
 // Settings QA fix: Settings -> Job Cards -> Service Reminder Days (placeholder
