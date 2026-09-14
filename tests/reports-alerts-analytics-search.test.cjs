@@ -109,7 +109,10 @@ ok('the search input itself stays bound to the raw, uncontrolled-lag q (typing i
 // Refactor Phase 10 — AnalyticsView moved verbatim to ./inventory/views/AnalyticsView.jsx.
 const an = fs.readFileSync(path.resolve(__dirname, '../components/inventory/views/AnalyticsView.jsx'), 'utf8');
 const anStart = an.indexOf('function AnalyticsView({');
-const anBlock = an.slice(anStart, anStart + 6000);
+// Window widened from 6000 -> 7000 (BUG-LIVE-P2-01 fix added an explanatory
+// comment ahead of the `parts` memo, pushing partMatchesQuery further into the
+// function body) — still comfortably covers the same logical block.
+const anBlock = an.slice(anStart, anStart + 7000);
 ok('a shared partMatchesQuery helper checks name AND sku/oemNo/barcode/partNo (was name-only)',
   /const partMatchesQuery = \(p, q\) => !q \|\| safeLower\(p\.name\)\.includes\(q\)/.test(anBlock) &&
   /\(p\.sku && safeLower\(p\.sku\)\.includes\(q\)\)/.test(anBlock));
