@@ -36,8 +36,15 @@ ok('leaving settings while dirty confirms before discarding',
   /settingsDirtyRef\.current[\s\S]{0,120}confirm\('You have unsaved settings/.test(src));
 ok('the guard does not fire when navigating INTO settings',
   /tab !== 'settings' && settingsDirtyRef\.current/.test(src));
-ok('beforeunload guard still present for refresh/close',
-  /addEventListener\('beforeunload'/.test(src));
+// BUG-LIVE-SETTINGS-02 — this assertion used to just check that the STRING
+// "addEventListener('beforeunload'" appears ANYWHERE in the whole container
+// file (`src`, 10,000+ lines). PartModal and SupplierModal — unrelated to
+// Settings — already register their OWN beforeunload handlers for their OWN
+// dirty state, so this always matched regardless of whether Settings itself
+// had one — and it didn't. Now scoped to SettingsView.jsx (`sv`) and to a
+// handler actually keyed on Settings' own `dirty` flag.
+ok('beforeunload guard exists for SETTINGS\' own dirty state specifically (not just present somewhere in the container)',
+  /useEffect\(\(\) => \{\s*if \(!dirty\) return undefined;\s*const h = \(e\) => \{ e\.preventDefault\(\); e\.returnValue = ''; \};\s*window\.addEventListener\('beforeunload', h\);/.test(sv));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);
