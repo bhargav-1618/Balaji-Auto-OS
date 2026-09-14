@@ -82,12 +82,21 @@ ok('the selector targets the <option> element itself (not a class/style match) �
   + 'so it covers every affected file uniformly, inline style or Tailwind class alike',
   bareTagSelector);
 
+// Dropdown-standardization pass: Vehicles/Customers/Billing/Reminders' filter-bar
+// native <select> elements were converted to MiniSelect (a native select's open
+// popup can't be themed to match the app — see dropdown-native-to-minisel-
+// conversion.test.cjs). Reminders had ONLY those two converted selects, so it no
+// longer has a single native <option> anywhere in the file; Vehicles/Customers/
+// Billing still have OTHER native selects untouched by that pass (rows-per-page,
+// damage-type, etc.), so they stay in this list. This assertion's job is proving
+// the file list below is not stale — updating it to match a genuine, intentional
+// removal is correct, not weakening the test (the actual CSS rule itself is
+// re-verified, unchanged, by the assertions above).
 const knownOffenders = [
   'components/billing/BillingModule.jsx',
   'components/vehicles/VehiclesModule.jsx',
   'components/customers/CustomersModule.jsx',
   'components/jobcards/JobCardModule.jsx',
-  'components/reminders/RemindersModule.jsx',
   'components/inventory/InventoryStock.jsx',
   'components/inventory/SupplierDirectory.jsx',
   'components/inventory/SupplierPerformance.jsx',

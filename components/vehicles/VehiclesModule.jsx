@@ -1265,8 +1265,16 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
                 `!== 'All'` filter checks below would then exclude every row. */}
             <MiniSelect value={makeF} placeholder={t('vehicles.filter.allMakes', 'All Makes')} options={makes} labels={{ All: t('vehicles.filter.allMakes', 'All Makes') }} emptyValue="All" onPick={(m) => setMakeF(m || 'All')} inputCls={inputCls} />
             <MiniSelect value={fuelF} placeholder={t('vehicles.filter.allFuels', 'All Fuels')} options={['All', ...FUELS]} labels={{ All: t('vehicles.filter.allFuels', 'All Fuels') }} emptyValue="All" onPick={(m) => setFuelF(m || 'All')} inputCls={inputCls} />
-            <select value={statusF} onChange={(e) => setStatusF(e.target.value)} className={inputCls}>{['All', 'Active', 'Inactive', 'Archived'].map((s) => <option key={s} value={s} style={{ background: '#141414' }}>{s === 'All' ? t('customers.filter.allStatus', 'All Status') : t(`status.${s.toLowerCase()}`, s)}</option>)}</select>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={inputCls}>{[['latest', t('common.newest', 'Latest')], ['oldest', t('common.oldest', 'Oldest')], ['visits', t('vehicles.sort.mostVisits', 'Most Visits')], ['revenue', t('vehicles.sort.highestRevenue', 'Highest Revenue')], ['lastService', t('vehicles.sort.lastService', 'Last Service')], ['upcoming', t('vehicles.sort.upcomingService', 'Upcoming Service')]].map(([v, l]) => <option key={v} value={v} style={{ background: '#141414' }}>{l}</option>)}</select>
+            {/* Dropdown-standardization pass: converted from native <select> to the
+                app's own MiniSelect, same reasoning as Make/Fuel right above (a native
+                <select>'s open popup is OS-rendered and can never be themed to match
+                the app — see the "Universal dropdown architecture review" comment on
+                this file's Add-Vehicle wizard). hideSearch: a 4-option status list and
+                a 6-option sort order don't need a search box the way a long catalog
+                picker does. Same values, same onChange contract, same 'All' sentinel
+                pattern as Make/Fuel. */}
+            <MiniSelect value={statusF} placeholder={t('customers.filter.allStatus', 'All Status')} options={['All', 'Active', 'Inactive', 'Archived']} labels={{ All: t('customers.filter.allStatus', 'All Status'), Active: t('status.active', 'Active'), Inactive: t('status.inactive', 'Inactive'), Archived: t('status.archived', 'Archived') }} emptyValue="All" onPick={(v) => setStatusF(v || 'All')} inputCls={inputCls} hideSearch />
+            <MiniSelect value={sortBy} placeholder={t('common.newest', 'Latest')} options={['latest', 'oldest', 'visits', 'revenue', 'lastService', 'upcoming']} labels={{ latest: t('common.newest', 'Latest'), oldest: t('common.oldest', 'Oldest'), visits: t('vehicles.sort.mostVisits', 'Most Visits'), revenue: t('vehicles.sort.highestRevenue', 'Highest Revenue'), lastService: t('vehicles.sort.lastService', 'Last Service'), upcoming: t('vehicles.sort.upcomingService', 'Upcoming Service') }} emptyValue="latest" onPick={(v) => setSortBy(v || 'latest')} inputCls={inputCls} hideSearch />
           </div>
           {/* Export + Add Vehicle grouped into one inner flex unit so flex-wrap moves them
               to the next line TOGETHER, never splitting the pair — without this, Export

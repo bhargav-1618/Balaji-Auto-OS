@@ -30,7 +30,14 @@ const defaultInputCls = FILTER_FIELD_CLS;
 // flattened, filtered list; group labels are rendered as non-interactive header rows
 // inline in the option list, not as separate dropdown levels — so this stays a single
 // scan-and-pick interaction rather than adding an extra click.
-export default function MiniSelect({ value, placeholder, options, groups, onPick, onAdd, addLabel, disabled, inputCls = defaultInputCls, labels, emptyValue = '', boundaryRef, width }) {
+// `hideSearch` (dropdown-standardization pass) — a short, fixed option list (a
+// handful of statuses, a sort order) doesn't need a search box the way a
+// 100+-row Manufacturer/Model catalog does; forcing one on every converted
+// native <select> would be UI clutter for a 3-6-option picker. Omitted
+// everywhere else — every existing caller keeps its search box exactly as
+// before. When set, keyboard nav (Arrow/Enter) moves from the search input to
+// the option list itself, which is made focusable and autofocused instead.
+export default function MiniSelect({ value, placeholder, options, groups, onPick, onAdd, addLabel, disabled, inputCls = defaultInputCls, labels, emptyValue = '', boundaryRef, width, hideSearch = false }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [hi, setHi] = useState(0);
@@ -177,23 +184,25 @@ export default function MiniSelect({ value, placeholder, options, groups, onPick
       {open && !disabled && (
         <DropdownPanel anchorRef={ref} open onClose={() => { setOpen(false); setQ(''); }} scroll={false} boundaryRef={boundaryRef} width={width}
           style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <div className="relative p-2" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.07)', flex: '0 0 auto' }}>
-            <Search size={13} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/45" />
-            <input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={onKey}
-              placeholder="Search…"
-              role="combobox"
-              aria-expanded="true"
-              aria-controls={listboxId}
-              aria-autocomplete="list"
-              aria-activedescendant={shown[hi] ? optionId(hi) : undefined}
-              className="w-full pl-8 pr-2 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none"
-            />
-          </div>
-          <div ref={listRef} id={listboxId} role="listbox" className="overflow-y-auto dark-scroll" style={{ flex: '1 1 auto' }}>
+          {!hideSearch && (
+            <div className="relative p-2" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.07)', flex: '0 0 auto' }}>
+              <Search size={13} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/45" />
+              <input
+                autoFocus
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={onKey}
+                placeholder="Search…"
+                role="combobox"
+                aria-expanded="true"
+                aria-controls={listboxId}
+                aria-autocomplete="list"
+                aria-activedescendant={shown[hi] ? optionId(hi) : undefined}
+                className="w-full pl-8 pr-2 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none"
+              />
+            </div>
+          )}
+          <div ref={listRef} id={listboxId} role="listbox" tabIndex={hideSearch ? -1 : undefined} autoFocus={hideSearch} onKeyDown={hideSearch ? onKey : undefined} className="overflow-y-auto dark-scroll outline-none" style={{ flex: '1 1 auto' }}>
             {shownGroups ? (
               shownGroups.map((g) => (
                 <React.Fragment key={g.label}>

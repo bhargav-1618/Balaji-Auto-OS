@@ -42,17 +42,20 @@ ok('Customers type filter: typeFilterLabels translates the All sentinel AND ever
   /const typeFilterLabels = useMemo\(\(\) => \(\{ All: t\('customers\.filter\.allTypes', 'All Customer Types'\), \.\.\.Object\.fromEntries\(TYPES\.map\(\(ty\) => \[ty, t\(`customerType\.\$\{ty\}`, ty\)\]\)\) \}\)/.test(cust));
 ok('Customers type filter: MiniSelect wires typeFilterLabels, and onPick falls back to the All sentinel (not empty string)',
   /options=\{\['All', \.\.\.TYPES\]\} labels=\{typeFilterLabels\} emptyValue="All" onPick=\{\(v\) => setTypeF\(v \|\| 'All'\)\}/.test(cust));
-ok('Customers status select: option carries explicit value={t}',
-  /\['All', 'Active', 'Inactive', 'Archived'\]\.map\(\(st\) => <option key=\{st\} value=\{st\}/.test(cust));
+// Customers Status, Billing Status/Payments were later ALSO converted from native
+// <select> to MiniSelect (dropdown-standardization pass) — same structural fix as
+// Type/Make/Fuel above: options ARE the value, a `labels` map only changes what's
+// displayed, and onPick falls back to the sentinel rather than passing ''.
+ok('Customers status filter: MiniSelect options are the real status values, and onPick falls back to the All sentinel',
+  /options=\{\['All', 'Active', 'Inactive', 'Archived'\]\}[\s\S]{0,300}emptyValue="All" onPick=\{\(v\) => setStatusF\(v \|\| 'All'\)\}/.test(cust));
 ok('Customers: no valueless "All Customer Types" option remains',
   !/<option key=\{t\} style=\{\{ background: '#141414' \}\}>\{t === 'All' \? 'All Customer Types'/.test(cust));
 
 const bill = R('components/billing/BillingModule.jsx');
-ok('Billing status select carries explicit value',
-  // 'Archived' appended after 'Returned' — see billing-filter-perf.test.cjs's matching note.
-  /'Returned', 'Archived'\]\.map\(\(s\) => <option key=\{s\} value=\{s\}/.test(bill));
-ok('Billing payments select carries explicit value',
-  /\['All', \.\.\.PAYMENT_MODES\]\.map\(\(s\) => <option key=\{s\} value=\{s\}/.test(bill));
+ok('Billing status filter: MiniSelect options are the real status values, and onPick falls back to the All sentinel',
+  /options=\{\['All', 'Outstanding', 'Draft', 'Estimate', 'Unpaid', 'Partially Paid', 'Paid', 'Cancelled', 'Refunded', 'Returned', 'Archived'\]\}[\s\S]{0,600}emptyValue="All" onPick=\{\(v\) => setStatusF\(v \|\| 'All'\)\}/.test(bill));
+ok('Billing payments filter: MiniSelect options are the real payment modes, and onPick falls back to the All sentinel',
+  /options=\{\['All', \.\.\.PAYMENT_MODES\]\}[\s\S]{0,300}emptyValue="All" onPick=\{\(v\) => setPayModeF\(v \|\| 'All'\)\}/.test(bill));
 
 const veh = R('components/vehicles/VehiclesModule.jsx');
 ok('Vehicles make filter: MiniSelect labels the All sentinel, and onPick falls back to it (not empty string)',

@@ -40,8 +40,12 @@ ok('merged card has a job number so the form loads it (d.jobNo truthy)', !!merge
 
 // ── 2. Archive: viewable + restore round-trip ──────────────────────────────
 const veh = R('components/vehicles/VehiclesModule.jsx');
+// UPDATE (dropdown-standardization pass): the Status filter was converted from a
+// native <select>{[...].map(...)} to MiniSelect, which takes the SAME option array
+// as a plain `options` prop (MiniSelect does its own internal mapping) — same four
+// values, same Archived option, just no literal `.map` call left in this file's JSX.
 ok('Vehicles now has a Status filter with an Archived option',
-  /\['All', 'Active', 'Inactive', 'Archived'\]\.map/.test(veh));
+  /options=\{\['All', 'Active', 'Inactive', 'Archived'\]\}/.test(veh));
 ok('the status predicate filters by (r.status || Active)', /statusF !== 'All' && \(r\.status \|\| 'Active'\) !== statusF/.test(veh));
 
 // behavioural archive round-trip (the toggle used by archiveVehicle)

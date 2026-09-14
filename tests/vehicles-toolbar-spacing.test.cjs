@@ -30,6 +30,15 @@
  * widths (`!w-36 2xl:!w-44` etc.) to close a leftover-space gap on genuinely wide
  * monitors; see tests/customers-vehicles-wide-toolbar.test.cjs. The base `!w-36`/`!w-40`
  * this file guards stay exactly as fixed here — only appended to, never replaced.
+ *
+ * UPDATE 2 (dropdown-standardization pass) — Status and Sort were converted from
+ * native <select> to MiniSelect (a native select's open popup is OS-rendered and
+ * can't be themed to match the app; see components/common/fieldStyles.js and the
+ * dropdown-design-consistency test). The "plain grid item, no width class of its
+ * own" property this file guards is UNCHANGED by that conversion: MiniSelect's
+ * trigger still receives the same bare `inputCls` (no sm:-gated width appended),
+ * and its outer wrapper still has no width class of its own — same grid-track
+ * sizing behaviour as before, just via MiniSelect's markup instead of <select>'s.
  */
 const fs = require('fs'), path = require('path');
 let PASS = 0, FAIL = 0;
@@ -48,23 +57,25 @@ const cust = R('components/customers/CustomersModule.jsx');
 // grid item's track width is set by the grid, never by inputCls's own w-full falling back
 // below sm:. The assertions below verify that grid-item sizing (and that the old sm:-gated
 // widths that caused the full-width-below-640px bug are gone).
-ok('Vehicles Status select is a plain grid item (no fixed/gated width of its own — sized by its grid track)',
-  /<select value=\{statusF\} onChange=\{\(e\) => setStatusF\(e\.target\.value\)\} className=\{inputCls\}/.test(veh));
-ok('Vehicles Sort select is a plain grid item (no fixed/gated width of its own — sized by its grid track)',
-  /<select value=\{sortBy\} onChange=\{\(e\) => setSortBy\(e\.target\.value\)\} className=\{inputCls\}/.test(veh));
-ok('Vehicles no longer has the old sm:-gated Status/Sort widths (would silently reintroduce the full-width-below-640px inconsistency)',
-  !/\$\{inputCls\} sm:w-36`/.test(veh) && !/\$\{inputCls\} sm:w-40`/.test(veh));
+ok('Vehicles Status is a MiniSelect and a plain grid item (no fixed/gated width of its own — sized by its grid track)',
+  /<MiniSelect value=\{statusF\}[\s\S]{0,400}inputCls=\{inputCls\}/.test(veh));
+ok('Vehicles Sort is a MiniSelect and a plain grid item (no fixed/gated width of its own — sized by its grid track)',
+  /<MiniSelect value=\{sortBy\}[\s\S]{0,700}inputCls=\{inputCls\}/.test(veh));
+ok('Vehicles Status/Sort MiniSelects carry no sm:-gated width override on inputCls (would silently reintroduce the full-width-below-640px inconsistency)',
+  !/inputCls=\{`\$\{inputCls\} sm:w-36`\}/.test(veh) && !/inputCls=\{`\$\{inputCls\} sm:w-40`\}/.test(veh));
 
-ok('Customers Status select is a plain grid item (no fixed/gated width of its own — sized by its grid track)',
-  /<select value=\{statusF\} onChange=\{\(e\) => setStatusF\(e\.target\.value\)\} className=\{inputCls\}/.test(cust));
-ok('Customers no longer has the old sm:-gated Status width',
-  !/\$\{inputCls\} sm:w-36`/.test(cust));
+ok('Customers Status is a MiniSelect and a plain grid item (no fixed/gated width of its own — sized by its grid track)',
+  /<MiniSelect value=\{statusF\}[\s\S]{0,400}inputCls=\{inputCls\}/.test(cust));
+ok('Customers Status MiniSelect carries no sm:-gated width override on inputCls',
+  !/inputCls=\{`\$\{inputCls\} sm:w-36`\}/.test(cust));
 
-// --- Filtering/sorting behavior itself is untouched — only the width class changed ---
-ok('Vehicles Status select still drives statusF (same onChange, same options, same values)',
-  /<select value=\{statusF\}[\s\S]{0,20}onChange=\{\(e\) => setStatusF\(e\.target\.value\)\}[\s\S]{0,300}All Status/.test(veh));
-ok('Vehicles Sort select still drives sortBy with the full original option set',
-  /\[\['latest', t\('common\.newest', 'Latest'\)\], \['oldest', t\('common\.oldest', 'Oldest'\)\], \['visits', t\('vehicles\.sort\.mostVisits', 'Most Visits'\)\], \['revenue', t\('vehicles\.sort\.highestRevenue', 'Highest Revenue'\)\], \['lastService', t\('vehicles\.sort\.lastService', 'Last Service'\)\], \['upcoming', t\('vehicles\.sort\.upcomingService', 'Upcoming Service'\)\]\]/.test(veh));
+// --- Filtering/sorting behavior itself is untouched — only the control/width changed ---
+ok('Vehicles Status MiniSelect still drives statusF (same onPick target, same options, same "All" sentinel)',
+  /<MiniSelect value=\{statusF\}[\s\S]{0,300}options=\{\['All', 'Active', 'Inactive', 'Archived'\]\}[\s\S]{0,300}onPick=\{\(v\) => setStatusF\(v \|\| 'All'\)\}/.test(veh));
+ok('Vehicles Sort MiniSelect still drives sortBy with the full original option set',
+  /options=\{\['latest', 'oldest', 'visits', 'revenue', 'lastService', 'upcoming'\]\}/.test(veh)
+  && /lastService: t\('vehicles\.sort\.lastService', 'Last Service'\)/.test(veh)
+  && /upcoming: t\('vehicles\.sort\.upcomingService', 'Upcoming Service'\)/.test(veh));
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);
