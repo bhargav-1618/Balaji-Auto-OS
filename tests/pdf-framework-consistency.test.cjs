@@ -44,8 +44,14 @@ ok('exports ONE canonical brand gold, with a deliberately darker variant for tex
   /export const PDF_GOLD = \{ onDark: \[212, 175, 55\], onLight: \[150, 110, 30\] \};/.test(theme));
 ok('exports shared divider/rule grays (replacing 4 different ad hoc values in Invoice alone)',
   /export const PDF_RULE = \{ light: \[224, 224, 224\], medium: \[190, 190, 190\] \};/.test(theme));
+// Privacy cleanup: SHOP's field values now come from NEXT_PUBLIC_SHOP_* env vars
+// (see lib/pdfTheme.js), not a hardcoded real-business literal — so this checks the
+// ONE-canonical-object shape (still a single `export const SHOP` with the full field
+// set every generator relies on), not specific business copy, which the whole point
+// of this change was to stop hardcoding.
 ok('exports ONE canonical SHOP branding object (was hand-retyped, with drift, in 2 files)',
-  /export const SHOP = \{/.test(theme) && /TRUSTED FOR OVER 25 YEARS/.test(theme));
+  /export const SHOP = \{/.test(theme)
+  && ['name', 'tag', 'phones', 'address', 'gst', 'email', 'website'].every((k) => new RegExp(`\\n  ${k}:`).test(theme)));
 ok('exports a shared demo-mode masking helper', /export function maskShop\(/.test(theme));
 ok('exports a shared letterhead-drawing helper', /export function drawPdfHeader\(/.test(theme));
 ok('exports a shared page-number footer helper', /export function drawPdfPageNumber\(/.test(theme));

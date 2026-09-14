@@ -25,7 +25,9 @@ import { DEMO_PERM_GROUPS, DEMO_PERM_KEY, loadDemoPerms } from '../../../lib/dem
 //
 // SHOP_NAME / APP_VERSION are local copies of the container's module constants (same
 // values; the container keeps its own — getShopName() still uses SHOP_NAME there).
-const SHOP_NAME = 'SRI BABA BALAJI MARUTI CARE';
+// Privacy cleanup: sourced from NEXT_PUBLIC_SHOP_NAME, same as the container and
+// lib/pdfTheme.js's SHOP.name, so this placeholder text can't drift from either.
+const SHOP_NAME = process.env.NEXT_PUBLIC_SHOP_NAME || 'Your Workshop Name';
 const APP_VERSION = '1.0.0';
 
 // ---- Settings field primitives --------------------------------
