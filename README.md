@@ -183,13 +183,17 @@ react-hot-toast · jsPDF · qrcode · SheetJS (xlsx).
 ## Status & Version History
 
 Current version: **1.0.0** — first production release, targeting single-location
-workshops. The transaction/billing engine and the multi-terminal concurrency paths
-(invoice numbering, cross-workflow races, duplicate-action idempotency, refresh/offline
-recovery, tab-lifecycle safety) are covered by executable test suites and were verified
-with concurrent clients against the emulator and production during a post-release
-reliability program (see [docs/CHANGELOG.md](docs/CHANGELOG.md)). The remaining open
-items — a few low-severity field-level last-writer-wins races, the browser-only
-verification ceiling, and two operator deployment steps — are tracked in
+workshops. Current release tag: **[v1.0.1](https://github.com/bhargav-1618/Balaji-Auto-OS/releases/tag/v1.0.1)** —
+the final showcase-release snapshot (documentation/release-packaging only; no
+application code changed since 1.0.0). The transaction/billing engine and the
+multi-terminal concurrency paths (invoice numbering, cross-workflow races,
+duplicate-action idempotency, refresh/offline recovery, tab-lifecycle safety —
+including native-Chrome multi-tab verification) are covered by executable test
+suites and were verified with concurrent clients against the emulator and
+production during a post-release reliability program (see
+[docs/CHANGELOG.md](docs/CHANGELOG.md)). The remaining open items — a few
+low-severity field-level last-writer-wins races and the browser-only
+verification ceiling — are tracked in
 [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) and
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
