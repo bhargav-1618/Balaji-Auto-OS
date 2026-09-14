@@ -740,7 +740,15 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   // modal opens, so `inv.invNo` is truthy for a brand-new unsaved invoice — which made
   // a new-but-overpaid invoice render "Paid · Locked" and freeze the editor. `isPersisted`
   // (already computed above) is the real "this invoice has a saved copy" signal.
-  const savedStatus = isPersisted ? deriveStatus(inv) : null;
+  // BUG-LIVE-P1-03 fix — `savedStatus` (despite its name) used to call deriveStatus(inv),
+  // where `inv` is the LIVE, UNSAVED DRAFT the user is currently editing — so typing a
+  // payment amount that brought the DRAFT's balance to zero flipped this to "Paid ·
+  // Locked" and hid Save immediately, before anything was written. A reload correctly
+  // showed the invoice still unpaid, because nothing had been persisted. The persisted
+  // record — not the draft — is what "saved status" must mean: look it up from the same
+  // `invoices` list `isPersisted` already checked, and derive status from THAT.
+  const persistedInvoice = isPersisted ? invoices.find((x) => x.id === initial.id) : null;
+  const savedStatus = persistedInvoice ? deriveStatus(persistedInvoice) : null;
   const locked = !inv.isEstimate && isPersisted && ['Paid', 'Cancelled', 'Refunded', 'Returned'].includes(savedStatus);
   const [newCust, setNewCust] = useState(null); // {name,phone,email,gst} when adding inline
   const [newVeh, setNewVeh] = useState(null); // {regNo,make,model,fuel} when adding inline

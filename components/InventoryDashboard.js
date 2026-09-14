@@ -2173,21 +2173,38 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
   useEffect(() => { if (onDirtyChange) onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, [onDirtyChange]);
 
-  // Live completeness meter — reads the SAME fields the form actually writes
-  // (categories[] and compatibleCars[]), with real validation rather than "exists".
-  const partHealth = useMemo(() => {
-    const checks = [
-      { label: 'Name', ok: String(form.name || '').trim().length >= 3 && /[a-zA-Z]{3,}/.test(String(form.name || '').trim()) },
-      { label: 'SKU', ok: String(form.sku || '').trim().length >= 3 },
-      { label: 'Category', ok: asList(form.categories).length > 0 },
-      { label: 'Vehicle', ok: asList(form.compatibleCars).length > 0 },
-      { label: 'Selling price', ok: (Number(form.sellingPrice) || 0) > 0 },
-      { label: 'Cost price', ok: (Number(form.purchasePrice) || 0) > 0 },
-      { label: 'Image', ok: !!form.imageString },
+  // BUG-LIVE-P0-01 fix — this used to be two independently-computed lists: this
+  // completeness meter (name/sku/category/vehicle/selling/cost/image) and formValid
+  // below (which also required, for admins, the floor price and pp<=msp<=sp
+  // ordering). Neither list contained the other, so the meter could read "100% ·
+  // Ready to save" while formValid was still false — Save stayed disabled with no
+  // visible reason, since the per-field error messages only populate inside
+  // handleSubmit, which a disabled button never lets fire. Now ONE list drives
+  // both: every `required` item gates the Save button (`formValid` below), and
+  // every item (required or not) contributes to the completeness %, so 100% can
+  // no longer be reached while something required is still missing/invalid.
+  const partChecks = useMemo(() => {
+    const pp = parseFloat(form.purchasePrice) || 0;
+    const sp = parseFloat(form.sellingPrice) || 0;
+    const msp = parseFloat(form.minSellingPrice) || 0;
+    return [
+      { label: 'Name', required: true, ok: String(form.name || '').trim().length >= 3 && /[a-zA-Z]{3,}/.test(String(form.name || '').trim()) },
+      { label: 'Category', required: true, ok: asList(form.categories).length > 0 },
+      { label: 'Current stock', required: !isEdit, ok: isEdit || String(form.stock).trim() !== '' },
+      { label: 'Selling price', required: true, ok: sp > 0 },
+      { label: 'Cost price', required: isAdmin, ok: !isAdmin || pp > 0 },
+      { label: 'Min sell (floor) price', required: isAdmin, ok: !isAdmin || msp > 0 },
+      { label: 'Price consistency (Cost ≤ Floor ≤ MRP)', required: isAdmin, ok: !isAdmin || (sp >= pp && msp >= pp && msp <= sp) },
+      { label: 'SKU', required: false, ok: String(form.sku || '').trim().length >= 3 },
+      { label: 'Vehicle', required: false, ok: asList(form.compatibleCars).length > 0 },
+      { label: 'Image', required: false, ok: !!form.imageString },
     ];
-    const done = checks.filter((c) => c.ok).length;
-    return { checks, pct: Math.round((done / checks.length) * 100) };
-  }, [form]);
+  }, [form, isEdit, isAdmin]);
+  const partHealth = useMemo(() => {
+    const done = partChecks.filter((c) => c.ok).length;
+    return { checks: partChecks, pct: Math.round((done / partChecks.length) * 100) };
+  }, [partChecks]);
+  const partMissing = useMemo(() => partChecks.filter((c) => c.required && !c.ok).map((c) => c.label), [partChecks]);
 
   function handleSubmit(e) {
     e.preventDefault();
@@ -2273,20 +2290,9 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
   }
 
   // Task 1: live validity for disabling Save until required fields are valid.
-  const formValid = (() => {
-    if (!form.name.trim()) return false;
-    if (asList(form.categories).length === 0) return false;
-    if (!isEdit && String(form.stock).trim() === '') return false;
-    const pp = parseFloat(form.purchasePrice) || 0;
-    const sp = parseFloat(form.sellingPrice) || 0;
-    const msp = parseFloat(form.minSellingPrice) || 0;
-    if (!(sp > 0)) return false;
-    if (isAdmin) {
-      if (!(pp > 0) || !(msp > 0)) return false;
-      if (sp < pp || msp < pp || msp > sp) return false;
-    }
-    return true;
-  })();
+  // Derived from partChecks above (the single authoritative validity contract for
+  // this form) so this can never disagree with what the completeness meter shows.
+  const formValid = partMissing.length === 0;
 
   const fieldLabel = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1.5';
   const fieldInput =
@@ -2775,6 +2781,7 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
               <button
                 type="submit"
                 disabled={saving || !formValid}
+                title={partMissing.length ? `Required before saving: ${partMissing.join(', ')}` : undefined}
                 className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-[0.98] transition disabled:opacity-60 flex items-center justify-center gap-2"
               >
                 {saving && <Loader2 size={15} className="animate-spin" />}
@@ -2836,7 +2843,7 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
       ) : (
         <div className="flex gap-3">
           <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Cancel</button>
-          <button type="submit" form="part-form" disabled={saving || !formValid} className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110 active:scale-[0.98] transition disabled:opacity-60 flex items-center justify-center gap-2">
+          <button type="submit" form="part-form" disabled={saving || !formValid} title={partMissing.length ? `Required before saving: ${partMissing.join(', ')}` : undefined} className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110 active:scale-[0.98] transition disabled:opacity-60 flex items-center justify-center gap-2">
             {saving && <Loader2 size={15} className="animate-spin" />}
             {isEdit ? 'Save Changes' : 'Add Part'}
           </button>
