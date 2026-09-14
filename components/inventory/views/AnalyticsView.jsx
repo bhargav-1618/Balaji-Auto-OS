@@ -171,10 +171,20 @@ function AnalyticsView({ inventory, sales = [], rollups = [], restocks = [], aud
   const categoryOpts = useMemo(() => ['All', ...new Set(inventory.flatMap((p) => [p.category, ...asList(p.categories)]).filter(Boolean))], [inventory]);
   const brandOpts = useMemo(() => ['All', ...new Set(inventory.flatMap((p) => brandsOf(p)).filter(Boolean))], [inventory]);
 
+  // BUG-LIVE-P2-01 fix — this used to omit the `!p.archived` exclusion that every
+  // other inventory-derived view in the app applies (Inventory dashboard, Reports
+  // -> Inventory, computeInventoryHealth/computeWorkshopScore, and even this same
+  // page's own "unique products / inventory records" line a few dozen lines down).
+  // Every KPI card, Top Profitable Parts, Fast Movers, Dead Stock and Aging section
+  // below reads from this ONE list, so an archived part with real stock/cost/price
+  // silently counted toward Locked Capital / Expected Profit / Top Profitable Parts
+  // while the record/product counts (which DID filter archived) correctly read
+  // zero — an internally contradictory page for the same underlying data.
   const parts = useMemo(
     () =>
       inventory.filter(
         (p) =>
+          !p.archived &&
           (fCategory === 'All' || p.category === fCategory || asList(p.categories).includes(fCategory)) &&
           (fBrand === 'All' || brandsOf(p).includes(fBrand))
       ),
