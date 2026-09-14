@@ -93,7 +93,6 @@ import {
   writeBatch,
   runTransaction,
   getDocs,
-  deleteField,
 } from 'firebase/firestore';
 import { useRouter } from 'next/router';
 import toast from '../lib/toast';
@@ -7323,12 +7322,24 @@ export default function InventoryDashboard() {
       // keys `next` still has; a key simply absent from the written object is never
       // removed from the stored document. The write succeeded and showed a success
       // toast every time, but the "removed" staffer silently kept every permission
-      // they had — found live, by removing a QA staffer and reloading. deleteField()
-      // on the specific `staff.<email>` path is the actual way to drop one key from
-      // a stored map; admins (removeAdminEmail, above) doesn't have this bug because
-      // it's an ARRAY field, and merge replaces arrays wholesale rather than
-      // deep-merging their elements.
-      await updateDoc(doc(db, 'appSettings', 'roles'), { [`staff.${email}`]: deleteField(), updatedAt: serverTimestamp(), updatedBy: user?.email || '' });
+      // they had — found live, by removing a QA staffer and reloading. admins
+      // (removeAdminEmail, above) doesn't have this bug because it's an ARRAY field,
+      // and merge replaces arrays wholesale rather than deep-merging their elements.
+      //
+      // First attempt used updateDoc with a dot-path string, `{'staff.' + email:
+      // deleteField()}` — that shipped with the same bug still live: Firestore's
+      // dot-notation field paths split on EVERY `.` in the string, and an email
+      // address contains one (e.g. "gmail.com"), so the path actually targeted a
+      // bogus 3-level-deep field (staff -> "name@gmail" -> "com") instead of the
+      // single `staff.<email>` map key — leaving the real key untouched. Caught by
+      // re-querying Firestore directly (bypassing the app's own listener/cache) and
+      // seeing the "removed" staffer still in the raw document. updateDoc (unlike
+      // setDoc's merge:true) replaces a top-level field's value wholesale rather than
+      // deep-merging it, so passing the already-filtered `next` map as a plain
+      // (non-dotted) `staff` field needs no path-escaping and has no ambiguity about
+      // what the email string means.
+      const next = { ...staffPerms }; delete next[email];
+      await updateDoc(doc(db, 'appSettings', 'roles'), { staff: next, updatedAt: serverTimestamp(), updatedBy: user?.email || '' });
       toast.success(`${email} removed. They can still log in but with no special access.`, { id: t });
     } catch (e) { console.error('removeStaffEmail failed:', e); toast.error('Could not remove staff. Check Firestore rules.', { id: t }); }
   }
