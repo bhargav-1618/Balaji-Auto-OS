@@ -9,8 +9,9 @@
 import React, { useState, useMemo, useRef, useEffect, useId } from 'react';
 import { ChevronDown, Search, Plus, X } from 'lucide-react';
 import DropdownPanel from './DropdownPanel';
+import { FILTER_FIELD_CLS } from './fieldStyles';
 
-const defaultInputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
+const defaultInputCls = FILTER_FIELD_CLS;
 
 // boundaryRef (Batch 4D Defect 4): forwarded straight to DropdownPanel — pass the
 // modal's own root when this MiniSelect lives inside one, so its panel's available

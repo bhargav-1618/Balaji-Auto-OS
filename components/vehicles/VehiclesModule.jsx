@@ -31,6 +31,7 @@ import toast from '../../lib/toast';
 import { confirmDialog } from '../common/ConfirmDialog';
 import { SEMANTIC } from '../../constants/ui';
 import Toggle from '../common/Toggle';
+import { FILTER_FIELD_CLS } from '../common/fieldStyles';
 import {
   Car, Search, FileDown, ClipboardList, AlertTriangle, User, Plus, X, Edit3, Trash2,
   Eye, ChevronDown, ChevronLeft, ChevronRight, Camera, Star, Shield, FileText, Wrench,
@@ -39,7 +40,7 @@ import {
 import { variantsFor, FUELS, TRANSMISSIONS, BODY_TYPES, DRIVE_TYPES, OWNERSHIP_TYPES } from '../../lib/vehicleCatalog';
 import { num, asArray, isIndianMobile, mobileInput, MOBILE_ERROR } from '../../lib/format';
 
-const inputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
+const inputCls = FILTER_FIELD_CLS;
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
 const inr = (n) => `₹${num(n).toLocaleString('en-IN')}`;
 const daysUntil = (d) => { if (!d) return null; return Math.round((new Date(d).getTime() - Date.now()) / 86400000); };

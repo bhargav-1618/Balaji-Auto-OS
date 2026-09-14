@@ -48,6 +48,7 @@ import { statusColor, SEMANTIC, JOB_CARD_STATUSES, JOB_CARD_DRAFT_STATUS } from 
 import Badge from '../common/Badge';
 import { VEHICLES, FUELS } from '../../lib/vehicleCatalog';
 import notify from '../common/notify';
+import { FILTER_FIELD_CLS } from '../common/fieldStyles';
 import { num, asArray, isIndianMobile, MOBILE_ERROR } from '../../lib/format';
 import { nextJobCardNumber } from '../../services/jobCardService';
 
@@ -135,7 +136,7 @@ const engOk = (v) =>{ const s = String(v || '').trim(); if (!s) return null; if 
 const vinOk = (v) => { const s = String(v || '').trim(); if (!s) return null; if (!/^[A-HJ-NPR-Za-hj-npr-z0-9]+$/.test(s)) return 'Invalid character (I, O, Q and symbols not allowed)'; if (s.length < 11) return 'VIN must be at least 11 characters'; if (s.length > 17) return 'VIN must be at most 17 characters'; return null; };
 
 /* ================= HOISTED subcomponents (the focus-bug fix) ================= */
-const inputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
+const inputCls = FILTER_FIELD_CLS;
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
 
 // `sub` is an optional slot BETWEEN the label and the input — e.g. Job Card No.'s

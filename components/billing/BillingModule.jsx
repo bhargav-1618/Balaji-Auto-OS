@@ -17,6 +17,7 @@ import VehicleMakeModelSelect from '../common/VehicleMakeModelSelect';
 import DropdownPanel, { ModalBoundaryContext } from '../common/DropdownPanel';
 import ActionMenu from '../common/ActionMenu';
 import PageHeader from '../common/PageHeader';
+import { FILTER_FIELD_CLS } from '../common/fieldStyles';
 import { useEditLease } from '../../hooks/useEditLease';
 import { useRecordSync } from '../../hooks/useRecordSync';
 import { useLeaseReleaseToast } from '../../hooks/useLeaseReleaseToast';
@@ -48,7 +49,7 @@ import {
 } from 'lucide-react';
 
 const inr = (n) => `₹${num(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
-const inputCls = 'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/60 transition';
+const inputCls = FILTER_FIELD_CLS;
 
 // Render children into document.body so full-screen overlays (the invoice editor,
 // payment sheet, etc.) are never trapped by an ancestor that creates a containing
