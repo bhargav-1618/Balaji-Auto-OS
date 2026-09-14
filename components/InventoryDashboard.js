@@ -348,7 +348,9 @@ const DEFAULT_VEHICLES = [
 const CONTACT_LABELS = ['Primary', 'WhatsApp', 'Landline', 'Owner', 'Accounts', 'Workshop', 'Manager'];
 
 // FEATURE 2 + 4: analytics + compatibility helpers
-const SHOP_NAME = 'SRI BABA BALAJI MARUTI CARE';
+// Privacy cleanup: same NEXT_PUBLIC_SHOP_NAME source as lib/pdfTheme.js's SHOP.name,
+// so this fallback can't drift from the PDF letterhead default.
+const SHOP_NAME = process.env.NEXT_PUBLIC_SHOP_NAME || 'Your Workshop Name';
 // The owner can override the shop name / contact from Settings → Business Profile.
 // ---- Body scroll lock (iOS-safe, reference-counted) ----
 // Body scroll locking lives in ONE place: components/Modal.js. This file used to
