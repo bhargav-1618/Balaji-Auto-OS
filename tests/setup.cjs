@@ -45,6 +45,14 @@ global.Node = dom.window.Node;
 global.Event = dom.window.Event;
 global.KeyboardEvent = dom.window.KeyboardEvent;
 global.MouseEvent = dom.window.MouseEvent;
+// Shipped code fires bare `new CustomEvent(...)` (maruti-prefs, maruti-settings,
+// maruti-demo-perms, etc.) inside try/catch blocks meant to guard against real
+// failures (a full localStorage, a rejected write) — without this, the bare
+// ReferenceError from an undefined global here was ALSO silently swallowed by
+// those same catches, masking whether the code under test actually reached its
+// success path or only appeared to by accident. Every browser provides
+// CustomEvent as a global; only this headless harness didn't.
+global.CustomEvent = dom.window.CustomEvent;
 global.getComputedStyle = dom.window.getComputedStyle;
 global.MutationObserver = dom.window.MutationObserver;
 global.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 0);
