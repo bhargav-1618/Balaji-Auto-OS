@@ -1,0 +1,346 @@
+rules_version = '2';
+
+// =============================================================================
+// HARDENED RULESET — this is the active security boundary. Deploy it to your
+// Firebase project ("firebase deploy --only firestore:rules"); rules do nothing
+// until published. (The reference deployment, project balaji-auto-os-7, has it
+// published.)
+// -----------------------------------------------------------------------------
+// If you change this file, re-verify in Firebase Console > Firestore > Rules >
+// "Rules playground" with (a) the owner email, (b) a staff email, (c) an
+// unauthenticated request, running read / create / update / delete against each
+// collection before publishing. If the owner ever loses access, revert to the
+// previous ruleset from the Rules history and re-test.
+//
+// WHAT THIS CHANGES vs a plain `request.auth != null`-everywhere ruleset:
+//
+//  1. PRIVILEGE-ESCALATION FIX (highest value): appSettings is now WRITABLE ONLY
+//     BY ADMINS. Under the old rules any signed-in staff member could edit
+//     appSettings/roles via the REST API / console and add their own email to
+//     `admins[]`, promoting themselves. That hole is closed here.
+//
+//  2. DESTRUCTIVE OPS ARE ADMIN-ONLY: delete on parts/suppliers/categories/
+//     vehicles and on the ledgers is restricted to admins, matching what the UI
+//     already enforces — so a staff token can't delete via console/REST.
+//
+//  3. Ledgers stay append-only (update: false) exactly as before.
+//
+// ASSUMPTIONS (still true; re-verify if you touch the role model):
+//  - The owner email below matches BOOTSTRAP_ADMINS in context/AuthContext.js.
+//  - appSettings/roles stores `admins` as an array of LOWERCASE emails (the app
+//    normalizes with norm() on read; confirm the Settings WRITE path also stores
+//    lowercase, or these comparisons can miss). request.auth.token.email.lower()
+//    is compared against that list.
+//  - Every signed-in user is trusted to READ all shop data (single-shop model).
+//    If you later need multi-tenant isolation, reads must also be scoped.
+//
+// COST NOTE: isAdmin() does a get() on appSettings/roles, which is billed as one
+// document read per evaluated write. For this app's volume that is negligible.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userEmail() {
+      return signedIn() && request.auth.token.email != null
+        ? request.auth.token.email.lower()
+        : '';
+    }
+
+    // Permanent owner — always admin, mirrors BOOTSTRAP_ADMINS so the owner can
+    // never be locked out even if appSettings/roles is empty or missing.
+    function ownerEmail() {
+      return 'konabhargav2003@gmail.com';
+    }
+
+    function rolesDoc() {
+      return get(/databases/$(database)/documents/appSettings/roles).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        userEmail() == ownerEmail() ||
+        (
+          exists(/databases/$(database)/documents/appSettings/roles) &&
+          'admins' in rolesDoc() &&
+          userEmail() in rolesDoc().admins
+        )
+      );
+    }
+
+    // PH21-D2 hardening — the collection fields the app ALWAYS writes as arrays
+    // (invoice lines/payments, customer vehicles, job-card parts/labour, part
+    // suppliers, PO items). A forged non-array value in one of these used to drop
+    // the module that renders it into the app-wide ErrorBoundary (only the
+    // client-side lib/format.asArray guard caught it — Phase 21). This closes the
+    // wrong-type-array class at the rules layer too: a field that is absent
+    // (partial / legacy doc) is fine; a field that is PRESENT must be a list.
+    function listOrAbsent(m, k) {
+      return !(k in m) || m[k] is list;
+    }
+
+    // ---- Catalog data: any signed-in user reads/creates/updates; only admins delete.
+    match /parts/{partId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'suppliers');
+      allow delete: if isAdmin();
+    }
+    match /suppliers/{supplierId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+    match /categories/{categoryId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+    match /vehicles/{vehicleId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+    // ---- Operational business records: customers, invoices, job cards.
+    // Signed-in staff create/update; only admins delete.
+    match /customers/{customerId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'vehicles');
+      allow delete: if isAdmin();
+    }
+    match /invoices/{invoiceId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'lines')
+        && listOrAbsent(request.resource.data, 'payments');
+      allow delete: if isAdmin();
+    }
+    match /jobCards/{jobCardId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'parts')
+        && listOrAbsent(request.resource.data, 'labour');
+      allow delete: if isAdmin();
+    }
+    // ---- Purchase Orders: signed-in users create/advance; only admins delete.
+    // Status transitions (pending→approved→received→cancelled) are updates.
+    match /purchaseOrders/{poId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && listOrAbsent(request.resource.data, 'items');
+      allow delete: if isAdmin();
+    }
+
+    // ---- History ledgers: append-only. Records can never be EDITED.
+    // delete is admin-only (used by the owner-only "Reset All Data", which
+    // snapshots to the Recovery Vault first).
+    match /sales/{saleId} {
+      allow read, create: if signedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+    match /salesRollups/{month} {
+      allow read, create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+    match /restocks/{restockId} {
+      allow read, create: if signedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+    match /stockAdjustments/{adjId} {
+      allow read, create: if signedIn();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+    // PHASE 15 + PHASE 20 (audit-log integrity) — the ACTOR is a security
+    // invariant. `create` used to allow any signed-in user to write an auditLog
+    // document with ANY `performedBy`; PHASE 15 pinned that to the caller's uid.
+    // PHASE 20 found the Audit Log UI actually DISPLAYS `performedByEmail`, not
+    // the uid — so pinning only the uid still let a signed-in client insert an
+    // entry that shows another user (e.g. the owner) performing an action they
+    // never did, at any time. All three are now checked: `performedBy` (uid) and
+    // `performedByEmail` (the displayed actor) must be the caller's own identity,
+    // and `createdAt` must be the server's request time (no back-dated history).
+    // The app's own pushAudit/writeAudit/writeCapacityAudit already set exactly
+    // these values. Read/update/delete semantics are unchanged (append-only;
+    // delete admin-only).
+    match /auditLog/{logId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.performedBy == request.auth.uid
+        && request.resource.data.performedByEmail == request.auth.token.email
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ---- Pending sales (PHASE 8B / PH8-05) — a durable, single-document Quick
+    // Sell intent recorded ONLY while the client is genuinely offline (a
+    // Firestore transaction requires a live round trip and cannot run at all
+    // offline). Reconciled into the real atomic sale transaction once
+    // connectivity returns (lib is in components/InventoryDashboard.js's
+    // runQuickSaleTx / the pendingSales reconciliation effect), then deleted.
+    // Scoped strictly to its own creator so one user can never forge, read, or
+    // delete (and thereby fake a "replay") another user's pending sale.
+    // Never updated — a pending sale is created once and deleted once, either
+    // by its owner reconciling it or by the owner discarding a definite
+    // rejection (e.g. the part no longer exists).
+    match /pendingSales/{opId} {
+      allow read, delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.partId is string
+        && request.resource.data.want is int
+        && request.resource.data.want > 0;
+      allow update: if false;
+    }
+
+    // ---- Reorder requests / purchase tracking: status changes over time.
+    match /reorderRequests/{reqId} {
+      allow read, create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+
+    // ---- App settings (admin/staff lists). READ by any signed-in user (the app
+    // needs it to resolve roles), but WRITE is ADMIN-ONLY. This is the
+    // privilege-escalation fix: staff can no longer grant themselves admin.
+    match /appSettings/{docId} {
+      allow read: if signedIn();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ---- Recovery Vault — owner-only snapshot/restore surface.
+    match /recoveryVault/{id} {
+      allow read, create, delete: if isAdmin();
+      allow update: if false;
+    }
+    match /recoveryMeta/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---- Edit leases (CONCURRENCY PHASE 1b, session-check hardened in PHASE
+    // 7b / PH7-27). A transient "one active editor per record" coordination
+    // lock. lockId = "<collection>__<docId>". This is a UX mechanism ONLY —
+    // the authoritative data-integrity layer is the Phase 1a `_rev`
+    // transaction on the record itself, which is unchanged. These rules exist
+    // so the lock cannot be stolen or corrupted from a raw client:
+    //
+    //   CREATE  — any signed-in user, but only for THEMSELVES, with a valid
+    //             expiry no more than 3 minutes out (a client can't claim a
+    //             record forever by writing a far-future expiresAt).
+    //   UPDATE  — the CURRENT holder (BOTH ownerUid AND sessionId matching
+    //             the document as it stands right now — not uid alone) may
+    //             renew (a future expiresAt, same as create) OR release (an
+    //             ALREADY-PAST expiresAt, signaling "I'm done") — OR any
+    //             signed-in user may take over a lease that has already
+    //             EXPIRED (by server time), becoming the new owner with a
+    //             fresh future expiry.
+    //   DELETE  — an already-expired lease only. A lease is now RELEASED by
+    //             updating it to a past expiresAt (see UPDATE above), not by
+    //             deleting it — a Firestore `delete` carries no payload for
+    //             the rules to check a session identity against, so it can
+    //             never be made session-aware; restricting delete to
+    //             already-expired documents closes that path entirely rather
+    //             than trying to patch it. lib/editLease.js's releaseLease no
+    //             longer calls delete for this reason (see its own comment).
+    //
+    //   PH7-27 (Phase 7 discovery): before this, a same-uid client that
+    //   bypassed lib/editLease.js's own session-aware transaction (talked to
+    //   Firestore directly) could overwrite OR delete its own other tab's
+    //   ACTIVE lease purely on ownerUid match — ownedByMe() alone was never
+    //   enough for "only the session that actually holds it may change it".
+    //   This closes that gap at the rules layer to match what
+    //   lib/editLease.js's client transaction already enforced for update,
+    //   and closes it more strictly than that for delete (see above).
+    match /editLocks/{lockId} {
+      function ownedByMe() {
+        return signedIn() && resource.data.ownerUid == request.auth.uid;
+      }
+      // Session continuity — only meaningful once ownedByMe() already holds
+      // (same uid); this is the extra check PH7-27 adds. A brand-new lease
+      // (no `resource` yet, i.e. create) or a takeover of an expired one
+      // never reaches this — see the update rule below.
+      function sameSession() {
+        return resource.data.sessionId == request.resource.data.sessionId;
+      }
+      function expired() {
+        return resource.data.expiresAt is timestamp && resource.data.expiresAt < request.time;
+      }
+      // A genuine claim (create, or renew/takeover via update): own identity,
+      // a real future expiry capped at 3 minutes out (a client can't claim a
+      // record forever by writing a far-future expiresAt).
+      function incomingShapeOk() {
+        return request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.sessionId is string
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt > request.time
+          && request.resource.data.expiresAt < request.time + duration.value(3, 'm');
+      }
+      // An explicit release: own identity, but the expiry is deliberately
+      // NOT in the future — the opposite shape from a claim. Only reachable
+      // by the current session releasing itself (see the update rule below);
+      // never lets a claim smuggle a stale expiresAt past incomingShapeOk().
+      function releaseShapeOk() {
+        return request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.sessionId is string
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt <= request.time;
+      }
+      allow read:   if signedIn();
+      allow create: if signedIn() && incomingShapeOk();
+      allow update: if signedIn() && (
+        (expired() && incomingShapeOk()) ||
+        (ownedByMe() && sameSession() && (incomingShapeOk() || releaseShapeOk()))
+      );
+      allow delete: if signedIn() && expired();
+    }
+
+    // ---- Document-number counters (CONCURRENCY PHASE 2). One doc per sequence
+    // (counters/invoices, counters/estimates): { next: <int> }. Allocation is a
+    // client transaction (lib/docCounter.js) that reads `next`, hands it out and
+    // writes `next + 1` in the same transaction — so two terminals billing at the
+    // same moment can never receive the same invoice number.
+    //
+    //   READ    — any signed-in user (the allocator must read the current value).
+    //   CREATE  — any signed-in user, first allocation only, `next` a positive int.
+    //   UPDATE  — any signed-in user, but `next` may NEVER DECREASE. That is the
+    //             safety property: a stale or malicious client cannot reset the
+    //             counter low and cause duplicate serials. No other field may be
+    //             written (hasOnly(['next'])).
+    //             `>=` (not `>`): under transaction contention the Firestore
+    //             emulator/back end rule-checks a losing attempt's commit BEFORE
+    //             its version-conflict retry; a strict `>` would turn that
+    //             abort-and-retry into a terminal permission-denied. `>=` lets the
+    //             doomed no-op write pass rules so the transaction aborts+retries
+    //             normally, and monotonicity is still guaranteed (a retry always
+    //             re-reads the higher value and writes higher again).
+    //   DELETE  — never. Losing the counter would restart the sequence at 1.
+    //
+    // Single-shop trust model: any signed-in user may advance the counter, exactly
+    // as any signed-in user may already create invoices.
+    match /counters/{sequence} {
+      allow read:   if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['next'])
+        && request.resource.data.next is int
+        && request.resource.data.next >= 1;
+      allow update: if signedIn()
+        && request.resource.data.keys().hasOnly(['next'])
+        && request.resource.data.next is int
+        && request.resource.data.next >= resource.data.next;
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# The NEXT_PUBLIC_FIREBASE_* values are the web app's public client config, not
+# secrets — security is enforced by the Firestore rules, not key secrecy (see
+# docs/deployment/DEPLOYMENT.md and .env.local.example). `next build` imports
+# lib/firebase.js during "Collecting page data", which throws if these are unset,
+# so they must be present for the build and test steps to run in CI.
+env:
+  NEXT_PUBLIC_FIREBASE_API_KEY: AIzaSyB0s8JauzZUBrNwQhmt6R1wkIO-3SEJqVY
+  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: balaji-auto-os-7.firebaseapp.com
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID: balaji-auto-os-7
+  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: balaji-auto-os-7.firebasestorage.app
+  NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "611419924027"
+  NEXT_PUBLIC_FIREBASE_APP_ID: "1:611419924027:web:72d4f142eef4bc3ee65e1e"
+
+jobs:
+  verify:
+    name: Lint, build, test & rules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # The Firestore emulator (used by `npm run test:rules`) is a Java process.
+      # firebase-tools@15.24.0 (the version resolved by package.json's `^15.24.0`)
+      # hard-requires JDK 21+ at runtime ("firebase-tools no longer supports Java
+      # version before 21") — confirmed from the actual CI failure log on
+      # 2026-09-11. Java 11/17 (tried earlier) both fail identically; this is why
+      # `npm run test:rules` always passed locally (this machine has Java 21) but
+      # never on the GitHub runner.
+      - name: Setup Java (Firestore emulator runtime)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # Cache the downloaded Firestore emulator jar (~140 MB) so `emulators:exec`
+      # doesn't re-fetch it every run.
+      - name: Cache Firebase emulators
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ hashFiles('package-lock.json') }}
+          restore-keys: firebase-emulators-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (skipped automatically if no "lint" script is defined)
+        run: npm run lint --if-present
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      # Firestore security-rules suite — runs the real emulator (`firebase
+      # emulators:exec` auto-downloads the jar on first run / cache miss) + the
+      # @firebase/rules-unit-testing assertions in tests/rules/.
+      - name: Firestore rules tests
+        env:
+          CI: 'true'
+        run: |
+          java -version
+          npx --no-install firebase --version
+          npx --no-install firebase emulators:exec --only firestore --project demo-rules-test --non-interactive --debug "node tests/rules/run-all.cjs"
+
+      # Surface the emulator's own logs if the step above failed.
+      - name: Emulator logs (on failure)
+        if: failure()
+        run: |
+          for f in firebase-debug.log firestore-debug.log ui-debug.log; do
+            echo "::group::$f"; cat "$f" 2>/dev/null || echo "(not present)"; echo "::endgroup::"
+          done

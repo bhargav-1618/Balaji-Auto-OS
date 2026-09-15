@@ -1,0 +1,11006 @@
+// components/InventoryDashboard.js
+// Sri Baba Balaji Auto OS — "Luxury Dealership" Inventory Dashboard
+// Single-file, production-ready. Next.js + Tailwind + Lucide + Firestore (offline-first, Base64 images).
+
+import { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react';
+import Modal from './Modal';
+import InventoryOverview from './inventory/InventoryOverview';
+import InventoryArchive from './inventory/InventoryArchive';
+import InventoryCategories from './inventory/InventoryCategories';
+import InventoryStock from './inventory/InventoryStock';
+import InventoryReports from './inventory/InventoryReports';
+import SupplierPerformance from './inventory/SupplierPerformance';
+import InventoryPurchaseOrders, { STATUS as PO_STATUS } from './inventory/InventoryPurchaseOrders';
+import SupplierPOBuilder from './inventory/SupplierPOBuilder';
+import SupplierDirectory from './inventory/SupplierDirectory';
+import StatusBadge from './inventory/ui/StatusBadge';
+import StockStepper from './inventory/ui/StockStepper';
+import ScrollToTop from './inventory/ui/ScrollToTop';
+import MobileFormPage from './inventory/ui/MobileFormPage';
+import { CheckoutModal, StockAdjustModal, BulkAdjustModal, BulkReceiveModal } from './inventory/modals/StockModals';
+import { AlternativeModal, ReorderModal, LogoutConfirmModal, ProductLedgerModal } from './inventory/modals/UtilityModals';
+import { SalesView, ServicesView, StockInView, StockOutView } from './inventory/views/LedgerViews';
+import AlertsView from './inventory/views/AlertsView';
+import ReportsView from './inventory/views/ReportsView';
+import AnalyticsView from './inventory/views/AnalyticsView';
+import OverviewView from './inventory/views/OverviewView';
+import SettingsView from './inventory/views/SettingsView';
+import CommandPalette from './inventory/CommandPalette';
+import PartImageThumb from './inventory/ui/PartImageThumb';
+import Sidebar from './inventory/Sidebar';
+import JobCardModule from './jobcards/JobCardModule';
+import CustomersModule from './customers/CustomersModule';
+import VehiclesModule from './vehicles/VehiclesModule';
+import RemindersModule from './reminders/RemindersModule';
+import BootSplash from './common/BootSplash';
+import { ConfirmHost, confirmDialog } from './common/ConfirmDialog';
+import DropdownPanel, { ModalBoundaryContext } from './common/DropdownPanel';
+import ActionMenu from './common/ActionMenu';
+import PageHeader from './common/PageHeader';
+import BarcodeScanButton from './common/BarcodeScanButton';
+import notify from './common/notify';
+import CapacityCleanupModal from './common/CapacityCleanupModal';
+import { checkCapacityGuard } from '../lib/useCapacity';
+import { CAPACITY_MODULES } from '../constants/capacity';
+import { getLocalCapacityStatus } from '../services/localCapacityService';
+import MiniSelect from './common/MiniSelect';
+import { APP_SCROLL_ID, appScrollTo, appScrollY, onAppScroll } from '../lib/appScroll';
+import { useDeferredSearch, normId, useSearchIndex, searchAndRank } from '../lib/useSearch';
+import { isValidGstin } from '../lib/gst';
+import { resolveSelectedRecords } from '../lib/selectionScope';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import { useIsMobile } from '../hooks/useIsMobile';
+import Toggle from './common/Toggle';
+import { useTranslation } from '../lib/i18n';
+import { lockBody, unlockBody } from './Modal';
+import BillingModule from './billing/BillingModule';
+import { getGarageSeed } from '../lib/demoGarageSeed';
+import { computeAlerts } from '../services/analyticsService';
+import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
+import { buildPO, poCreateDoc, poAdvanceDoc, poReceiveDoc, poCancelDoc, nextPOStatus } from '../services/purchaseOrderService';
+import { toNum, invoiceTotals, invoiceStatus } from '../services/billingService';
+import {
+  catMatches, remapCatFields, renameCategoryDocs, deleteCategoryDocs,
+  nonNegInt, nonNegNum, sanitizeStock,
+  reserveDelta, computeStockAdjustment, buildRestockRecord,
+  getFastMoverMin, isFastMover, pricesDiffer,
+  isDeadStock, deadStockReason,
+  asList, flattenVehicles, compatStr, categoriesStr, partIsUniversal, brandsOf,
+  getReorderMultiplier,
+} from '../services/inventoryService';
+import { nextJobCardNumber } from '../services/jobCardService';
+import { withCustomerDefaults, countCustomerReminders } from '../services/customerService';
+import {
+  primaryVehicle, withVehicleDefaults, findVehicleIndex, buildVehicleHistoryUpdate,
+  buildJobCardDraftFields, buildInvoicePrefillFields,
+} from '../services/vehicleService';
+import { normalizeText, tokenize, expandToken } from '../lib/search';
+import {
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  updateDoc,
+  getDoc,
+  deleteDoc,
+  onSnapshot,
+  serverTimestamp,
+  query,
+  orderBy,
+  limit,
+  where,
+  increment,
+  writeBatch,
+  runTransaction,
+  getDocs,
+} from 'firebase/firestore';
+import { useRouter } from 'next/router';
+import toast from '../lib/toast';
+import { db, auth, signOut } from '../lib/firebase';
+import { useAuth } from '../context/AuthContext';
+import { getDemoData } from '../lib/demoData';
+import { LIMITS, TAB_KEYS, COLLECTIONS, STORAGE } from '../constants';
+import { SEMANTIC, SHELL_WIDTH_CLS } from '../constants/ui';
+import { createStore } from '../services/persistenceStore';
+import {
+  isConcurrencyError, revOf, CONC_DELETED, revState, conflictError,
+} from '../lib/concurrency';
+import { formatDocNo } from '../lib/docCounter';
+import { useEditLease } from '../hooks/useEditLease';
+import { useRecordSync } from '../hooks/useRecordSync';
+import { useLiveCollection } from '../hooks/useLiveCollection';
+import { useLeaseReleaseToast } from '../hooks/useLeaseReleaseToast';
+import { useDurableOpId } from '../hooks/useDurableOpId';
+import { useImageHoverPreview } from '../hooks/useImageHoverPreview';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { useBootSplash } from '../hooks/useBootSplash';
+import { useVoiceSearch } from '../hooks/useVoiceSearch';
+import { clearOpId, readOrCreateOpId } from '../lib/durableOpId';
+import { withTimeout, TX_TIMEOUT_MS, isTxTimeout, timeoutMessage } from '../lib/txTimeout';
+import EditLeaseBanner from './common/EditLeaseBanner';
+import EditAvailableBar from './common/EditAvailableBar';
+import RecordUpdatedNotice from './common/RecordUpdatedNotice';
+import RecordConflictBanner from './common/RecordConflictBanner';
+import ConflictReviewDialog from './common/ConflictReviewDialog';
+import { clearBusinessCaches } from '../lib/session';
+import { imageForPartName } from '../lib/partImages';
+import { loadDemoPerms } from '../lib/demoPerms';
+import {
+  Search,
+  Mic,
+  Plus,
+  Edit3,
+  Trash2,
+  X,
+  Upload,
+  PackageSearch,
+  AlertTriangle,
+  PackageX,
+  Loader2,
+  LogOut,
+  User,
+  MessageCircle,
+  Package,
+  Users,
+  Download,
+  Phone,
+  ShieldCheck,
+  FlaskConical,
+  TrendingUp,
+  ShoppingCart,
+  BarChart3,
+  MapPin,
+  Zap,
+  Archive,
+  ArchiveRestore,
+  History,
+  Copy,
+  Star,
+  PackagePlus,
+  SlidersHorizontal,
+  Filter,
+  ChevronDown,
+  ChevronLeft,
+  Settings,
+  FileText,
+  LayoutDashboard,
+  MoreHorizontal,
+  MoreVertical,
+  Check,
+  RefreshCw,
+  ClipboardList,
+  Menu,
+  Camera, Lock,
+} from 'lucide-react';
+
+// ---------------------------------------------------------------------------
+// Firebase: uses the shared `db` instance from lib/firebase.js
+// (that file already calls enableMultiTabIndexedDbPersistence once at
+// app startup — initializing Firestore a second time here would throw
+// "Firestore has already been started" since persistence can only be
+// enabled before any other Firestore method is called.)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// Requirement 1: null-safe lowercase — used everywhere for search/compare
+// Issue 3: lightweight singular form so "perfume" and "perfumes" collapse to one
+// category. Handles common English plurals (-ies→-y, -ses/-xes/-zes→base, -s→base).
+const singularize = (val) => {
+  let s = safeLower(val).trim();
+  if (s.length <= 3) return s; // don't mangle short words (e.g. "abs")
+  if (/ies$/.test(s)) return s.replace(/ies$/, 'y');
+  if (/(s|x|z|ch|sh)es$/.test(s)) return s.replace(/es$/, '');
+  if (/ss$/.test(s)) return s; // glass, brass — keep
+  if (/s$/.test(s)) return s.replace(/s$/, '');
+  return s;
+};
+
+// Comprehensive auto spare-part categories (Indian aftermarket)
+const DEFAULT_CATEGORIES = [
+  'Engine Oil & Fluids',
+  'Engine Components',
+  'Pistons & Rings',
+  'Cylinder Head',
+  'Gaskets & Seals',
+  'Timing Belt & Chain',
+  'Belts & Hoses',
+  'Air Filters',
+  'Oil Filters',
+  'Fuel Filters',
+  'Cabin / AC Filters',
+  'Braking System',
+  'Brake Pads',
+  'Brake Discs & Rotors',
+  'Brake Shoes',
+  'Brake Cables',
+  'Clutch & Transmission',
+  'Clutch Plates',
+  'Gearbox Parts',
+  'Suspension & Steering',
+  'Shock Absorbers',
+  'Struts & Springs',
+  'Ball Joints',
+  'Tie Rods',
+  'Control Arms',
+  'Wheel Bearings',
+  'Bushes & Mountings',
+  'Electrical & Batteries',
+  'Batteries',
+  'Alternators',
+  'Starter Motors',
+  'Ignition Coils',
+  'Spark Plugs',
+  'Glow Plugs',
+  'Wiring & Fuses',
+  'Sensors',
+  'Switches & Relays',
+  'Lighting & Indicators',
+  'Headlight Bulbs',
+  'Headlamp Assembly',
+  'Tail Lights',
+  'Fog Lamps',
+  'Indicators',
+  'Wiper Blades',
+  'Wiper Motor & Linkage',
+  'Side Mirrors',
+  'Mirrors & Glass',
+  'Windshield Glass',
+  'Body Parts',
+  'Bonnet & Fenders',
+  'Doors & Handles',
+  'Bumpers & Grilles',
+  'Radiator & Cooling',
+  'Radiator',
+  'Coolant & Hoses',
+  'Water Pump',
+  'Cooling Fan',
+  'AC System',
+  'AC Compressor',
+  'AC Condenser',
+  'Blower Motor',
+  'Exhaust & Silencer',
+  'Catalytic Converter',
+  'Fuel System',
+  'Fuel Pump',
+  'Fuel Injectors',
+  'Carburetor',
+  'Horns',
+  'Bearings & Bushings',
+  'Nuts, Bolts & Clips',
+  'Tyres & Wheels',
+  'Wheel Rims',
+  'Wheel Caps',
+  'Seat Covers & Mats',
+  'Floor Mats',
+  'Interior Accessories',
+  'Exterior Accessories',
+  'Lubricants & Grease',
+  'Car Care & Cleaning',
+  'Adhesives & Sealants',
+  'Tools & Equipment',
+  'Consumables',
+];
+
+// Comprehensive Indian car models (legacy + current), spanning all major brands
+const DEFAULT_VEHICLES = [
+  'Universal / All Vehicles',
+  // Maruti Suzuki
+  'Maruti 800', 'Maruti Omni', 'Maruti Zen', 'Maruti Zen Estilo', 'Maruti Alto',
+  'Maruti Alto 800', 'Maruti Alto K10', 'Maruti WagonR', 'Maruti Swift', 'Maruti Swift Dzire',
+  'Maruti Dzire', 'Maruti Ritz', 'Maruti A-Star', 'Maruti Celerio', 'Maruti Baleno',
+  'Maruti Ignis', 'Maruti Brezza', 'Maruti Vitara Brezza', 'Maruti Ertiga', 'Maruti XL6',
+  'Maruti Ciaz', 'Maruti S-Cross', 'Maruti S-Presso', 'Maruti Eeco', 'Maruti Grand Vitara',
+  'Maruti Fronx', 'Maruti Jimny', 'Maruti Esteem', 'Maruti Versa', 'Maruti SX4', 'Maruti Gypsy',
+  // Hyundai
+  'Hyundai Santro', 'Hyundai Santro Xing', 'Hyundai Eon', 'Hyundai i10', 'Hyundai Grand i10',
+  'Hyundai Grand i10 Nios', 'Hyundai Getz', 'Hyundai i20', 'Hyundai Elite i20', 'Hyundai i20 Active',
+  'Hyundai Accent', 'Hyundai Xcent', 'Hyundai Aura', 'Hyundai Verna', 'Hyundai Fluidic Verna',
+  'Hyundai Creta', 'Hyundai Venue', 'Hyundai Exter', 'Hyundai Alcazar', 'Hyundai Tucson',
+  'Hyundai Elantra', 'Hyundai Kona', 'Hyundai Santa Fe',
+  // Tata
+  'Tata Indica', 'Tata Indica Vista', 'Tata Indigo', 'Tata Indigo Marina', 'Tata Sumo',
+  'Tata Sumo Gold', 'Tata Safari', 'Tata Safari Storme', 'Tata Aria', 'Tata Nano',
+  'Tata Bolt', 'Tata Zest', 'Tata Tiago', 'Tata Tigor', 'Tata Altroz', 'Tata Nexon',
+  'Tata Punch', 'Tata Harrier', 'Tata Hexa', 'Tata Curvv',
+  // Mahindra
+  'Mahindra Scorpio', 'Mahindra Scorpio Classic', 'Mahindra Scorpio-N', 'Mahindra Bolero',
+  'Mahindra Bolero Neo', 'Mahindra XUV300', 'Mahindra XUV400', 'Mahindra XUV500', 'Mahindra XUV700',
+  'Mahindra Thar', 'Mahindra Marazzo', 'Mahindra KUV100', 'Mahindra TUV300', 'Mahindra Xylo',
+  'Mahindra Verito', 'Mahindra Quanto', 'Mahindra Alturas G4', 'Mahindra Logan',
+  // Toyota
+  'Toyota Qualis', 'Toyota Innova', 'Toyota Innova Crysta', 'Toyota Innova Hycross', 'Toyota Fortuner',
+  'Toyota Etios', 'Toyota Etios Liva', 'Toyota Corolla', 'Toyota Corolla Altis', 'Toyota Camry',
+  'Toyota Glanza', 'Toyota Urban Cruiser', 'Toyota Urban Cruiser Hyryder', 'Toyota Yaris', 'Toyota Land Cruiser',
+  // Honda
+  'Honda City', 'Honda Amaze', 'Honda Jazz', 'Honda Brio', 'Honda Mobilio', 'Honda BR-V',
+  'Honda WR-V', 'Honda Civic', 'Honda CR-V', 'Honda Accord', 'Honda Elevate',
+  // Kia
+  'Kia Seltos', 'Kia Sonet', 'Kia Carens', 'Kia Carnival', 'Kia EV6',
+  // Skoda
+  'Skoda Octavia', 'Skoda Rapid', 'Skoda Superb', 'Skoda Fabia', 'Skoda Laura',
+  'Skoda Slavia', 'Skoda Kushaq', 'Skoda Kodiaq',
+  // Volkswagen
+  'Volkswagen Polo', 'Volkswagen Vento', 'Volkswagen Virtus', 'Volkswagen Taigun',
+  'Volkswagen Ameo', 'Volkswagen Tiguan', 'Volkswagen Jetta',
+  // Renault
+  'Renault Kwid', 'Renault Kiger', 'Renault Triber', 'Renault Duster', 'Renault Captur',
+  'Renault Lodgy', 'Renault Pulse', 'Renault Scala', 'Renault Fluence',
+  // Nissan / Datsun
+  'Nissan Magnite', 'Nissan Micra', 'Nissan Sunny', 'Nissan Terrano', 'Nissan Kicks',
+  'Datsun Go', 'Datsun Go Plus', 'Datsun Redi-Go',
+  // Ford
+  'Ford Figo', 'Ford Aspire', 'Ford EcoSport', 'Ford Endeavour', 'Ford Fiesta',
+  'Ford Ikon', 'Ford Freestyle',
+  // Chevrolet
+  'Chevrolet Beat', 'Chevrolet Spark', 'Chevrolet Sail', 'Chevrolet Cruze', 'Chevrolet Tavera',
+  'Chevrolet Aveo', 'Chevrolet Optra', 'Chevrolet Enjoy',
+  // MG
+  'MG Hector', 'MG Astor', 'MG Gloster', 'MG ZS EV', 'MG Comet',
+  // Others
+  'Fiat Punto', 'Fiat Linea', 'Jeep Compass', 'Jeep Meridian', 'Force Gurkha', 'Isuzu D-Max',
+];
+
+// Was defined twice (identical values, copy-pasted) inside two separate component
+// functions further down this file — hoisted once so both share the same source.
+const CONTACT_LABELS = ['Primary', 'WhatsApp', 'Landline', 'Owner', 'Accounts', 'Workshop', 'Manager'];
+
+// FEATURE 2 + 4: analytics + compatibility helpers
+// Privacy cleanup: same NEXT_PUBLIC_SHOP_NAME source as lib/pdfTheme.js's SHOP.name,
+// so this fallback can't drift from the PDF letterhead default.
+const SHOP_NAME = process.env.NEXT_PUBLIC_SHOP_NAME || 'Your Workshop Name';
+// The owner can override the shop name / contact from Settings → Business Profile.
+// ---- Body scroll lock (iOS-safe, reference-counted) ----
+// Body scroll locking lives in ONE place: components/Modal.js. This file used to
+// keep a SECOND, independent lock counter, and the two didn't cooperate — when a
+// modal from one implementation closed, it cleared document.body's inline styles
+// even though a modal from the other was still open (and vice-versa). That left
+// the page either locked with nothing open (can't scroll at all) or unlocked
+// behind an open modal (background scrolls / scroll gets "stuck"). Sharing a
+// single reference-counted lock removes that whole class of bug.
+// H-5E: useBodyScrollLock/useIsMobile moved to hooks/ (pure React concerns, no
+// business logic) — see hooks/useBodyScrollLock.js, hooks/useIsMobile.js.
+
+// MobileFormPage (the full-screen mobile form shell) now lives in
+// ./inventory/ui/MobileFormPage, imported at the top of this file (Refactor Phase 2).
+// Still used by RestockModal + SupplierModal's asPage branches here.
+
+// These read the saved value at call time, falling back to the default constant,
+// so the name actually flows into the header, exports and purchase orders.
+function getShopName() { try { return (localStorage.getItem('maruti_biz_name') || '').trim() || SHOP_NAME; } catch { return SHOP_NAME; } }
+function getShopContact() { try { return (localStorage.getItem('maruti_biz_contact') || '').trim(); } catch { return ''; } }
+function getShopGst() { try { return (localStorage.getItem('maruti_biz_gst') || '').trim(); } catch { return ''; } }
+function getShopAddress() { try { return (localStorage.getItem('maruti_biz_address') || '').trim(); } catch { return ''; } }
+// One-line shop footer for purchase orders: name, address, phone, GST (when set).
+function shopSignature() {
+  const parts = [getShopName()];
+  if (getShopAddress()) parts.push(getShopAddress());
+  if (getShopContact()) parts.push(`Ph: ${getShopContact()}`);
+  if (getShopGst()) parts.push(`GSTIN: ${getShopGst()}`);
+  return parts.join('\n');
+}
+// Single source of truth for the shell's workspace-width budget (universal-width
+// architecture — see the comment above <main> below). Every element that needs to
+// align with the wide content area (the scrollable content wrapper itself, and the
+// two sticky header bars above it) reads this ONE constant instead of each
+// independently repeating the literal cap, so there is exactly one place to change
+// the budget and no risk of the header/content edges silently drifting apart again.
+// Promoted to constants/ui.js (New Invoice workspace-width review) so Billing's
+// full-screen invoice editor — a Portal overlay that never inherits <main>'s width —
+// can read the SAME budget instead of falling back to an unrelated modal-dialog width.
+// A part qualifies as a Fast Mover only after this many units sold — see
+// getFastMoverMin/isFastMover in services/inventoryService.js (shared with
+// InventoryCategories.jsx so the category "Fast" count agrees with this badge).
+// REFACTOR PHASE 9 — DEAD_STOCK_DAYS/REORDER_MULTIPLIER, the settings readers,
+// lockedCapital, expectedProfit, ageDays, isDeadStock, deadStockReason, asList,
+// flattenVehicles, compat*, categoriesStr, partIsUniversal (and brandsOf, below)
+// moved verbatim to services/inventoryService.js — imported at the top of this file.
+
+// #5 + #6: built-in Indian-market taxonomies for the Tree-Selects.
+const VEHICLE_TREE = [
+  { label: 'Maruti Suzuki', children: ['Alto', 'S-Presso', 'Celerio', 'Wagon R', 'Swift', 'Dzire', 'Baleno', 'Ignis', 'Ciaz', 'Ertiga', 'XL6', 'Brezza', 'Fronx', 'Grand Vitara', 'Jimny', 'Eeco'] },
+  { label: 'Hyundai', children: ['Grand i10 Nios', 'i20', 'Aura', 'Verna', 'Venue', 'Creta', 'Alcazar', 'Tucson', 'Exter', 'Ioniq 5'] },
+  { label: 'Tata', children: ['Tiago', 'Tigor', 'Altroz', 'Punch', 'Nexon', 'Harrier', 'Safari', 'Curvv'] },
+  { label: 'Mahindra', children: ['Bolero', 'Bolero Neo', 'Scorpio', 'Scorpio-N', 'Thar', 'XUV300', 'XUV400', 'XUV700', 'Marazzo'] },
+  { label: 'Honda', children: ['Amaze', 'City', 'Elevate', 'WR-V'] },
+  { label: 'Toyota', children: ['Glanza', 'Urban Cruiser', 'Rumion', 'Innova Crysta', 'Innova Hycross', 'Fortuner', 'Hyryder'] },
+  { label: 'Kia', children: ['Sonet', 'Seltos', 'Carens', 'Syros', 'EV6'] },
+  { label: 'Renault', children: ['Kwid', 'Triber', 'Kiger'] },
+  { label: 'Nissan', children: ['Magnite'] },
+  { label: 'Volkswagen', children: ['Polo', 'Virtus', 'Taigun'] },
+  { label: 'Skoda', children: ['Slavia', 'Kushaq', 'Kylaq'] },
+  { label: 'MG', children: ['Comet', 'Astor', 'Hector', 'Gloster', 'Windsor'] },
+  { label: 'Ford (legacy)', children: ['Figo', 'Aspire', 'EcoSport', 'Endeavour'] },
+  { label: 'Universal', children: ['Universal / All Vehicles'] },
+];
+
+// Issue 6/8: the base name without a "(copy)" / "(copy N)" suffix.
+const baseName = (s) => safeLower(s).replace(/\s*\(copy(?:\s*\d+)?\)\s*$/i, '').trim();
+// Copy-workflow: a name is a copy iff it ends in "(copy)"; strip it (keeping case).
+const isCopyName = (s) => /\(copy(?:\s*\d+)?\)\s*$/i.test((s || '').toString());
+const stripCopySuffix = (s) => (s || '').toString().replace(/\s*\(copy(?:\s*\d+)?\)\s*$/i, '').trim();
+// Issue 14: normalize a brand/model to Title Case so "lexus"/"LEXUS" collapse to
+// one entry (true typo-correction like "lexsus" is out of scope).
+const titleCase = (s) => safeLower(s).trim().replace(/\s+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+// #3: turn a flat list of selected models into [{ brand, models:[...] }].
+// Accepts a runtime tree so custom (user-added) vehicles map to their real brand.
+function groupVehicles(models, tree = VEHICLE_TREE) {
+  const byBrand = new Map();
+  asList(models).forEach((m) => {
+    const node = tree.find((n) => n.children.includes(m));
+    const brand = node ? node.label : 'Other';
+    if (!byBrand.has(brand)) byBrand.set(brand, []);
+    if (!byBrand.get(brand).includes(m)) byBrand.get(brand).push(m);
+  });
+  return [...byBrand.entries()].map(([brand, mods]) => ({ brand, models: mods }));
+}
+
+const CATEGORY_TREE = [
+  { label: 'Filters', children: ['Air Filter', 'Oil Filter', 'Cabin Filter', 'Fuel Filter'] },
+  { label: 'Brake Parts', children: ['Brake Pad', 'Brake Disc', 'Brake Shoe', 'Brake Fluid'] },
+  { label: 'Suspension', children: ['Shock Absorber', 'Strut', 'Control Arm', 'Ball Joint', 'Link Rod'] },
+  { label: 'Engine', children: ['Spark Plug', 'Timing Belt', 'Engine Oil', 'Gasket', 'Piston', 'Drive Belt'] },
+  { label: 'Electrical', children: ['Battery', 'Alternator', 'Starter Motor', 'Fuse', 'Relay', 'Wiring'] },
+  { label: 'Cooling & AC', children: ['Radiator', 'AC Compressor', 'Coolant', 'Condenser', 'AC Gas'] },
+  { label: 'Lighting', children: ['Headlight', 'Tail Light', 'Indicator', 'Bulb', 'Fog Lamp'] },
+  { label: 'Body & Exterior', children: ['Wiper Blade', 'Side Mirror', 'Bumper', 'Door Handle', 'Grille'] },
+  { label: 'Transmission', children: ['Clutch Plate', 'Gear Oil', 'Flywheel', 'Clutch Cable'] },
+  { label: 'Consumables', children: ['Grease', 'Sealant', 'Cleaner', 'Polish'] },
+];
+
+// ---- Supplier contact helpers (FIX 3: labeled multi-contact cards) ----
+// Returns [{ number, label }] from the new phoneNumbers schema, falling back to
+// legacy phones[]/phone so old records keep working.
+function getSupplierContacts(supplier) {
+  if (Array.isArray(supplier?.phoneNumbers) && supplier.phoneNumbers.length) {
+    return supplier.phoneNumbers
+      .filter((c) => c && tenDigits(c.number))
+      .map((c) => ({ number: tenDigits(c.number), label: c.label || 'Primary' }));
+  }
+  const legacy = [];
+  if (supplier?.phone) legacy.push({ number: tenDigits(supplier.phone), label: 'Primary' });
+  if (Array.isArray(supplier?.phones)) {
+    supplier.phones.forEach((p, i) => {
+      const n = tenDigits(p);
+      if (n && !legacy.some((c) => c.number === n)) legacy.push({ number: n, label: i === 0 ? 'Primary' : 'Alternate' });
+    });
+  }
+  return legacy.filter((c) => c.number);
+}
+// Normalise a supplier record's phone list (new schema + legacy)
+function getSupplierPhones(supplier) {
+  return [...new Set(getSupplierContacts(supplier).map((c) => c.number).filter(Boolean))];
+}
+
+// ---- FIX 2: corporate-grade WhatsApp purchase-order message ----
+// UPDATE-10: suggested reorder qty = top the part back up to ~2× its min level.
+const suggestedOrderQty = (p) => Math.max(1, Math.round((p.minStock || 5) * getReorderMultiplier()) - (p.stock || 0));
+
+function buildPurchaseOrder(part, supplierName, qtyOverride) {
+  return `Hello ${supplierName || 'Supplier'},
+
+This is an automated Purchase Order issued from our workshop inventory manager.
+
+We are running low on the following item and require a restock order:
+• Part Name: ${part.name || 'N/A'}
+• SKU / Part No: ${part.sku || 'N/A'}
+• Category: ${part.category || 'N/A'}
+• Current On-Hand Stock: ${part.stock ?? 0} units
+• Quantity Required: ${qtyOverride ?? suggestedOrderQty(part)} units
+
+Please reply with pricing confirmation, bulk discount structures, and an estimated delivery timeline.
+
+Thank you.
+${shopSignature()}`;
+}
+
+// Normalise a part's supplier list, supporting both the new `suppliers[]`
+// schema and the legacy single supplier/supplierPhone fields.
+function getPartSuppliers(part) {
+  if (Array.isArray(part?.suppliers) && part.suppliers.length) {
+    return part.suppliers
+      .filter((s) => s && (s.name || s.phone))
+      .map((s) => ({
+        id: s.id || '',
+        name: s.name || '',
+        phone: tenDigits(s.phone),
+        preferredLabel: s.preferredLabel || 'Primary',
+        isPreferred: !!s.isPreferred,
+      }));
+  }
+  if (part?.supplier) {
+    return [{ id: '', name: part.supplier, phone: tenDigits(part.supplierPhone), preferredLabel: 'Primary', isPreferred: true }];
+  }
+  return [];
+}
+
+// Returns a part's suppliers[] array with the given supplier marked preferred —
+// added to the list if it wasn't already linked (e.g. a one-off Receive Stock
+// vendor the user chose to keep), otherwise just re-flagged. Used when a Receive
+// Stock transaction is explicitly confirmed as the new default supplier; never
+// called automatically.
+function withPreferredSupplier(part, supplierId, supplierName, supplierPhone) {
+  const existing = getPartSuppliers(part);
+  const matches = (s) => (supplierId ? s.id === supplierId : safeLower(s.name) === safeLower(supplierName));
+  if (existing.some(matches)) {
+    return existing.map((s) => ({ ...s, isPreferred: matches(s) }));
+  }
+  return [
+    { id: supplierId || '', name: supplierName, phone: tenDigits(supplierPhone), preferredLabel: 'Primary', isPreferred: true },
+    ...existing.map((s) => ({ ...s, isPreferred: false })),
+  ];
+}
+
+// All names a supplier answers to (primary + alternates)
+function getSupplierNames(supplier) {
+  const alts = Array.isArray(supplier?.altNames) ? supplier.altNames : [];
+  return [supplier?.name, ...alts].filter(Boolean);
+}
+
+// Refactor Phase 11 — PartImageThumb extracted verbatim to ./inventory/ui/PartImageThumb
+// (imported above). `useAuth().demoMode` became an explicit `demoMode` prop so the
+// thumbnail can be reused from the extracted OverviewView without the auth context.
+
+// ---------------------------------------------------------------------------
+// MOBILE-01: inventory as a tappable card on phones (the table is desktop-only).
+// ---------------------------------------------------------------------------
+function MobilePartCard({ part, onEdit, onDelete, onArchive, onRestore, onReorder, onSell, onCommitStock, onReceive, onAdjust, isAdmin, canRestore, highlight, selected, onToggleSelect, canChangeStock = true, onStockBlocked, demoMode = false }) {
+  const [open, setOpen] = useState(false);
+  const low = (part.stock || 0) <= (part.minStock || 5);
+  return (
+    <div
+      id={`inv-rowm-${part.id}`}
+      className={`rounded-2xl overflow-hidden ${part.archived ? 'opacity-60' : ''}`}
+      style={{ background: 'rgba(var(--fg-rgb),0.03)', border: highlight ? '2px solid rgba(212,175,55,0.6)' : '1px solid rgba(var(--fg-rgb),0.07)' }}
+    >
+      <div className="p-3">
+        <div className="flex items-start gap-3">
+          {onToggleSelect && (
+            // Issue 6.20: the checkbox itself is 18px, but on a touch screen the
+            // reachable target is this label's padded box (44px), not the visible
+            // control — a bare 18px input is well under the accessible tap-target
+            // minimum a workshop worker using a phone would need.
+            <label className="mt-1 -m-[13px] p-[13px] flex-shrink-0 flex items-center justify-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!selected}
+                onChange={() => onToggleSelect(part.id)}
+                className="accent-[#d4af37] w-[18px] h-[18px] cursor-pointer"
+                aria-label={`Select ${part.name}`}
+              />
+            </label>
+          )}
+          <div className="flex-shrink-0">
+            <PartImageThumb src={part.imageString} alt={part.name} demoMode={demoMode} onHover={() => {}} onMove={() => {}} onLeave={() => {}} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-white leading-snug break-words">{part.name}</div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            {part.mrp > 0 && Math.round(part.mrp) !== Math.round(part.sellingPrice || 0) && (
+              <div className="text-[10px] text-white/45 whitespace-nowrap line-through">{formatINR(part.mrp)}</div>
+            )}
+            <div className="text-[#d4af37] font-bold leading-tight whitespace-nowrap">{formatINR(part.sellingPrice)}</div>
+            {part.minSellingPrice > 0 && <div className="text-[10px] text-red-400/80 whitespace-nowrap">Min {formatINR(part.minSellingPrice)}</div>}
+          </div>
+        </div>
+        {/* Badges live on their own full-width row so any number of them wrap
+            cleanly and can never compress the name or overlap the price. */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          <StatusBadge stock={part.stock || 0} minStock={part.minStock} />
+          {isFastMover(part) && (
+            <span title={`Sold ${part.salesCount || 0}+ times — meets this shop's fast-mover threshold (${getFastMoverMin()})`} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-[#d4af37]/15 text-[#d4af37] border border-[#d4af37]/30 cursor-help"><Zap size={9} /> Fast</span>
+          )}
+          {isDeadStock(part) && (
+            <span title={deadStockReason(part)} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-white/8 text-white/45 border border-white/15"><Archive size={9} /> Dead</span>
+          )}
+          {part.archived && (
+            <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-white/8 text-white/45 border border-white/15"><Archive size={9} /> Archived</span>
+          )}
+        </div>
+
+        {/* Quantity gets its own full-width row; quick actions wrap on a
+            separate row below so LOW/FAST badges, the stepper, Reorder and Call
+            can never collide on narrow (≤420px) screens. */}
+        <div className="mt-3">
+          <StockStepper part={part} onCommit={onCommitStock} onSell={onSell} big canChangeStock={canChangeStock} onBlocked={onStockBlocked} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          {low && (
+            <button onClick={() => onReorder(part)} className="h-11 px-3 rounded-lg flex items-center gap-1 text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 active:scale-95" title="WhatsApp reorder">
+              <MessageCircle size={14} /> Reorder
+            </button>
+          )}
+          {(() => {
+            const ph = (getPartSuppliers(part).find((s) => s.isPreferred) || getPartSuppliers(part)[0])?.phone;
+            return ph ? (
+              <a href={`tel:${ph}`} className="h-11 px-3 rounded-lg flex items-center gap-1 text-xs font-semibold bg-blue-500/15 text-blue-300 border border-blue-500/30 active:scale-95" title="Call supplier">
+                <Phone size={14} /> Call
+              </a>
+            ) : null;
+          })()}
+          <button onClick={() => setOpen((o) => !o)} className="h-11 px-3 rounded-lg flex items-center gap-1 text-xs font-medium bg-white/5 border border-white/10 text-white/60 active:scale-95 ml-auto" aria-label="Details">
+            <span className={`transition-transform ${open ? 'rotate-90' : ''}`}>▶</span> Details
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div className="px-3 pb-3 pt-1 space-y-2" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] pt-2">
+            {[
+              ['SKU', part.sku || '—'],
+              ['Shelf / Bin', part.locationBin || '—'],
+              ['Category', part.category || '—'],
+              ['Vehicle', part.vehicle || '—'],
+              ['Supplier', (() => {
+                const sups = getPartSuppliers(part);
+                if (!sups.length) return 'Unassigned';
+                const primary = sups.find((s) => s.isPreferred) || sups[0];
+                return primary.name + (sups.length > 1 ? ` +${sups.length - 1}` : '');
+              })()],
+            ].map(([k, v]) => (
+              <div key={k}>
+                <div className="text-white/45 uppercase tracking-wide text-[9px]">{k}</div>
+                <div className="text-white/75">{v}</div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <button onClick={() => onReceive(part)} className="h-11 px-4 rounded-lg flex items-center justify-center gap-1.5 text-sm font-semibold bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 active:scale-[0.98]">
+              <PackagePlus size={14} /> Receive
+            </button>
+            {onAdjust && (part.stock || 0) > 0 && (
+              <button onClick={() => onAdjust(part)} className="h-11 px-4 rounded-lg flex items-center justify-center gap-1.5 text-sm font-semibold bg-amber-500/10 border border-amber-500/25 text-amber-400 active:scale-[0.98]" title="Adjust stock (damage / loss / correction)">
+                <PackageX size={14} /> Adjust
+              </button>
+            )}
+            <button onClick={() => onEdit(part)} className="h-11 rounded-lg flex items-center justify-center gap-1.5 text-sm font-semibold bg-[#d4af37]/10 border border-[#d4af37]/25 text-[#d4af37] active:scale-[0.98]">
+              <Edit3 size={14} /> Edit
+            </button>
+            {canRestore && !part.archived && onArchive && (
+              <button onClick={() => onArchive(part.id)} className="h-11 px-4 rounded-lg flex items-center justify-center gap-1.5 text-sm font-semibold bg-white/5 border border-white/10 text-white/70 active:scale-[0.98]">
+                <Archive size={14} /> Archive
+              </button>
+            )}
+            {canRestore && part.archived && onRestore && (
+              <button onClick={() => onRestore(part.id)} className="h-11 px-4 rounded-lg flex items-center justify-center gap-1.5 text-sm font-semibold bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 active:scale-[0.98]">
+                <ArchiveRestore size={14} /> Restore
+              </button>
+            )}
+            {isAdmin && (
+              <button onClick={() => onDelete(part.id)} className="h-11 px-4 rounded-lg flex items-center justify-center gap-1.5 text-sm font-semibold bg-red-500/10 border border-red-500/25 text-red-400 active:scale-[0.98]">
+                <Trash2 size={14} /> Delete
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ADD-02: Receive Stock (goods-received) — records a restock with batch cost,
+// supplier and reference; distinct from the +1 stepper.
+// ---------------------------------------------------------------------------
+function RestockModal({ part, suppliers = [], onConfirm, onClose, asPage = false }) {
+  useBodyScrollLock(!asPage);
+  // Issue 1 (Add Vehicle popup architecture review) — this hand-rolled overlay (not
+  // built on the shared <Modal>) had no ref for its Supplier MiniSelect to clamp
+  // against. See ModalBoundaryContext in components/common/DropdownPanel.jsx.
+  const modalRef = useRef(null);
+  const partSuppliers = getPartSuppliers(part);
+  const preferred = partSuppliers.find((s) => s.isPreferred) || partSuppliers[0];
+  const defaultPrice = Math.max(0, parseFloat(part.purchasePrice) || 0);
+  const defaultSupplierName = preferred?.name || '';
+  const reorderLevelVal = part.reorderLevel || part.minStock || '';
+
+  const [qty, setQty] = useState('');
+  const [unitCost, setUnitCost] = useState(defaultPrice ? String(defaultPrice) : '');
+  const [supplierName, setSupplierName] = useState(defaultSupplierName);
+  const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [purchaseDate, setPurchaseDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState('');
+  const [updateDefaultPrice, setUpdateDefaultPrice] = useState(false);
+  const [updateDefaultSupplier, setUpdateDefaultSupplier] = useState(false);
+  // Phase 4b (PH4-05) + Phase 5b (PH5-02) — durable restock-op id for this
+  // "receive stock for this part" intent; survives a browser refresh so a reload
+  // + retry recovers the same id and `restocks/{opId}` de-duplicates.
+  const { opId: restockOpId, hadPending: restockPending } = useDurableOpId(`restock:${part.id}`, 'rs');
+
+  // PH21-01 — nonNegInt/nonNegNum (not a bare Math.max(0, parseInt/parseFloat)) so a
+  // pasted over-long digit string can't reach the receive-stock increment as Infinity.
+  const n = nonNegInt(qty);
+  const cost = nonNegNum(unitCost);
+  // A receipt at a different price/supplier is a normal, everyday event (rate
+  // change, discount, emergency alternate vendor) — it must NOT silently rewrite
+  // the part's master record. These two flags only turn true once the user has
+  // actually typed something different from the current default, and the
+  // "update default" checkbox below them defaults OFF whenever a real default
+  // already exists, so master data only ever changes on explicit confirmation.
+  const priceDiffers = unitCost !== '' && pricesDiffer(cost, defaultPrice);
+  const supplierDiffers = supplierName.trim() !== '' && safeLower(supplierName.trim()) !== safeLower(defaultSupplierName.trim());
+  // When the diff first appears, default the checkbox to ON if there was no
+  // prior default to protect (nothing lost by adopting it), OFF otherwise.
+  useEffect(() => { setUpdateDefaultPrice(priceDiffers ? defaultPrice <= 0 : false); }, [priceDiffers]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setUpdateDefaultSupplier(supplierDiffers ? !defaultSupplierName : false); }, [supplierDiffers]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const supplierOptions = useMemo(() => suppliers.filter((s) => !s.archived).map((s) => s.name).filter(Boolean), [suppliers]);
+
+  const fld = 'w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/60 transition';
+  const lbl = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1';
+  const confirmRow = 'flex items-start gap-2.5 rounded-xl px-3 py-2.5 cursor-pointer transition';
+  const confirmRowStyle = { background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.25)' };
+
+  function submit() {
+    if (n <= 0) return;
+    onConfirm({
+      qty: n,
+      unitCost: cost,
+      supplierName: supplierName.trim(),
+      invoiceNumber: invoiceNumber.trim(),
+      purchaseDate,
+      notes: notes.trim(),
+      updateDefaultPrice: priceDiffers && updateDefaultPrice,
+      updateDefaultSupplier: supplierDiffers && updateDefaultSupplier,
+      opId: restockOpId,
+    });
+  }
+
+  // Issue 3 (Receive Stock dialog architecture) — "Selected Part" used to be a flat
+  // vertical stack of single label/value rows, wasting the width a wider dialog now
+  // has. A 2-column info grid (Part Name/SKU, Current Stock/Reorder Level, Default
+  // Supplier/Current Purchase Price) uses that width instead of leaving it blank next
+  // to a narrow column of rows — exactly the shape the brief's own worked example uses.
+  const infoGrid = 'grid grid-cols-2 gap-x-4 gap-y-2.5';
+  const infoLabel = 'text-[10px] uppercase tracking-wider text-white/45';
+  const infoValue = 'text-sm text-white/85 font-medium truncate';
+  const body = (
+    <>
+        {restockPending && (
+          <div role="status" className="rounded-xl p-3 mb-4 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+            <span aria-hidden>⚠️</span>
+            <span>A stock receipt for this part may not have finished before the page reloaded. <b>Check Stock In first.</b> Pressing Receive again is safe — a repeat of the same receipt is ignored.</span>
+          </div>
+        )}
+        {/* Section A — current inventory record, reference only */}
+        <div className="rounded-xl px-4 py-3.5 mb-4" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.08)' }}>
+          <div className={infoGrid}>
+            <div><p className={infoLabel}>Part Name</p><p className={infoValue}>{part.name}</p></div>
+            <div><p className={infoLabel}>SKU</p><p className={infoValue}>{part.sku || '—'}</p></div>
+            <div><p className={infoLabel}>Current Stock</p><p className={infoValue}>{part.stock ?? 0}</p></div>
+            <div><p className={infoLabel}>Reorder Level</p><p className={infoValue}>{reorderLevelVal !== '' ? reorderLevelVal : '—'}</p></div>
+            <div><p className={infoLabel}>Default Supplier</p><p className={infoValue}>{defaultSupplierName || '—'}</p></div>
+            <div><p className={infoLabel}>Current Purchase Price</p><p className={infoValue}>{formatINR(defaultPrice)}</p></div>
+          </div>
+        </div>
+
+        {/* Section B — this receiving transaction, pre-filled from the record above but editable */}
+        <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold mb-2">Receiving Transaction</p>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lbl}>Quantity Received *</label>
+              <input type="number" min="1" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" className={fld} autoFocus />
+            </div>
+            <div>
+              <label className={lbl}>Purchase Price / Unit</label>
+              <input type="number" min="0" step="0.01" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0" className={fld} />
+            </div>
+          </div>
+
+          <div>
+            <label className={lbl}>Supplier</label>
+            <MiniSelect value={supplierName} placeholder="Select or type a supplier" options={supplierOptions} onPick={(v) => setSupplierName(v)} onAdd={() => {}} addLabel="Use this supplier" inputCls={fld} />
+          </div>
+
+          {priceDiffers && (
+            <label className={confirmRow} style={confirmRowStyle}>
+              <input type="checkbox" checked={updateDefaultPrice} onChange={(e) => setUpdateDefaultPrice(e.target.checked)} className="mt-0.5 w-4 h-4 flex-shrink-0 accent-[#d4af37]" />
+              <span className="text-xs text-white/75">
+                {defaultPrice > 0 ? `Purchase price differs from the current default (${formatINR(defaultPrice)}).` : 'No default purchase price is set for this part yet.'}
+                <span className="block font-semibold text-white/90 mt-0.5">Update the default purchase price to {formatINR(cost)} for future purchases?</span>
+              </span>
+            </label>
+          )}
+          {supplierDiffers && (
+            <label className={confirmRow} style={confirmRowStyle}>
+              <input type="checkbox" checked={updateDefaultSupplier} onChange={(e) => setUpdateDefaultSupplier(e.target.checked)} className="mt-0.5 w-4 h-4 flex-shrink-0 accent-[#d4af37]" />
+              <span className="text-xs text-white/75">
+                {defaultSupplierName ? `This stock is being received from a different supplier than the default (${defaultSupplierName}).` : 'This part has no default supplier set yet.'}
+                <span className="block font-semibold text-white/90 mt-0.5">Make “{supplierName.trim()}” the default supplier for this part?</span>
+              </span>
+            </label>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lbl}>Invoice Number <span className="text-white/45 normal-case">(optional)</span></label>
+              <input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} placeholder="e.g. INV-2045" className={fld} />
+            </div>
+            <div>
+              <label className={lbl}>Purchase Date</label>
+              <input type="date" value={purchaseDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setPurchaseDate(e.target.value)} className={fld} />
+            </div>
+          </div>
+
+          <div>
+            <label className={lbl}>Notes <span className="text-white/45 normal-case">(optional)</span></label>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="e.g. partial delivery, damaged box replaced…" className={`${fld} resize-none`} />
+          </div>
+
+          {n > 0 && (
+            <div className="rounded-xl px-3 py-2 text-sm bg-white/[0.03] border border-white/10 flex items-center justify-between">
+              <span className="text-white/50">New on-hand: <span className="text-white font-semibold">{(part.stock ?? 0) + n}</span></span>
+              <span className="text-[#d4af37] font-semibold">Batch cost {formatINR(n * cost)}</span>
+            </div>
+          )}
+        </div>
+    </>
+  );
+  // Issue 3 — Cancel/Receive kept SEPARATE from the scrollable body so the desktop
+  // dialog can pin them in a proper sticky footer (never pushed below the fold no
+  // matter how tall the form content gets). The mobile (asPage) branch instead keeps
+  // them inline at the end of the page's natural scroll — MobileFormPage is a plain
+  // full-page flow, not a fixed-viewport dialog, so a "sticky footer" would fight its
+  // own scroll container instead of helping it; this matches how every other
+  // MobileFormPage-based form in the app already ends (submit button inline at the
+  // bottom of the content, not floating).
+  const footer = (
+    <div className="flex gap-2.5">
+      <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Cancel</button>
+      <button
+        onClick={submit}
+        disabled={n <= 0}
+        className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition ${n > 0 ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110' : 'bg-white/5 text-white/45 cursor-not-allowed'}`}
+      >
+        Receive {n > 0 ? `${n} units` : ''}
+      </button>
+    </div>
+  );
+  if (asPage) return <MobileFormPage title="Receive Stock" onClose={onClose}><div className="p-5 space-y-5">{body}{footer}</div></MobileFormPage>;
+  // Issue 3 (Receive Stock dialog architecture) — was a flat max-w-md (≈448px) box with
+  // ONE scrolling region spanning header+body+footer together, cramped for an ERP
+  // transaction form with 12+ fields across two sections. Widened to sm:max-w-2xl
+  // (matching BulkReceiveModal's already-established width — one consistent "wide
+  // transaction dialog" size, not a new one-off) and restructured into the same
+  // sticky-header / scrollable-body / sticky-footer shape components/Modal.js and
+  // BulkReceiveModal both use, so the header and Cancel/Receive stay reachable
+  // regardless of how much the body scrolls.
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div ref={modalRef} data-modal-panel="" className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col rounded-2xl overflow-hidden" style={{ background: 'var(--surface-3)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
+        <ModalBoundaryContext.Provider value={modalRef}>
+          <div className="flex-shrink-0 flex items-center gap-2 px-5 pt-5 pb-3">
+            <PackagePlus size={18} className="text-[#d4af37]" />
+            <h3 className="text-base font-bold text-white">Receive Stock</h3>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto dark-scroll px-5">
+            {body}
+          </div>
+          <div className="flex-shrink-0 px-5 py-4" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.08)' }}>
+            {footer}
+          </div>
+        </ModalBoundaryContext.Provider>
+      </div>
+    </div>
+  );
+}
+
+// CheckoutModal / StockAdjustModal (+ ADJUST_REASON_GROUPS) / BulkAdjustModal now live
+// in ./inventory/modals/StockModals, imported at the top of this file (Refactor Phase 2).
+
+// 1.3 (Dashboard Reorder Center drill-down review) — the reorder workflow had two
+// disconnected endings: one-at-a-time via openReorderDialog (WhatsApp/PO for a single
+// part), and nothing at all for "I selected 12 low-stock parts, now what". This closes
+// that gap by grouping the selection by each part's own PRIMARY supplier (getPartSuppliers
+// — never invented) and creating one real PO per supplier group through the exact same
+// createPO/buildPO write path POCreateForm already uses — no parallel PO-creation logic.
+function BulkReorderModal({ parts, onSubmit, onClose }) {
+  useBodyScrollLock();
+  const modalRef = useRef(null);
+  const inr = (n) => `₹${Math.round(n || 0).toLocaleString('en-IN')}`;
+
+  const [groups, setGroups] = useState(() => {
+    const bySupplier = new Map();
+    const unassigned = [];
+    parts.forEach((p) => {
+      const sup = getPartSuppliers(p)[0];
+      const qty = suggestedOrderQty(p);
+      const line = { part: p, qty: String(qty), unitCost: p.purchasePrice || 0 };
+      if (!sup?.id && !sup?.name) { unassigned.push(line); return; }
+      const key = sup.id || sup.name;
+      if (!bySupplier.has(key)) bySupplier.set(key, { supplierId: sup.id || null, supplierName: sup.name || '—', lines: [] });
+      bySupplier.get(key).lines.push(line);
+    });
+    return { assigned: [...bySupplier.values()], unassigned };
+  });
+
+  const updateLine = (supplierKey, partId, patch) => setGroups((prev) => ({
+    ...prev,
+    assigned: prev.assigned.map((g) => ((g.supplierId || g.supplierName) !== supplierKey ? g : { ...g, lines: g.lines.map((l) => (l.part.id === partId ? { ...l, ...patch } : l)) })),
+  }));
+
+  const groupTotal = (g) => g.lines.reduce((sum, l) => sum + (parseInt(l.qty, 10) || 0) * (l.unitCost || 0), 0);
+  const validGroups = groups.assigned.filter((g) => g.lines.some((l) => (parseInt(l.qty, 10) || 0) > 0));
+  const canSubmit = validGroups.length > 0;
+
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    if (saving || !canSubmit) return;
+    setSaving(true);
+    await onSubmit(validGroups.map((g) => ({
+      supplierId: g.supplierId,
+      supplierName: g.supplierName,
+      items: g.lines.filter((l) => (parseInt(l.qty, 10) || 0) > 0).map((l) => ({ partId: l.part.id, name: l.part.name, sku: l.part.sku || '', qty: parseInt(l.qty, 10) || 0, unitCost: l.unitCost || 0 })),
+    })));
+    setSaving(false);
+  };
+
+  const fld = 'px-2.5 py-1.5 rounded-lg text-sm outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 transition';
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(6px)' }} onClick={onClose}>
+      <div ref={modalRef} data-modal-panel="" className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col rounded-t-2xl sm:rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
+        <ModalBoundaryContext.Provider value={modalRef}>
+          <div className="flex-shrink-0 flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
+            <div>
+              <h3 className="text-base font-bold text-white flex items-center gap-2"><ShoppingCart size={18} className="text-[#d4af37]" /> Create Purchase Orders</h3>
+              <p className="text-[11px] text-white/45 mt-0.5">Grouped by each part&apos;s own supplier — one PO created per group.</p>
+            </div>
+            <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="space-y-4">
+              {groups.assigned.map((g) => {
+                const key = g.supplierId || g.supplierName;
+                return (
+                  <div key={key} className="rounded-xl p-3" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-bold text-white">{g.supplierName}</span>
+                      <span className="text-[11px] text-white/45">{g.lines.length} part{g.lines.length === 1 ? '' : 's'} · {inr(groupTotal(g))}</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {g.lines.map((l) => (
+                        <div key={l.part.id} className="grid grid-cols-12 gap-2 items-center">
+                          <span className="col-span-6 text-sm text-white/80 truncate">{l.part.name}</span>
+                          <span className="col-span-2 text-[11px] text-white/45">stock {l.part.stock || 0}</span>
+                          <input type="number" min="0" value={l.qty} onChange={(e) => updateLine(key, l.part.id, { qty: e.target.value })} className={`${fld} col-span-2 text-center`} />
+                          <span className="col-span-2 text-xs text-white/50 text-right">{inr((parseInt(l.qty, 10) || 0) * (l.unitCost || 0))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {groups.unassigned.length > 0 && (
+                <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.25)' }}>
+                  <AlertTriangle size={15} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-200/90">
+                    {groups.unassigned.length} part{groups.unassigned.length === 1 ? ' has' : 's have'} no supplier on file, so {groups.unassigned.length === 1 ? "it's" : "they're"} left out of the orders below — add a supplier on {groups.unassigned.length === 1 ? 'that part' : 'those parts'} first: {groups.unassigned.map((l) => l.part.name).join(', ')}.
+                  </p>
+                </div>
+              )}
+              {groups.assigned.length === 0 && groups.unassigned.length === 0 && <p className="text-sm text-white/45 text-center py-8">No parts selected.</p>}
+            </div>
+          </div>
+          <div className="flex-shrink-0 flex gap-2.5 px-5 py-4 safe-bottom-pad" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.08)' }}>
+            <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Cancel</button>
+            <button
+              onClick={submit}
+              disabled={!canSubmit || saving}
+              aria-busy={saving}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition ${canSubmit && !saving ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110' : 'bg-white/5 text-white/45 cursor-not-allowed'}`}
+            >
+              {saving ? 'Creating…' : `Create ${validGroups.length} Purchase Order${validGroups.length === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </ModalBoundaryContext.Provider>
+      </div>
+    </div>
+  );
+}
+
+// AlternativeModal now lives in ./inventory/modals/UtilityModals (Refactor Phase 2).
+
+// ---------------------------------------------------------------------------
+// #5 + #6: reusable Tree-Select (parent → children, tri-state, searchable)
+// value = array of selected leaf strings; onChange(nextArray)
+// ---------------------------------------------------------------------------
+export function TreeSelect({ tree, value = [], onChange, placeholder = 'Select…', allowUniversalShortcut, onAddLeaf, onAddVehicle }) {
+  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState({});
+  const [query, setQuery] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [newLeaf, setNewLeaf] = useState('');       // Task 1: add new category
+  const [newBrand, setNewBrand] = useState('');     // Task 4: brand for new vehicle
+  const boxRef = useRef(null);
+  const listRef = useRef(null);
+  const triggerRef = useRef(null); // the field box itself — Done/Escape return focus here
+  // a11y: the listbox id must be unique per instance — a hardcoded id broke when two
+  // TreeSelects (Category + Compatible Vehicles) render on the same form at once.
+  const listboxId = useId();
+  const selectedSet = useMemo(() => new Set(value), [value]);
+
+  // Close WITHOUT touching selection/validation/save — this is component-local
+  // `open` state, entirely decoupled from the form's submit/error state — and
+  // return focus to the field that opened it, so keyboard users land back where
+  // they started instead of losing their place. Used by the Done button, Escape,
+  // and the mobile sheet's backdrop/Done.
+  const closeAndFocus = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  // ---- Full keyboard navigation (roving highlight over a flattened row list) ----
+  // Arrow Up/Down move the highlight across visible rows (parent headers + open
+  // children); Right expands a closed parent or steps into its first child; Left
+  // collapses an open parent or steps up to its parent; Home/End jump to the ends;
+  // Enter toggles the highlighted row once arrow keys are in play (before that,
+  // Enter keeps the type-and-select/create behaviour above). Escape is handled by
+  // the portalled <DropdownPanel> / bottom-sheet backdrop, not here.
+  // (visibleRows/handleTreeKeyDown are defined below, after filteredTree — they
+  // depend on it and must not be evaluated before it's initialized.)
+  const [activeIndex, setActiveIndex] = useState(0);
+  const navigatedRef = useRef(false); // true once the user starts arrow-navigating
+
+  // resolve a typed name to an existing leaf (case-insensitive) or null.
+  // For categories (onAddLeaf), also collapse singular/plural so "perfumes"
+  // resolves to an existing "perfume" instead of creating a duplicate.
+  const findExistingLeaf = (name) => {
+    const q = safeLower((name || '').trim());
+    const qs = singularize(q);
+    let found = null;
+    tree.forEach((n) => n.children.forEach((c) => {
+      const cl = safeLower(c);
+      if (cl === q || (onAddLeaf && singularize(cl) === qs)) found = c;
+    }));
+    return found;
+  };
+  // Task 4: create a category straight from the search text (one click).
+  const createLeaf = (name) => {
+    const nm = (name || '').trim();
+    if (!nm) return;
+    const existing = findExistingLeaf(nm); // dedupe: "Door Handle" == "door handle"
+    const leaf = existing || nm;
+    if (!selectedSet.has(leaf)) onChange([...value, leaf]);
+    if (!existing && onAddLeaf) onAddLeaf(nm);
+    setQuery('');
+  };
+  // Task 4/5: create a vehicle (model = search text, brand chosen inline).
+  const createVehicle = (brand, model) => {
+    const b = titleCase(brand); // Issue 14: normalize casing
+    const m = titleCase(model);
+    if (!b || !m) return;
+    const existing = findExistingLeaf(m);
+    const leaf = existing || m;
+    if (!selectedSet.has(leaf)) onChange([...value, leaf]);
+    if (!existing && onAddVehicle) onAddVehicle(b, m);
+    setNewBrand('');
+    setQuery('');
+  };
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query), 140);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // NOTE: outside-click / Esc closing is owned by the portalled <DropdownPanel>
+  // (desktop) and the bottom-sheet backdrop (mobile). This component must NOT run
+  // its own `mousedown` + boxRef check: the desktop panel is portalled into <body>,
+  // so it is NOT a DOM descendant of boxRef — a naive check treats every click on
+  // the search box / expander / checkbox / "Create" row as an OUTSIDE click and
+  // tears the panel down on mousedown, before the click can land. That was the root
+  // cause of the flaky search / expand / select / add-category behaviour.
+
+  const toggleLeaf = (leaf) => {
+    const next = new Set(selectedSet);
+    next.has(leaf) ? next.delete(leaf) : next.add(leaf);
+    onChange([...next]);
+  };
+  const toggleParent = (node) => {
+    const next = new Set(selectedSet);
+    const all = node.children.every((c) => next.has(c));
+    node.children.forEach((c) => (all ? next.delete(c) : next.add(c)));
+    onChange([...next]);
+  };
+  const removeChip = (leaf) => {
+    const next = new Set(selectedSet);
+    next.delete(leaf);
+    onChange([...next]);
+  };
+
+  const filteredTree = useMemo(() => {
+    const q = safeLower(debounced).trim();
+    if (!q) return tree;
+    const qs = singularize(q);
+    const match = (txt) => { const t = safeLower(txt); return t.includes(q) || singularize(t).includes(qs); };
+    return tree
+      .map((node) => {
+        const pm = match(node.label);
+        const kids = pm ? node.children : node.children.filter((c) => match(c));
+        return kids.length || pm ? { ...node, children: kids } : null;
+      })
+      .filter(Boolean);
+  }, [tree, debounced]);
+
+  const visibleRows = useMemo(() => {
+    const rows = [];
+    filteredTree.forEach((node) => {
+      const isOpen = expanded[node.label] ?? !!debounced;
+      rows.push({ type: 'parent', node, isOpen });
+      if (isOpen) node.children.forEach((leaf) => rows.push({ type: 'leaf', node, leaf }));
+    });
+    return rows;
+  }, [filteredTree, expanded, debounced]);
+
+  // New search results (or a fresh open) start the highlight at the top and drop
+  // back into "type + Enter" mode until the user actually presses an arrow key.
+  useEffect(() => {
+    setActiveIndex(0);
+    navigatedRef.current = false;
+  }, [debounced, open]);
+  useEffect(() => {
+    setActiveIndex((i) => Math.min(i, Math.max(0, visibleRows.length - 1)));
+  }, [visibleRows.length]);
+  useEffect(() => {
+    if (!open || !navigatedRef.current) return;
+    listRef.current?.querySelector(`[data-row-index="${activeIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex, open]);
+
+  const handleTreeKeyDown = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      if (!visibleRows.length) { navigatedRef.current = true; return; }
+      if (!navigatedRef.current) {
+        // First arrow/Home/End press just REVEALS the already-initialized highlight
+        // (activeIndex starts at 0) instead of moving past it — standard combobox
+        // behaviour: an unrevealed Down lands on the first option, an unrevealed Up
+        // lands on the last.
+        navigatedRef.current = true;
+        if (e.key === 'ArrowUp' || e.key === 'End') setActiveIndex(visibleRows.length - 1);
+        else setActiveIndex(0);
+        return;
+      }
+      if (e.key === 'ArrowDown') setActiveIndex((i) => Math.min(i + 1, visibleRows.length - 1));
+      else if (e.key === 'ArrowUp') setActiveIndex((i) => Math.max(i - 1, 0));
+      else if (e.key === 'Home') setActiveIndex(0);
+      else setActiveIndex(visibleRows.length - 1);
+      return;
+    }
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      navigatedRef.current = true;
+      const row = visibleRows[activeIndex];
+      if (!row || row.type !== 'parent') return;
+      if (!row.isOpen) { setExpanded((ex) => ({ ...ex, [row.node.label]: true })); return; }
+      const firstChildIdx = visibleRows.findIndex((r, i) => i > activeIndex && r.type === 'leaf' && r.node === row.node);
+      if (firstChildIdx !== -1) setActiveIndex(firstChildIdx);
+      return;
+    }
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      navigatedRef.current = true;
+      const row = visibleRows[activeIndex];
+      if (!row) return;
+      if (row.type === 'leaf') {
+        const parentIdx = visibleRows.findIndex((r) => r.type === 'parent' && r.node === row.node);
+        if (parentIdx !== -1) setActiveIndex(parentIdx);
+      } else if (row.isOpen) {
+        setExpanded((ex) => ({ ...ex, [row.node.label]: false }));
+      }
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (navigatedRef.current) {
+        const row = visibleRows[activeIndex];
+        if (!row) return;
+        if (row.type === 'parent') toggleParent(row.node); else toggleLeaf(row.leaf);
+        return;
+      }
+      // Not arrow-navigated yet: Enter selects the single typed match, or creates
+      // the typed category when it doesn't exist.
+      const q = (debounced || query).trim();
+      if (!q) return;
+      const existing = findExistingLeaf(q);
+      if (existing) { if (!selectedSet.has(existing)) toggleLeaf(existing); setQuery(''); }
+      else if (onAddLeaf) createLeaf(q);
+    }
+  };
+
+  const fieldBox =
+    'w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 transition cursor-pointer';
+
+  return (
+    <div ref={boxRef} className="relative">
+      <div
+        ref={triggerRef}
+        className={fieldBox}
+        onClick={() => setOpen((o) => !o)}
+        tabIndex={0}
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        onKeyDown={(e) => {
+          // Keyboard users previously had no way to reach this dropdown at all
+          // (a bare non-focusable div). Enter/Space/Down open it; once open,
+          // keys are handled by the search input inside the panel.
+          if (open) return;
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); }
+        }}
+      >
+        {value.length === 0 ? (
+          <span className="text-white/45">{placeholder}</span>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {value.slice(0, 8).map((leaf) => (
+              <span key={leaf} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md text-[11px] font-semibold bg-[#d4af37]/15 text-[#d4af37] border border-[#d4af37]/30">
+                {leaf}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); removeChip(leaf); }}
+                  className="hover:text-white"
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            {value.length > 8 && <span className="text-[11px] text-white/45 self-center">+{value.length - 8} more</span>}
+          </div>
+        )}
+      </div>
+
+      {open && (() => {
+        const panelInner = (
+          <>
+            <div className="p-2 border-b border-white/8">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleTreeKeyDown}
+                placeholder="Search…"
+                role="combobox"
+                aria-expanded="true"
+                aria-controls={listboxId}
+                aria-activedescendant={visibleRows[activeIndex] ? `${listboxId}-row-${activeIndex}` : undefined}
+                className="w-full px-2.5 py-2 rounded-lg text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/60"
+              />
+            </div>
+            <div ref={listRef} id={listboxId} role="listbox" className="max-h-60 sm:max-h-60 overflow-y-auto py-1 flex-1">
+              {(() => {
+                let rowCursor = -1; // mirrors the traversal order used to build visibleRows
+                return filteredTree.map((node) => {
+                  const allSel = node.children.every((c) => selectedSet.has(c));
+                  const someSel = !allSel && node.children.some((c) => selectedSet.has(c));
+                  const isOpen = expanded[node.label] ?? !!debounced;
+                  const parentIdx = ++rowCursor;
+                  const parentActive = parentIdx === activeIndex && navigatedRef.current;
+                  return (
+                    <div key={node.label}>
+                      <div
+                        id={`${listboxId}-row-${parentIdx}`}
+                        data-row-index={parentIdx}
+                        role="option"
+                        aria-selected={allSel}
+                        className={`flex items-center gap-2 px-2.5 py-2 hover:bg-white/[0.04] ${parentActive ? 'bg-[#d4af37]/15' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={allSel}
+                          ref={(el) => el && (el.indeterminate = someSel)}
+                          onChange={() => toggleParent(node)}
+                          className="w-4 h-4 accent-[#d4af37] cursor-pointer flex-shrink-0"
+                          aria-label={`Select all ${node.label}`}
+                        />
+                        <button type="button" onClick={() => setExpanded((e) => ({ ...e, [node.label]: !isOpen }))} className="flex items-center gap-2 flex-1 text-left cursor-pointer" aria-expanded={isOpen}>
+                          <span className={`inline-block text-white/45 transition-transform ${isOpen ? 'rotate-90' : ''}`}>▶</span>
+                          <span className="text-sm font-semibold text-white">{node.label}</span>
+                          <span className="text-[10px] text-white/45">{node.children.filter((c) => selectedSet.has(c)).length || ''}</span>
+                        </button>
+                      </div>
+                      {isOpen &&
+                        node.children.map((leaf) => {
+                          const leafIdx = ++rowCursor;
+                          const leafActive = leafIdx === activeIndex && navigatedRef.current;
+                          return (
+                            <label
+                              key={leaf}
+                              id={`${listboxId}-row-${leafIdx}`}
+                              data-row-index={leafIdx}
+                              role="option"
+                              aria-selected={selectedSet.has(leaf)}
+                              className={`flex items-center gap-2 pl-9 pr-2.5 py-2 hover:bg-[#d4af37]/8 cursor-pointer ${leafActive ? 'bg-[#d4af37]/15' : ''}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedSet.has(leaf)}
+                                onChange={() => toggleLeaf(leaf)}
+                                className="w-4 h-4 accent-[#d4af37] cursor-pointer"
+                              />
+                              <span className="text-sm text-white/80">{leaf}</span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  );
+                });
+              })()}
+              {filteredTree.length === 0 && !debounced.trim() && <div className="px-3 py-3 text-xs text-white/45">No options.</div>}
+
+              {/* Task 4: one-click create from the search text (no second field). */}
+              {debounced.trim() && !findExistingLeaf(debounced) && onAddLeaf && (
+                <button
+                  type="button"
+                  onClick={() => createLeaf(debounced)}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-[#d4af37]/10 border-t border-white/8"
+                >
+                  <span className="w-5 h-5 rounded-md flex items-center justify-center bg-[#d4af37]/15 text-[#d4af37] text-sm font-bold flex-shrink-0">+</span>
+                  <span className="text-sm text-white/85 truncate">Create “<span className="text-[#d4af37] font-semibold">{debounced.trim()}</span>”</span>
+                </button>
+              )}
+              {debounced.trim() && !findExistingLeaf(debounced) && onAddVehicle && (
+                <div className="px-3 py-2.5 border-t border-white/8 space-y-2">
+                  <p className="text-xs text-white/60">Add “<span className="text-[#d4af37] font-semibold">{debounced.trim()}</span>” as a new model under:</p>
+                  <div className="flex gap-2">
+                    <input
+                      value={newBrand}
+                      onChange={(e) => setNewBrand(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); createVehicle(newBrand, debounced); } }}
+                      placeholder="Brand e.g. Force Motors"
+                      className="flex-1 px-2.5 py-2 rounded-lg text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/60"
+                    />
+                    <button type="button" onClick={() => createVehicle(newBrand, debounced)} disabled={!newBrand.trim()} className={`px-3 rounded-lg text-sm font-bold flex-shrink-0 ${newBrand.trim() ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]' : 'bg-white/5 text-white/45'}`}>Create</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Explicit completion action: closes the picker, keeps every selection
+                made so far, and returns focus to the field — mouse (click) and
+                keyboard (Tab to it, Enter/Space — native <button> semantics) both
+                work. This is local `open` state only: it never touches form errors
+                or calls onSave, so it can never trigger validation or a save. */}
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-white/8">
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-white/45">{value.length} selected</span>
+                <button type="button" onClick={() => onChange([])} className="text-[11px] text-white/50 hover:text-white">Clear all</button>
+              </div>
+              <button
+                type="button"
+                onClick={closeAndFocus}
+                className="px-4 py-1.5 rounded-lg text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110 active:scale-95 transition"
+              >
+                Done
+              </button>
+            </div>
+          </>
+        );
+        return (
+          <>
+            {/* Desktop: PORTALLED dropdown. It was `absolute`, so any ancestor with
+                overflow:hidden clipped it — which is exactly why the mobile bottom-sheet
+                below had to be invented as a workaround. The desktop path now escapes
+                the subtree properly instead. */}
+            <div className="hidden sm:block">
+              <DropdownPanel anchorRef={boxRef} open onClose={closeAndFocus}
+                className="backdrop-blur-md"
+                style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }}>
+                {panelInner}
+              </DropdownPanel>
+            </div>
+            {/* CHANGE-06: Mobile bottom sheet (avoids clipping inside the modal) */}
+            <div className="sm:hidden fixed inset-0 z-[110] flex items-end" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={closeAndFocus}>
+              <div className="w-full rounded-t-3xl overflow-hidden modal-sheet flex flex-col" style={{ background: 'var(--surface-3)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-4 py-3 border-b border-white/8 flex-shrink-0">
+                  <span className="text-sm font-bold text-white">{placeholder}</span>
+                  <button type="button" onClick={closeAndFocus} className="text-[#d4af37] text-sm font-bold">Done</button>
+                </div>
+                {panelInner}
+              </div>
+            </div>
+          </>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// #1 + #2: SupplierPicker — searchable, debounced, id-based supplier selector
+// with per-part "Preferred Contact Number" selection. Scales to 100+ suppliers
+// (results capped + filtered); selection maps by supplierId, never by index.
+// ---------------------------------------------------------------------------
+export function SupplierPicker({ suppliers, row, onChange, onRemove, onSaveSupplier, onCreateSupplier }) {
+  const [query, setQuery] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [open, setOpen] = useState(false);
+  const [newPhone, setNewPhone] = useState(row.id ? '' : row.phone || '');
+  const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(null); // { name, phones:[{number,label}] }
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const boxRef = useRef(null);
+  const queryInputRef = useRef(null); // Close/Escape return focus here
+
+  // Debounce the search input (handles fast typists + long lists).
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query), 160);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // Close WITHOUT picking a supplier and without touching form validation/save —
+  // local `open` state only — then return focus to the search field. Used by the
+  // panel's Close button and by Escape (DropdownPanel calls onClose).
+  const closeAndFocus = () => {
+    setOpen(false);
+    queryInputRef.current?.focus();
+  };
+
+  // NOTE: closing on outside-click / Esc is owned by the portalled <DropdownPanel>
+  // below (see useOutsideClose in DropdownPanel.jsx). A local `mousedown` + boxRef
+  // check is WRONG here because the results panel is portalled into <body> and is
+  // therefore outside boxRef — it would fire setOpen(false) on the very mousedown
+  // that is trying to pick a supplier or hit "Create", which is exactly why supplier
+  // selection and the Add-Supplier flow were unreliable.
+
+  const CAP = 50;
+  const results = useMemo(() => {
+    const q = safeLower(debounced).trim();
+    const qDigits = q.replace(/\D/g, '');
+    // Only offer LIVE suppliers as new links. An already-linked archived
+    // supplier still resolves via `selected` below, so existing links display.
+    let list = suppliers.filter((s) => !s.archived);
+    if (q) {
+      list = list.filter(
+        (s) =>
+          getSupplierNames(s).some((n) => safeLower(n).includes(q)) ||
+          (qDigits && getSupplierPhones(s).some((p) => p.includes(qDigits)))
+      );
+    }
+    return { items: list.slice(0, CAP), total: list.length };
+  }, [suppliers, debounced]);
+
+  const selected = row.id ? suppliers.find((s) => s.id === row.id) : null;
+  // For NEW suppliers (no master record yet), the editable list lives on the row.
+  const contacts = selected
+    ? getSupplierContacts(selected)
+    : (row.phoneNumbers || [])
+        .map((c) => ({ number: tenDigits(c.number), label: c.label || 'Primary' }))
+        .filter((c) => c.number);
+  const exactExists = suppliers.some(
+    (s) => safeLower(s.name) === safeLower(query.trim())
+  );
+
+  function choose(s) {
+    const c = getSupplierContacts(s);
+    onChange({
+      id: s.id,
+      name: s.name,
+      phone: c[0]?.number || '',
+      preferredLabel: c[0]?.label || 'Primary',
+    });
+    setQuery('');
+    setOpen(false);
+  }
+  function createNew() {
+    const name = query.trim();
+    if (!name) return;
+    onChange({
+      id: '',
+      name,
+      phone: '',
+      preferredLabel: 'Primary',
+      isPreferred: !!row.isPreferred,
+      phoneNumbers: [{ number: '', label: 'Primary' }],
+    });
+    if (onCreateSupplier) onCreateSupplier(name); // persist immediately → live list picks it up
+    setQuery('');
+    setOpen(false);
+  }
+  function clearSelection() {
+    onChange({ id: '', name: '', phone: '', preferredLabel: 'Primary' });
+    setNewPhone('');
+    setQuery('');
+  }
+
+  // ---- Edit mode (keeps data visible; commits only on Save) ----
+  function enterEdit() {
+    const phones = contacts.length ? contacts.map((c) => ({ ...c })) : [{ number: row.phone || '', label: 'Primary' }];
+    setDraft({ name: selected?.name || row.name, phones });
+    setEditing(true);
+    setExpanded(true);
+  }
+  function cancelEdit() {
+    setDraft(null);
+    setEditing(false); // original values remain untouched — card never disappears
+  }
+  function updateDraftPhone(i, key, val) {
+    setDraft((d) => {
+      const phones = d.phones.map((p, idx) =>
+        idx === i ? { ...p, [key]: key === 'number' ? phoneInput(val) : val } : p
+      );
+      return { ...d, phones };
+    });
+  }
+  function addDraftPhone() {
+    setDraft((d) => ({ ...d, phones: [...d.phones, { number: '', label: 'WhatsApp' }] }));
+  }
+  function removeDraftPhone(i) {
+    setDraft((d) => ({ ...d, phones: d.phones.filter((_, idx) => idx !== i) }));
+  }
+  function saveEdit() {
+    const name = (draft.name || '').trim();
+    if (!name) { toast.error('Supplier name is required.'); return; }
+    // Edge cases: drop empty numbers + de-dupe.
+    const seen = new Set();
+    const phones = draft.phones
+      .map((p) => ({ number: tenDigits(p.number), label: (p.label || 'Primary').trim() || 'Primary' }))
+      .filter((p) => p.number && !seen.has(p.number) && seen.add(p.number));
+    // Task 3: reject invalid numbers before saving.
+    const bad = phones.find((p) => !isIndianMobile(p.number));
+    if (bad) {
+      toast.error(`“${bad.number}” isn’t a valid Indian mobile (10 digits starting 6–9).`);
+      return;
+    }
+    if (phones.length === 0) { toast.error('Add at least one valid phone number.'); return; }
+    // Keep this part's preferred number if it still exists, else fall back.
+    const keepPhone = phones.some((p) => p.number === row.phone) ? row.phone : phones[0]?.number || '';
+    const keepLabel = phones.find((p) => p.number === keepPhone)?.label || 'Primary';
+    if (row.id && onSaveSupplier) {
+      onSaveSupplier(row.id, { name, phoneNumbers: phones }); // persist master record
+      onChange({ ...row, name, phone: keepPhone, preferredLabel: keepLabel });
+    } else {
+      // New supplier — keep the full number list on the row so the supplier is
+      // created with all of them when the part is saved.
+      onChange({ ...row, name, phone: keepPhone, preferredLabel: keepLabel, phoneNumbers: phones });
+    }
+    setEditing(false);
+    setDraft(null);
+  }
+
+  function requestRemove() {
+    setConfirmDelete(true);
+  }
+
+  // #1: inline editor for a NEW supplier's numbers (lives on the row; persisted
+  // when the part is saved). Identical capability to existing suppliers.
+  function commitNewPhones(phones) {
+    const stillPreferred = phones.some((p) => p.number && p.number === row.phone);
+    const preferred = stillPreferred ? row.phone : phones.find((p) => p.number)?.number || '';
+    onChange({
+      ...row,
+      phoneNumbers: phones,
+      phone: preferred,
+      preferredLabel: phones.find((p) => p.number === preferred)?.label || 'Primary',
+    });
+  }
+  function newPhoneChange(i, key, val) {
+    const phones = (row.phoneNumbers || []).map((p, idx) =>
+      idx === i ? { ...p, [key]: key === 'number' ? phoneInput(val) : val } : p
+    );
+    commitNewPhones(phones);
+  }
+  function addNewPhone() {
+    commitNewPhones([...(row.phoneNumbers || []), { number: '', label: 'WhatsApp' }]);
+  }
+  function removeNewPhone(i) {
+    const phones = (row.phoneNumbers || []).filter((_, idx) => idx !== i);
+    commitNewPhones(phones.length ? phones : [{ number: '', label: 'Primary' }]);
+  }
+  function pickNewPreferred(number) {
+    const c = (row.phoneNumbers || []).find((p) => p.number === number);
+    onChange({ ...row, phone: number, preferredLabel: c?.label || 'Primary' });
+  }
+
+  const fieldInput =
+    'w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/60 transition';
+
+  // SELECTED STATE — full supplier card (#1,#3,#5,#6,#7).
+  if (row.name) {
+    const isNew = !row.id;
+    return (
+      <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: `1px solid ${row.isPreferred ? 'rgba(212,175,55,0.45)' : 'rgba(var(--fg-rgb),0.08)'}` }}>
+        {/* Header row */}
+        <div className="flex items-center gap-2 p-2.5">
+          {/* Preferred-supplier star (one per part — parent enforces) */}
+          <button
+            type="button"
+            onClick={() => onChange({ ...row, isPreferred: !row.isPreferred })}
+            title={row.isPreferred ? 'Preferred supplier' : 'Mark as preferred supplier'}
+            className={`w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center transition ${row.isPreferred ? 'text-[#d4af37] bg-[#d4af37]/15 border border-[#d4af37]/40' : 'text-white/45 bg-white/5 border border-white/10 hover:text-white/60'}`}
+          >
+            <Star size={14} fill={row.isPreferred ? '#d4af37' : 'none'} />
+          </button>
+
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5">
+              {row.name}
+              {row.isPreferred && <span className="text-[9px] font-bold uppercase tracking-wide text-[#d4af37]">Preferred</span>}
+            </div>
+            {isNew ? (
+              <div className="text-[11px] text-amber-400/80">New supplier — saved on Save Changes</div>
+            ) : (
+              <div className="text-[11px] text-emerald-400/80 flex items-center gap-1">
+                <Phone size={10} /> {row.phone || 'no number'}{row.preferredLabel ? ` · ${row.preferredLabel}` : ''}
+              </div>
+            )}
+          </div>
+
+          {!isNew && (
+            <button type="button" onClick={() => setExpanded((e) => !e)} className="w-8 h-8 flex-shrink-0 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/50 hover:bg-white/10 transition" title={expanded ? 'Collapse' : 'Expand details'}>
+              <span className={`inline-block transition-transform ${expanded ? 'rotate-90' : ''}`}>▶</span>
+            </button>
+          )}
+          {!editing && !isNew && (
+            <button type="button" onClick={enterEdit} className="w-8 h-8 flex-shrink-0 rounded-lg flex items-center justify-center bg-[#d4af37]/10 border border-[#d4af37]/25 text-[#d4af37] hover:bg-[#d4af37]/20 transition" title="Edit supplier">
+              <Edit3 size={13} />
+            </button>
+          )}
+          <button type="button" onClick={requestRemove} className="w-8 h-8 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20 transition" title="Remove from this part">
+            <Trash2 size={13} />
+          </button>
+        </div>
+
+        {/* Confirm unlink (safe delete — never deletes the master supplier) */}
+        {confirmDelete && (
+          <div className="px-3 pb-3">
+            <div className="rounded-lg p-2.5 bg-red-500/10 border border-red-500/25">
+              <p className="text-xs text-white/80">Remove <span className="font-semibold">{row.name}</span> from this part? The supplier stays in your directory.</p>
+              <div className="flex gap-2 mt-2">
+                <button type="button" onClick={() => setConfirmDelete(false)} className="flex-1 py-1.5 rounded-lg text-xs font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10">Keep</button>
+                <button type="button" onClick={() => { setConfirmDelete(false); onRemove(); }} className="flex-1 py-1.5 rounded-lg text-xs font-bold text-white bg-red-500/80 hover:bg-red-500">Remove</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* #1: New-supplier inline multi-number editor (primary + alternates) */}
+        {isNew && !editing && (
+          <div className="px-3 pb-3 space-y-2" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+            <div className="flex items-center justify-between pt-2.5">
+              <label className="text-[10px] uppercase tracking-wider text-white/45">Phone numbers</label>
+              <button type="button" onClick={addNewPhone} className="flex items-center gap-1 text-[11px] font-semibold text-[#d4af37] hover:text-[#e8c84a]">
+                <Plus size={11} /> Add Alternate Number
+              </button>
+            </div>
+            {(row.phoneNumbers || [{ number: '', label: 'Primary' }]).map((p, i) => (
+              <div key={i} className="flex gap-2 items-center">
+                <label className="flex items-center" title="Preferred for reorders">
+                  <input
+                    type="radio"
+                    name={`newpref-${row.name}`}
+                    checked={!!p.number && row.phone === p.number}
+                    onChange={() => pickNewPreferred(p.number)}
+                    disabled={!p.number}
+                    className="accent-[#d4af37]"
+                  />
+                </label>
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={10}
+                  value={p.number}
+                  onChange={(e) => newPhoneChange(i, 'number', e.target.value)}
+                  placeholder={i === 0 ? 'Primary number' : 'Alternate number'}
+                  className={`${fieldInput} flex-1`}
+                />
+                <div className="w-24 flex-shrink-0">
+                  <MiniSelect value={p.label} options={CONTACT_LABELS} onPick={(v) => newPhoneChange(i, 'label', v)} width={140} inputCls="px-1.5 py-2.5 rounded-xl text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60" />
+                </div>
+                <button type="button" onClick={() => removeNewPhone(i)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20"><X size={13} /></button>
+              </div>
+            ))}
+            <p className="text-[10px] text-white/45">Select the radio to set the preferred number for reorders. Saved with the part.</p>
+            {(row.phoneNumbers || []).some((p) => p.number && !isIndianMobile(p.number)) && (
+              <p className="text-[10px] text-red-400 font-semibold">✕ Invalid number — must be 10 digits starting 6–9. The part can’t be saved until this is fixed.</p>
+            )}
+          </div>
+        )}
+
+        {/* EDIT MODE — name + phone numbers; commit only on Save, Cancel restores */}
+        {editing && draft && (
+          <div className="px-3 pb-3 space-y-2.5" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+            <div className="pt-2.5">
+              <label className="block text-[10px] uppercase tracking-wider text-white/45 mb-1">Supplier name</label>
+              <input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} className={fieldInput} />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[10px] uppercase tracking-wider text-white/45">Phone numbers</label>
+                <button type="button" onClick={addDraftPhone} className="flex items-center gap-1 text-[11px] font-semibold text-[#d4af37] hover:text-[#e8c84a]"><Plus size={11} /> Add alternate</button>
+              </div>
+              <div className="space-y-2">
+                {draft.phones.map((p, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      maxLength={10}
+                      value={p.number}
+                      onChange={(e) => updateDraftPhone(i, 'number', e.target.value)}
+                      placeholder={i === 0 ? 'Primary number' : 'Alternate number'}
+                      className={`${fieldInput} flex-1`}
+                    />
+                    <div className="w-24 flex-shrink-0">
+                      <MiniSelect value={p.label} options={CONTACT_LABELS} onPick={(v) => updateDraftPhone(i, 'label', v)} width={140} inputCls="px-1.5 py-2.5 rounded-xl text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60" />
+                    </div>
+                    <button type="button" onClick={() => removeDraftPhone(i)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20"><X size={13} /></button>
+                  </div>
+                ))}
+              </div>
+              {(draft.phones || []).some((p) => p.number && !isIndianMobile(p.number)) && (
+                <p className="text-[10px] text-red-400 font-semibold mt-1.5">✕ Invalid number — must be 10 digits starting 6–9. Save is blocked until fixed.</p>
+              )}
+            </div>
+            <div className="flex gap-2 pt-0.5">
+              <button type="button" onClick={cancelEdit} className="flex-1 py-2 rounded-lg text-xs font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10">Cancel</button>
+              <button type="button" onClick={saveEdit} className="flex-1 py-2 rounded-lg text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110">Save</button>
+            </div>
+          </div>
+        )}
+
+        {/* EXPANDED (view) — preferred contact radios across all numbers */}
+        {expanded && !editing && !isNew && (
+          <div className="px-3 pb-3" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+            <label className="block text-[10px] uppercase tracking-wider text-white/45 mt-2.5 mb-1.5">Preferred contact for reorders</label>
+            {contacts.length ? (
+              <div className="space-y-1.5">
+                {contacts.map((c) => (
+                  <label key={c.number} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer bg-white/[0.03] border border-white/8 hover:border-[#d4af37]/30">
+                    <input
+                      type="radio"
+                      name={`pref-${row.id}`}
+                      checked={row.phone === c.number}
+                      onChange={() => onChange({ ...row, phone: c.number, preferredLabel: c.label })}
+                      className="accent-[#d4af37]"
+                    />
+                    <span className="text-xs text-white/80 flex-1">{c.number}</span>
+                    <span className="text-[10px] uppercase tracking-wide text-[#d4af37]/70">{c.label}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-white/45">No numbers on file. Use Edit to add one.</p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // SEARCH STATE — searchable dropdown.
+  return (
+    <div ref={boxRef} className="relative">
+      <div className="flex gap-2 items-center">
+        <input
+          ref={queryInputRef}
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            // Keyboard: Enter links the top match, or creates the typed supplier.
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (results.items.length) choose(results.items[0]);
+            else if (query.trim() && !exactExists) createNew();
+          }}
+          placeholder="Search supplier by name or number…"
+          autoComplete="off"
+          className={`${fieldInput} flex-1`}
+        />
+        <button
+          type="button"
+          onClick={onRemove}
+          className="w-10 h-10 flex-shrink-0 rounded-xl flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20 transition"
+          title="Remove row"
+        >
+          <X size={15} />
+        </button>
+      </div>
+
+      {open && (
+        <DropdownPanel anchorRef={boxRef} open onClose={closeAndFocus} scroll={false}
+          className="backdrop-blur-md"
+          style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+        >
+          <div className="overflow-y-auto dark-scroll" style={{ flex: '1 1 auto' }}>
+            {results.items.map((s) => {
+              const c = getSupplierContacts(s);
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => choose(s)}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-[#d4af37]/10 transition"
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm text-white truncate">{s.name}</span>
+                    <span className="block text-[11px] text-white/45">{c[0]?.number || 'no number'}{c.length > 1 ? ` +${c.length - 1}` : ''}</span>
+                  </span>
+                </button>
+              );
+            })}
+            {results.items.length === 0 && (
+              <div className="px-3 py-3 text-xs text-white/45">No matching suppliers.</div>
+            )}
+            {results.total > CAP && (
+              <div className="px-3 py-2 text-[11px] text-white/45 border-t border-white/5">
+                Showing {CAP} of {results.total}. Keep typing to narrow.
+              </div>
+            )}
+          </div>
+
+          {query.trim() && !exactExists && (
+            <button
+              type="button"
+              onClick={createNew}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left border-t border-white/8 bg-[#d4af37]/8 hover:bg-[#d4af37]/16 transition" style={{ flex: '0 0 auto' }}
+            >
+              <Plus size={14} className="text-[#d4af37]" />
+              <span className="text-sm text-[#d4af37] font-semibold truncate">Create “{query.trim()}”</span>
+            </button>
+          )}
+          {/* Explicit dismiss — closes without picking anything, keeps whatever was
+              already chosen for this row, and returns focus to the search field.
+              Mouse (click) and keyboard (Tab + Enter/Space, or Escape) both work;
+              this is local `open` state only, so it can't touch validation/save. */}
+          <button
+            type="button"
+            onClick={closeAndFocus}
+            className="w-full px-3 py-2 text-center text-[11px] font-semibold text-white/45 hover:text-white/70 border-t border-white/8 transition"
+            style={{ flex: '0 0 auto' }}
+          >
+            Close
+          </button>
+        </DropdownPanel>
+      )}
+    </div>
+  );
+}
+
+// CONCURRENCY PHASE 1c — the record fields whose "another user changed this"
+// diff is worth showing in the conflict review. Parts/suppliers use mode="review"
+// (the editors transform field shapes on load/save, so an automatic field-level
+// merge is not safe) — this list only drives the read-only "what changed" display,
+// compared record-vs-record.
+const PART_CONFLICT_FIELDS = [
+  { key: 'name', label: 'Part name' },
+  { key: 'sku', label: 'SKU' },
+  { key: 'brand', label: 'Brand' },
+  { key: 'category', label: 'Category' },
+  { key: 'oemNo', label: 'OEM number' },
+  { key: 'partNo', label: 'Part number' },
+  { key: 'hsn', label: 'HSN' },
+  { key: 'gst', label: 'GST %' },
+  { key: 'locationBin', label: 'Location / bin' },
+  { key: 'minStock', label: 'Min stock' },
+  { key: 'mrp', label: 'MRP' },
+  { key: 'purchasePrice', label: 'Purchase price' },
+  { key: 'sellingPrice', label: 'Selling price' },
+  { key: 'minSellingPrice', label: 'Min selling price' },
+  { key: 'notes', label: 'Notes' },
+];
+const SUPPLIER_CONFLICT_FIELDS = [
+  { key: 'name', label: 'Supplier name' },
+  { key: 'type', label: 'Type' },
+  { key: 'contactPerson', label: 'Contact person' },
+  { key: 'email', label: 'Email' },
+  { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'gst', label: 'GST number' },
+  { key: 'pan', label: 'PAN' },
+  { key: 'address', label: 'Address' },
+  { key: 'city', label: 'City' },
+  { key: 'state', label: 'State' },
+  { key: 'paymentMode', label: 'Payment mode' },
+  { key: 'creditDays', label: 'Credit days' },
+  { key: 'status', label: 'Status' },
+];
+
+// ---------------------------------------------------------------------------
+// Add / Edit Part Modal — Requirement 3 (learning comboboxes) + Base64 image
+// ---------------------------------------------------------------------------
+function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, onSaveSupplier, onCreateSupplier, isAdmin = true, categoryTree = CATEGORY_TREE, vehicleTree = VEHICLE_TREE, salesHistory = [], onAddCategory, onAddVehicle, asPage = false, demoMode = false, readOnly = false, banner = null, onDirtyChange }) {
+  // Phase 4b (PH4-06 class) + Phase 5b (PH5-03) — one stable id per "Add Part"
+  // intent, kept in sessionStorage so it SURVIVES A BROWSER REFRESH: a reload +
+  // retry re-writes the SAME `parts/<id>` doc (setDoc merge) instead of creating a
+  // second one. Unused on edit (the doc id is already known). Cleared by the
+  // container once the create is server-confirmed.
+  const { opId: createOpId, hadPending: createPending } = useDurableOpId('create-part', 'part');
+  // PRODUCTIVITY: recent sales summary for this part (purchasing aid).
+  const saleStats = useMemo(() => {
+    if (!part?.id) return null;
+    const mine = salesHistory.filter((s) => s.partId === part.id);
+    if (mine.length === 0) return { count: 0 };
+    const dated = mine
+      .map((s) => ({ ...s, d: s.createdAt?.toDate ? s.createdAt.toDate() : s.createdAt?.seconds ? new Date(s.createdAt.seconds * 1000) : null }))
+      .filter((s) => s.d)
+      .sort((a, b) => b.d - a.d);
+    const now = new Date();
+    const thisMonth = dated.filter((s) => s.d.getFullYear() === now.getFullYear() && s.d.getMonth() === now.getMonth())
+      .reduce((sum, s) => sum + (s.qty || 0), 0);
+    const last = dated[0];
+    return { count: mine.length, lastDate: last?.d || null, lastPrice: last?.unitPrice ?? null, thisMonth };
+  }, [part?.id, salesHistory]);
+  const isEdit = !!part?.id;
+  const fileRef = useRef(null);
+  // CHANGE-02: on mobile the form is a 3-step bottom sheet; desktop stays long-form.
+  const STEPS = [{ n: 1, label: 'Details' }, { n: 2, label: 'Stock & Pricing' }, { n: 3, label: 'Supplier' }];
+  const [mobileStep, setMobileStep] = useState(1);
+  // ---- Task 2: "Additional Fields" progressive disclosure ----------------------
+  // Only the essentials show by default; the master-database identifiers and
+  // storage-location fields live behind one collapsible. Preference is remembered
+  // per device. When editing a part that already has advanced values, we open the
+  // section automatically so nothing populated is ever hidden from the user.
+  const ADVANCED_KEYS = ['oemNo', 'partNo', 'barcode', 'hsn', 'locationBin', 'shelf', 'rack', 'bin', 'warehouse'];
+  const [showAdvanced, setShowAdvanced] = useState(() => {
+    let pref = false;
+    try { pref = localStorage.getItem('maruti_part_show_advanced') === '1'; } catch {}
+    const hasAdvValues =
+      ADVANCED_KEYS.some((k) => String(part?.[k] || '').trim()) ||
+      (part?.gst != null && String(part.gst) !== '18');
+    return pref || hasAdvValues;
+  });
+  const toggleAdvanced = () =>
+    setShowAdvanced((v) => {
+      const next = !v;
+      try { localStorage.setItem('maruti_part_show_advanced', next ? '1' : '0'); } catch {}
+      return next;
+    });
+  // ---- Optional per-vehicle fitment note (Variant/Year, as free text) ----------
+  const [showVehicleNotes, setShowVehicleNotes] = useState(
+    () => Object.values(part?.vehicleNotes || {}).some((v) => String(v || '').trim())
+  );
+  const setVehicleNote = (model, note) =>
+    setForm((f) => ({ ...f, vehicleNotes: { ...f.vehicleNotes, [model]: note } }));
+  const formBodyRef = useRef(null);
+  // When the mobile step changes, scroll the modal's scroll body (the form's
+  // parent, provided by <Modal>) back to the top so the new step starts at top.
+  useEffect(() => {
+    // Page mode scrolls the document; modal mode scrolls the Modal body.
+    if (asPage) { try { appScrollTo({ top: 0, behavior: 'smooth' }); } catch { appScrollTo({ top: 0 }); } }
+    else { formBodyRef.current?.parentElement?.scrollTo({ top: 0, behavior: 'smooth' }); }
+  }, [mobileStep, asPage]);
+  const [errors, setErrors] = useState({}); // Issue 5: per-field validation errors
+  const stepCls = (n) => `${mobileStep === n ? 'block space-y-4' : 'hidden'} sm:block sm:space-y-4`;
+
+  const [form, setForm] = useState(() => {
+    const base = {
+      name: '',
+      sku: '',
+      // Phase 1: master-database identifiers
+      oemNo: '',
+      partNo: '',
+      internalPartNo: '',
+      barcode: '',
+      hsn: '',
+      gst: '18',
+      brand: '',
+      manufacturer: '',
+      countryOrigin: 'India',
+      category: '',
+      vehicle: '',
+      locationBin: '', // Feature 1: shelf/bin location
+      shelf: '',
+      rack: '',
+      bin: '',
+      warehouse: '',
+      stock: '',
+      // Settings QA fix: was reading the orphaned legacy key maruti_low_stock_default,
+      // which nothing has written to since Settings moved to biz.lowStock inside the
+      // single maruti_settings[_demo] JSON blob — so Settings -> Inventory -> Default
+      // Low Stock saved correctly but never actually prefilled a new part's Min Stock.
+      minStock: (() => { try { const v = JSON.parse(localStorage.getItem(demoMode ? 'maruti_settings_demo' : 'maruti_settings') || '{}').lowStock; return v && /^\d+$/.test(String(v)) ? String(v) : '5'; } catch { return '5'; } })(),
+      maxStock: '',
+      reorderLevel: '',
+      moq: '',
+      unit: 'pcs',
+      warranty: '',
+      // Phase 2: Indian-garage pricing (floor = minSellingPrice, kept for BC)
+      purchasePrice: '',
+      mrp: '',
+      sellingPrice: '',
+      defaultSellingPrice: '',
+      minSellingPrice: '', // Issue 3: bargain floor
+      maxDiscount: '',
+      imageString: '',
+      images: [], // Phase 1: multiple images (imageString stays as cover mirror)
+      notes: '',
+      ...part,
+    };
+    // migrate a legacy single image into the images[] gallery
+    if ((!base.images || base.images.length === 0) && base.imageString) base.images = [base.imageString];
+    if (!base.defaultSellingPrice && base.sellingPrice) base.defaultSellingPrice = base.sellingPrice;
+    // #5 + #6: tree-select arrays (migrate legacy strings / grouped vehicles).
+    base.compatibleCars = flattenVehicles(part?.compatibleCars);
+    base.categories = asList(part?.categories).length ? asList(part.categories) : asList(part?.category);
+    // Optional per-vehicle fitment note (e.g. "2018–2023, ZXi+ only") — a flat
+    // { modelName: note } map alongside compatibleCars. Kept separate rather than
+    // adding a Variant/Year level to the tree: fitment is usually a year *range*
+    // ("2018–2023"), which a tree can't express, and the tree/search/export code
+    // everywhere else assumes compatibleCars models are plain strings.
+    base.vehicleNotes = (part && part.vehicleNotes && typeof part.vehicleNotes === 'object') ? { ...part.vehicleNotes } : {};
+    // Issue 2: normalise to a suppliers[] array (supports legacy single supplier)
+    base.suppliers = getPartSuppliers(part).map((s, i) => ({
+      id: s.id || '',
+      name: s.name || '',
+      phone: s.phone || '',
+      preferredLabel: s.preferredLabel || 'Primary',
+      isPreferred: s.isPreferred ?? (Array.isArray(part?.suppliers) ? !!part.suppliers[i]?.isPreferred : false),
+    }));
+    if (base.suppliers.length === 0) base.suppliers = [{ id: '', name: '', phone: '', preferredLabel: 'Primary', isPreferred: false }];
+    return base;
+  });
+
+  // ---- Stable per-row identity for the Supplier list --------------------------
+  // `form.suppliers[idx]` is NOT a stable identity: picking a supplier, creating one,
+  // or editing numbers all replace the row object at that index. Rendering the list
+  // with `key={idx}` (the previous code) made React reuse each <SupplierPicker>
+  // component INSTANCE — and therefore its internal state (confirmDelete, editing,
+  // draft, open, query) — across whatever row now lives at that index. Removing any
+  // row except the last shifts every row after it up one slot while keeping the same
+  // idx-derived key, so the picker that used to belong to the NEXT supplier inherits
+  // the REMOVED row's leftover UI state (e.g. a stuck-open delete-confirm card, or an
+  // editor showing the wrong name). This ref keeps one truly-stable key per row,
+  // independent of what each row's data looks like, so remove/add always keys each
+  // <SupplierPicker> to the same physical row it started with.
+  const nextSupplierKey = () => `sup-row-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const supplierKeysRef = useRef(form.suppliers.map(() => nextSupplierKey()));
+
+  // Requirement 3: dynamically learned dropdown options from live inventory data
+  const categoryOptions = useMemo(
+    () => [...new Set([...DEFAULT_CATEGORIES, ...inventory.map((p) => p.category).filter(Boolean)])],
+    [inventory]
+  );
+  const vehicleOptions = useMemo(
+    () => [...new Set([...DEFAULT_VEHICLES, ...inventory.map((p) => p.vehicle).filter(Boolean)])],
+    [inventory]
+  );
+  // Fix 2: rich combobox options — value is the phone (unique key for linking),
+  // label is "Name - Phone" so typing a name OR a number surfaces the match.
+  const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+
+  // Issue 6: block 'e','E','+','-' in number fields
+  const blockInvalidNumberKeys = (e) => {
+    if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault();
+  };
+
+  // ---- #1 + #2 + #5: id-based supplier rows (no string/index matching) ----
+  // A row is { id, name, phone (preferred contact), preferredLabel, isPreferred }.
+  function updateSupplierRow(idx, nextRow) {
+    setForm((f) => {
+      let rows = [...f.suppliers];
+      rows[idx] = nextRow;
+      // #5: only ONE preferred supplier per part.
+      if (nextRow.isPreferred) {
+        rows = rows.map((r, i) => (i === idx ? r : { ...r, isPreferred: false }));
+      }
+      return { ...f, suppliers: rows };
+    });
+  }
+  function addSupplierRow() {
+    supplierKeysRef.current = [...supplierKeysRef.current, nextSupplierKey()];
+    setForm((f) => ({
+      ...f,
+      suppliers: [...f.suppliers, { id: '', name: '', phone: '', preferredLabel: 'Primary', isPreferred: false }],
+    }));
+  }
+  function removeSupplierRow(idx) {
+    setForm((f) => {
+      const rows = f.suppliers.filter((_, i) => i !== idx);
+      if (rows.length) {
+        supplierKeysRef.current = supplierKeysRef.current.filter((_, i) => i !== idx);
+        return { ...f, suppliers: rows };
+      }
+      // Collapsed back to the single empty placeholder row — give it a fresh key
+      // too, so it starts with a clean SupplierPicker instance (no leftover
+      // confirm-delete/editor state from whichever row occupied slot 0 before).
+      supplierKeysRef.current = [nextSupplierKey()];
+      return { ...f, suppliers: [{ id: '', name: '', phone: '', preferredLabel: 'Primary', isPreferred: false }] };
+    });
+  }
+
+  // Base64 image handling — no Firebase Storage. Phase 1: multiple images with
+  // canvas compression so several photos stay small; images[0]/coverImage feeds
+  // imageString (the cover) on save for every existing reader.
+  const compressPartImage = (file, maxDim = 900, quality = 0.7) => new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith('image/')) { reject(new Error('Not an image')); return; }
+    if (file.size > 10 * 1024 * 1024) { reject(new Error('Image exceeds 10MB')); return; }
+    const reader = new FileReader();
+    reader.onload = () => { const img = new Image(); img.onload = () => {
+      let { width, height } = img;
+      if (width > height && width > maxDim) { height = Math.round((height * maxDim) / width); width = maxDim; }
+      else if (height > maxDim) { width = Math.round((width * maxDim) / height); height = maxDim; }
+      const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    }; img.onerror = reject; img.src = reader.result; };
+    reader.onerror = reject; reader.readAsDataURL(file);
+  });
+  async function handleImage(e) {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const added = [];
+    for (const file of files.slice(0, 8)) { try { added.push(await compressPartImage(file)); } catch (err) { toast.error(err.message || 'Image error'); } }
+    if (added.length) setForm((f) => { const images = [...(f.images || []), ...added].slice(0, 8); return { ...f, images, imageString: images[f.coverImage || 0] || images[0] }; });
+    e.target.value = '';
+  }
+  const removeImage = (idx) => setForm((f) => { const images = (f.images || []).filter((_, i) => i !== idx); const cover = Math.min(f.coverImage || 0, Math.max(0, images.length - 1)); return { ...f, images, coverImage: cover, imageString: images[cover] || '' }; });
+  const setCover = (idx) => setForm((f) => ({ ...f, coverImage: idx, imageString: (f.images || [])[idx] || f.imageString }));
+  const onDropImages = async (e) => { e.preventDefault(); const files = Array.from(e.dataTransfer.files || []); const added = []; for (const file of files.slice(0, 8)) { try { added.push(await compressPartImage(file)); } catch (err) { toast.error(err.message || 'Image error'); } } if (added.length) setForm((f) => { const images = [...(f.images || []), ...added].slice(0, 8); return { ...f, images, imageString: images[f.coverImage || 0] || images[0] }; }); };
+
+  // ---- Draft autosave & restore (Add mode only) — nothing is lost on accidental exit ----
+  // Namespaced by environment so a Demo draft NEVER appears in Production (and vice-versa).
+  const DRAFT_KEY = `maruti_part_draft_v1_${demoMode ? 'demo' : 'prod'}`;
+  const initialFormRef = useRef(null);
+  if (initialFormRef.current === null) initialFormRef.current = JSON.stringify(form);
+  const [draftMeta, setDraftMeta] = useState(null);
+  const dirty = useMemo(() => JSON.stringify(form) !== initialFormRef.current, [form]);
+  const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch {} setDraftMeta(null); };
+  const restoreDraft = () => { if (draftMeta?.form) setForm(draftMeta.form); setDraftMeta(null); };
+  useEffect(() => {
+    if (isEdit) return;
+    try {
+      const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+      if (d?.form && (String(d.form.name || '').trim() || String(d.form.sku || '').trim())) setDraftMeta({ ts: d.ts, form: d.form });
+    } catch {}
+  }, [isEdit]);
+  useEffect(() => {
+    if (isEdit) return;
+    if (String(form.name || '').trim() || String(form.sku || '').trim()) {
+      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ts: Date.now(), form })); } catch {}
+    }
+  }, [form, isEdit]);
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const h = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [dirty]);
+  // PHASE 7b (PH7-02) — surface this editor's dirty state to the dashboard so an
+  // in-app tab switch (invisible to beforeunload above) also confirms before
+  // discarding unsaved changes. Reset to false unconditionally on unmount — reached
+  // via BOTH a successful save and a cancel/close — so the flag can never outlive
+  // the editor that set it.
+  useEffect(() => { if (onDirtyChange) onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, [onDirtyChange]);
+
+  // BUG-LIVE-P0-01 fix — this used to be two independently-computed lists: this
+  // completeness meter (name/sku/category/vehicle/selling/cost/image) and formValid
+  // below (which also required, for admins, the floor price and pp<=msp<=sp
+  // ordering). Neither list contained the other, so the meter could read "100% ·
+  // Ready to save" while formValid was still false — Save stayed disabled with no
+  // visible reason, since the per-field error messages only populate inside
+  // handleSubmit, which a disabled button never lets fire. Now ONE list drives
+  // both: every `required` item gates the Save button (`formValid` below), and
+  // every item (required or not) contributes to the completeness %, so 100% can
+  // no longer be reached while something required is still missing/invalid.
+  const partChecks = useMemo(() => {
+    const pp = parseFloat(form.purchasePrice) || 0;
+    const sp = parseFloat(form.sellingPrice) || 0;
+    const msp = parseFloat(form.minSellingPrice) || 0;
+    return [
+      { label: 'Name', required: true, ok: String(form.name || '').trim().length >= 3 && /[a-zA-Z]{3,}/.test(String(form.name || '').trim()) },
+      { label: 'Category', required: true, ok: asList(form.categories).length > 0 },
+      { label: 'Current stock', required: !isEdit, ok: isEdit || String(form.stock).trim() !== '' },
+      { label: 'Selling price', required: true, ok: sp > 0 },
+      { label: 'Cost price', required: isAdmin, ok: !isAdmin || pp > 0 },
+      { label: 'Min sell (floor) price', required: isAdmin, ok: !isAdmin || msp > 0 },
+      { label: 'Price consistency (Cost ≤ Floor ≤ MRP)', required: isAdmin, ok: !isAdmin || (sp >= pp && msp >= pp && msp <= sp) },
+      { label: 'SKU', required: false, ok: String(form.sku || '').trim().length >= 3 },
+      { label: 'Vehicle', required: false, ok: asList(form.compatibleCars).length > 0 },
+      { label: 'Image', required: false, ok: !!form.imageString },
+    ];
+  }, [form, isEdit, isAdmin]);
+  const partHealth = useMemo(() => {
+    const done = partChecks.filter((c) => c.ok).length;
+    return { checks: partChecks, pct: Math.round((done / partChecks.length) * 100) };
+  }, [partChecks]);
+  const partMissing = useMemo(() => partChecks.filter((c) => c.required && !c.ok).map((c) => c.label), [partChecks]);
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    // Issue 5: build a per-field error map, then surface inline (red border +
+    // message) and scroll to the first invalid field instead of a single toast.
+    const errs = {};
+    const pp = parseFloat(form.purchasePrice) || 0;
+    const sp = parseFloat(form.sellingPrice) || 0;
+    const msp = parseFloat(form.minSellingPrice) || 0;
+    if (!form.name.trim()) errs.name = 'Part name is required.';
+    if (asList(form.categories).length === 0) errs.categories = 'Please select at least one category.';
+    if (!isEdit && String(form.stock).trim() === '') errs.stock = 'Current stock is required.';
+    if (!(sp > 0)) errs.sellingPrice = 'MRP / selling price is required.';
+    if (isAdmin) {
+      if (!(pp > 0)) errs.purchasePrice = 'Purchase price is required.';
+      if (!(msp > 0)) errs.minSellingPrice = 'Min sell (floor) price is required.';
+      if (pp > 0 && sp > 0 && sp < pp) errs.sellingPrice = 'MRP must be ≥ the purchase price.';
+      if (msp > 0 && pp > 0 && msp < pp) errs.minSellingPrice = 'Floor must be ≥ the purchase price.';
+      if (msp > 0 && sp > 0 && msp > sp) errs.minSellingPrice = 'Floor cannot be higher than the MRP.';
+    }
+    // Issue 15: supplier phone numbers are a STRICT rule, not a warning. Block
+    // Add Part / Save if any attached supplier has an invalid Indian mobile.
+    const badPhone = (form.suppliers || []).some((s) => {
+      const nums = (s.phoneNumbers && s.phoneNumbers.length ? s.phoneNumbers.map((p) => p.number) : [s.phone]).filter(Boolean);
+      return nums.some((n) => !isIndianMobile(n));
+    });
+    if (badPhone) {
+      toast.error('A supplier has an invalid phone number. Use a 10-digit Indian mobile starting 6–9 before saving.');
+      setMobileStep(3);
+      return;
+    }
+    // Critical Bug #2: duplicate SKU is a STRICT block. Same record keeping its
+    // own SKU is fine (p.id !== part?.id excludes self); another part using it
+    // blocks the save.
+    const skuKey = safeLower((form.sku || '').trim());
+    if (skuKey) {
+      const dup = inventory.find((p) => p.id !== part?.id && safeLower(p.sku) === skuKey);
+      if (dup) {
+        toast.error(`SKU already exists (used by “${dup.name}”). Please enter a unique SKU.`);
+        setErrors((x) => ({ ...x, sku: 'SKU already exists.' }));
+        setMobileStep(1);
+        return;
+      }
+    }
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      // jump to the step holding the first invalid field, then scroll to it.
+      const step1Fields = ['name', 'categories'];
+      const firstStep1 = step1Fields.find((f) => errs[f]);
+      const firstField = firstStep1 || ['stock', 'purchasePrice', 'sellingPrice', 'minSellingPrice'].find((f) => errs[f]);
+      setMobileStep(firstStep1 ? 1 : 2);
+      setTimeout(() => {
+        const el = document.querySelector(`[data-field="${firstField}"]`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
+      return;
+    }
+    setErrors({});
+    clearDraft();
+    // Phase 1/2: keep imageString (cover) in sync with images[] so every existing
+    // reader (billing, job cards, tables) keeps working; ensure selling defaults.
+    const out = { ...form };
+    if (out.images && out.images.length) out.imageString = out.images[out.coverImage || 0] || out.images[0];
+    else if (out.imageString && (!out.images || !out.images.length)) out.images = [out.imageString];
+    if (!out.defaultSellingPrice && out.sellingPrice) out.defaultSellingPrice = out.sellingPrice;
+    if (!out.sellingPrice && out.defaultSellingPrice) out.sellingPrice = out.defaultSellingPrice;
+    // Fitment notes: drop notes for vehicles that are no longer selected, and
+    // drop blank ones — keeps the map from accumulating stale/empty entries.
+    if (out.vehicleNotes) {
+      const kept = new Set(asList(out.compatibleCars));
+      const pruned = {};
+      Object.entries(out.vehicleNotes).forEach(([model, note]) => {
+        const trimmed = String(note || '').trim();
+        if (kept.has(model) && trimmed) pruned[model] = trimmed;
+      });
+      out.vehicleNotes = pruned;
+    }
+    // Phase 1a — carry the `_rev` this part had when the editor opened, so the
+    // guarded save can reject a stale overwrite. Concurrency metadata, not a form field.
+    out._rev = part?._rev;
+    if (!isEdit) out.createOpId = createOpId;
+    onSave(out);
+  }
+
+  // Task 1: live validity for disabling Save until required fields are valid.
+  // Derived from partChecks above (the single authoritative validity contract for
+  // this form) so this can never disagree with what the completeness meter shows.
+  const formValid = partMissing.length === 0;
+
+  const fieldLabel = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1.5';
+  const fieldInput =
+    'w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/60 transition backdrop-blur-sm';
+  // Issue 5: red border + inline message per field.
+  const errCls = (f) => (errors[f] ? ' !border-red-500/70 focus:!border-red-500' : '');
+  const errMsg = (f) => (errors[f] ? <p className="text-[11px] text-red-400 mt-1">{errors[f]}</p> : null);
+
+  const formEl = (
+        <form ref={formBodyRef} id="part-form" onSubmit={handleSubmit} className="p-5 space-y-4 safe-bottom-pad">
+          {createPending && !isEdit && (
+            <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+              <span aria-hidden>⚠️</span>
+              <span>A new part may not have finished saving before the page reloaded. <b>Check the parts list first.</b> Saving again is safe — it updates the same part, it will not create a duplicate.</span>
+            </div>
+          )}
+          {draftMeta && !isEdit && (
+            <div className="rounded-xl p-3 flex items-center gap-3 flex-wrap" style={{ background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.3)' }}>
+              <span className="text-xs text-white/75 flex-1 min-w-[140px]">Unsaved draft{draftMeta.ts ? ` from ${new Date(draftMeta.ts).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : ''} found.</span>
+              <button type="button" onClick={restoreDraft} className="h-8 px-3 rounded-lg text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-95">Restore</button>
+              <button type="button" onClick={clearDraft} className="h-8 px-3 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white/70 active:scale-95">Discard</button>
+            </div>
+          )}
+          {/* Live completeness meter — only useful while adding a new part */}
+          {!isEdit && (
+          <div className="rounded-xl p-3" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] uppercase tracking-wide text-white/45">Part completeness</span>
+              <span className="text-sm font-bold" style={{ color: partHealth.pct >= 90 ? '#34d399' : partHealth.pct >= 60 ? '#d4af37' : '#fb923c' }}>{partHealth.pct}%{partHealth.pct === 100 ? ' · Ready to save' : ''}</span>
+            </div>
+            <div className="h-2 rounded-full overflow-hidden mb-2.5" style={{ background: 'rgba(var(--fg-rgb),0.08)' }}>
+              <div className="h-full rounded-full transition-all duration-500 ease-out" style={{ width: `${partHealth.pct}%`, background: partHealth.pct >= 90 ? '#34d399' : partHealth.pct >= 60 ? 'linear-gradient(90deg,#d4af37,#aa801e)' : '#fb923c' }} />
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {partHealth.checks.map((c) => (
+                <span key={c.label} className="inline-flex items-center gap-1 text-[11px]" style={{ color: c.ok ? 'rgba(52,211,153,0.9)' : 'rgba(var(--fg-rgb),0.45)' }}>
+                  {c.ok ? <Check size={11} /> : <span className="w-[11px] h-[11px] inline-block rounded-full border border-white/25" />} {c.label}
+                </span>
+              ))}
+            </div>
+          </div>
+          )}
+          <div className="sm:hidden">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-white/70">Step {mobileStep} of {STEPS.length} · {STEPS[mobileStep - 1].label}</span>
+            </div>
+            <div className="flex gap-1.5">
+              {STEPS.map((s) => (
+                <div key={s.n} className="h-1 flex-1 rounded-full" style={{ background: s.n <= mobileStep ? '#d4af37' : 'rgba(var(--fg-rgb),0.1)' }} />
+              ))}
+            </div>
+          </div>
+
+          {/* STEP 1 — Details */}
+          <div className={stepCls(1)}>
+          {isEdit && saleStats && saleStats.count > 0 && (
+            <div className="rounded-xl px-3 py-2.5 mb-1 bg-[#d4af37]/8 border border-[#d4af37]/20">
+              <p className="text-[10px] uppercase tracking-wider text-[#d4af37]/80 mb-1.5">Recent sales</p>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <div className="text-[10px] text-white/45">Last sold</div>
+                  <div className="text-xs font-semibold text-white">{saleStats.lastDate ? saleStats.lastDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-white/45">Last price</div>
+                  <div className="text-xs font-semibold text-white">{saleStats.lastPrice != null ? formatINR(saleStats.lastPrice) : '—'}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-white/45">This month</div>
+                  <div className="text-xs font-semibold text-white">{saleStats.thisMonth} sold</div>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Image upload — multiple, drag & drop, camera, cover selection */}
+          <div>
+            <label className={fieldLabel}>Part Photos <span className="normal-case text-white/45">(up to 8 — camera, gallery, or drag & drop; first is cover)</span></label>
+            <div className="flex flex-wrap gap-2" onDragOver={(e) => e.preventDefault()} onDrop={onDropImages}>
+              {(form.images || []).map((img, idx) => (
+                <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden bg-white" style={{ border: (form.coverImage || 0) === idx ? '2px solid #d4af37' : '1px solid rgba(212,175,55,0.3)' }}>
+                  <img src={img} alt="" className="w-full h-full object-contain" />
+                  <button type="button" onClick={() => setCover(idx)} title="Set cover" className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center" style={{ color: (form.coverImage || 0) === idx ? '#d4af37' : '#fff' }}><Star size={9} fill={(form.coverImage || 0) === idx ? '#d4af37' : 'none'} /></button>
+                  <button type="button" onClick={() => removeImage(idx)} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={9} /></button>
+                  {(form.coverImage || 0) === idx && <span className="absolute bottom-0 inset-x-0 text-[6px] font-bold text-center text-black py-0.5" style={{ background: '#d4af37' }}>COVER</span>}
+                </div>
+              ))}
+              {(form.images || []).length < 8 && (
+                <label className="w-16 h-16 rounded-xl flex flex-col items-center justify-center cursor-pointer text-white/45 hover:text-white/70 transition bg-white/5 border border-dashed border-white/20">
+                  <Camera size={16} /><span className="text-[8px] mt-0.5">Add</span>
+                  <input type="file" accept="image/*" capture="environment" multiple onChange={handleImage} className="hidden" />
+                </label>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <label className={fieldLabel}>Part Name *</label>
+            <input
+              value={form.name}
+              onChange={(e) => { set('name')(e); if (errors.name) setErrors((x) => ({ ...x, name: undefined })); }}
+              placeholder="e.g. Maruti Swift Brake Pads"
+              data-field="name"
+              className={`${fieldInput}${errCls('name')}`}
+            />
+            {errMsg('name')}
+          </div>
+
+          {/* Task 2: essentials only — SKU + Brand. The master-database identifiers
+              (OEM / Mfr Part No. / Barcode / HSN / GST) live in "Additional Fields". */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={fieldLabel}>SKU / Part No.</label>
+              <input value={form.sku} onChange={set('sku')} placeholder="BP-SWF-001" className={fieldInput} />
+              {(() => {
+                const s = safeLower((form.sku || '').trim());
+                if (!s) return null;
+                const dup = inventory.find((p) => p.id !== part?.id && safeLower(p.sku) === s);
+                return dup ? (
+                  <p className="text-[10px] text-red-400 font-semibold mt-1">✕ SKU already exists (used by “{dup.name}”). Please enter a unique SKU — save is blocked.</p>
+                ) : null;
+              })()}
+            </div>
+
+            <div>
+              <label className={fieldLabel}>Brand</label>
+              <input value={form.brand || ''} onChange={set('brand')} placeholder="Bosch / Maruti Genuine" className={fieldInput} />
+            </div>
+          </div>
+
+          {/* #6: Category Tree-Select (parent → children, multi-select) */}
+          <div>
+            <label className={fieldLabel}>Categories *</label>
+            <div data-field="categories" className={errors.categories ? 'rounded-xl ring-1 ring-red-500/60' : ''}>
+              <TreeSelect
+                tree={categoryTree}
+                value={form.categories}
+                onChange={(arr) => { setForm((f) => ({ ...f, categories: arr })); if (errors.categories) setErrors((x) => ({ ...x, categories: undefined })); }}
+                placeholder="Select categories…"
+                onAddLeaf={onAddCategory}
+              />
+            </div>
+            {errMsg('categories')}
+            <p className="text-[11px] text-white/45 mt-1">First selected is the part’s primary category.</p>
+          </div>
+
+          {/* #2 + #5: Vehicle compatibility Tree-Select (Make → models, multi) */}
+          <div>
+            <label className={fieldLabel}>Compatible Vehicles</label>
+            {(() => {
+              const isUni = asList(form.compatibleCars).some((v) => safeLower(v).includes('universal'));
+              return (
+                <>
+                  <label className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl cursor-pointer mb-2" style={{ background: isUni ? 'rgba(212,175,55,0.12)' : 'rgba(var(--fg-rgb),0.04)', border: `1px solid ${isUni ? 'rgba(212,175,55,0.4)' : 'rgba(var(--fg-rgb),0.1)'}` }}>
+                    <input
+                      type="checkbox"
+                      checked={isUni}
+                      onChange={(e) => setForm((f) => ({ ...f, compatibleCars: e.target.checked ? ['Universal / All Vehicles'] : [] }))}
+                      className="w-4 h-4 accent-[#d4af37]"
+                    />
+                    <span className="text-sm font-semibold text-white">Universal — fits all vehicles</span>
+                  </label>
+                  {!isUni && (
+                    <>
+                      <TreeSelect
+                        tree={vehicleTree}
+                        value={form.compatibleCars}
+                        onChange={(arr) => setForm((f) => ({ ...f, compatibleCars: arr }))}
+                        placeholder="Select brands & models…"
+                        onAddVehicle={onAddVehicle}
+                      />
+                      <p className="text-[11px] text-white/45 mt-1">
+                        Pick a brand to select all its models, or individual models. Or tick “Universal” above if it fits everything.
+                      </p>
+                      {/* Optional per-vehicle fitment note (Variant/Year, as free text) — the
+                          Compatible Vehicle tree stays Brand → Model (matching Category, and
+                          how the rest of the app is built); fitment detail like a year RANGE
+                          or trim doesn't fit a tree level cleanly, so it's a note instead. */}
+                      {asList(form.compatibleCars).length > 0 && (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowVehicleNotes((v) => !v)}
+                            aria-expanded={showVehicleNotes}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold text-[#d4af37] hover:text-[#e8c84a] transition"
+                          >
+                            <span className={`inline-block transition-transform ${showVehicleNotes ? 'rotate-90' : ''}`}>▶</span>
+                            Fitment notes (optional) — year / variant
+                          </button>
+                          {showVehicleNotes && (
+                            <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                              {asList(form.compatibleCars).filter((v) => !safeLower(v).includes('universal')).map((model) => (
+                                <div key={model} className="flex items-center gap-2">
+                                  <span className="text-xs text-white/60 w-28 flex-shrink-0 truncate" title={model}>{model}</span>
+                                  <input
+                                    value={form.vehicleNotes?.[model] || ''}
+                                    onChange={(e) => setVehicleNote(model, e.target.value)}
+                                    placeholder="e.g. 2018–2023, ZXi+ only"
+                                    className={`${fieldInput} py-1.5 text-xs flex-1`}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+
+          {/* ---- Task 2: Additional Fields (collapsible, preference remembered) ----
+              Advanced identifiers and storage-location fields are hidden by default
+              so daily inventory entry stays short. Values in `form` state are never
+              cleared by collapsing — a hidden field keeps its value and still saves.
+              Because the block is conditionally rendered (not display:none), the
+              layout reflows with no blank rows or empty gaps on any breakpoint. */}
+          <div className="rounded-xl overflow-hidden" style={{ border: '1px solid rgba(var(--fg-rgb),0.08)' }}>
+            <button
+              type="button"
+              onClick={toggleAdvanced}
+              aria-expanded={showAdvanced}
+              className="w-full flex items-center justify-between gap-2 px-3.5 py-3 text-left hover:bg-white/[0.03] transition"
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <Settings size={14} className="text-[#d4af37]/80 flex-shrink-0" />
+                <span className="text-sm font-semibold text-white">Additional Fields</span>
+                <span className="text-[11px] text-white/45 truncate hidden sm:inline">OEM, Mfr Part No., Barcode, HSN, GST, storage location</span>
+              </span>
+              <span className={`inline-block text-white/45 transition-transform flex-shrink-0 ${showAdvanced ? 'rotate-90' : ''}`}>▶</span>
+            </button>
+            {showAdvanced && (
+              <div className="px-3.5 pb-3.5 pt-1 space-y-3" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={fieldLabel}>OEM Number</label>
+                    <input value={form.oemNo || ''} onChange={set('oemNo')} placeholder="55810M68K00" className={fieldInput} />
+                  </div>
+                  <div>
+                    <label className={fieldLabel}>Manufacturer Part No.</label>
+                    <input value={form.partNo || ''} onChange={set('partNo')} placeholder="BP-001" className={fieldInput} />
+                  </div>
+                  <div>
+                    <label className={fieldLabel}>Barcode</label>
+                    <div className="flex gap-1.5">
+                      <input value={form.barcode || ''} onChange={set('barcode')} placeholder="Scan or enter" className={fieldInput} />
+                      <button type="button" onClick={() => { const max = (inventory || []).reduce((m, p) => { const mt = /^SBBMC(\d+)$/.exec(p.barcode || ''); return mt ? Math.max(m, parseInt(mt[1], 10)) : m; }, 0); setForm((f) => ({ ...f, barcode: `SBBMC${String(max + 1).padStart(5, '0')}` })); }} title="Generate next sequential barcode" className="px-2.5 rounded-lg text-[11px] font-bold bg-white/5 border border-white/10 text-[#d4af37] hover:bg-white/10 flex-shrink-0">Gen</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className={fieldLabel}>HSN Code</label>
+                    <input value={form.hsn || ''} onChange={set('hsn')} placeholder="8708" className={fieldInput} />
+                  </div>
+                  <div>
+                    <label className={fieldLabel}>GST %</label>
+                    {/* Universal dropdown architecture review — native <select> is a
+                        browser-owned popup, immune to this app's theming/containment. */}
+                    <MiniSelect
+                      value={form.gst || '18'}
+                      options={['0', '5', '12', '18', '28']}
+                      labels={{ '0': '0%', '5': '5%', '12': '12%', '18': '18%', '28': '28%' }}
+                      emptyValue="18"
+                      onPick={(v) => setForm((f) => ({ ...f, gst: v || '18' }))}
+                      inputCls={fieldInput}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className={fieldLabel}>Shelf / Bin Location</label>
+                  <div className="relative">
+                    <MapPin size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#d4af37]/70 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={form.locationBin}
+                      onChange={set('locationBin')}
+                      placeholder="e.g. Rack 3, Shelf B"
+                      className={`${fieldInput} pl-9`}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                    <input value={form.shelf || ''} onChange={set('shelf')} placeholder="Shelf" className={fieldInput} />
+                    <input value={form.rack || ''} onChange={set('rack')} placeholder="Rack" className={fieldInput} />
+                    <input value={form.bin || ''} onChange={set('bin')} placeholder="Bin" className={fieldInput} />
+                    <input value={form.warehouse || ''} onChange={set('warehouse')} placeholder="Warehouse" className={fieldInput} />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          </div>
+          {/* STEP 2 — Stock & Pricing */}
+          <div className={stepCls(2)}>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div data-field="stock">
+              <label className={fieldLabel}>Current Stock {isEdit ? '' : '*'}</label>
+              {isEdit ? (
+                <>
+                  <div className={`${fieldInput} flex items-center justify-between`} style={{ opacity: 0.85 }}>
+                    <span className="font-semibold">{form.stock || 0}</span>
+                    <span className="text-[10px] text-white/45 uppercase tracking-wider">read-only</span>
+                  </div>
+                  <p className="text-[10px] text-white/45 mt-1">Change stock via <span className="text-red-400/80">Sell</span> (records a sale) or the green <span className="text-emerald-400/80">Receive</span> button (records a restock) — keeps analytics accurate.</p>
+                </>
+              ) : (
+                <>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.stock}
+                    onChange={(e) => { set('stock')(e); if (errors.stock) setErrors((x) => ({ ...x, stock: undefined })); }}
+                    onKeyDown={blockInvalidNumberKeys}
+                    placeholder="0"
+                    className={`${fieldInput}${errCls('stock')}`}
+                  />
+                  {errMsg('stock')}
+                </>
+              )}
+            </div>
+            <div>
+              <label className={fieldLabel}>Min Stock Alert</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={form.minStock}
+                onChange={set('minStock')}
+                onKeyDown={blockInvalidNumberKeys}
+                placeholder="5"
+                className={fieldInput}
+              />
+            </div>
+          </div>
+
+          {/* Fix 4: pricing block — Purchase, MRP, Min Selling + live margins.
+              FIX-02: cost-sensitive fields (Purchase, Min Sell, margins) are
+              admin-only; mechanics see only the customer-facing MRP. */}
+          <div className="rounded-xl p-3 space-y-3" style={{ background: 'rgba(212,175,55,0.04)', border: '1px solid rgba(212,175,55,0.12)' }}>
+            <div className={`grid ${isAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2'} gap-2 items-start`}>
+              {isAdmin && (
+                <div data-field="purchasePrice">
+                  <label className={`${fieldLabel} min-h-[28px] flex items-end`}>Purchase (₹) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={form.purchasePrice}
+                    onChange={(e) => { set('purchasePrice')(e); if (errors.purchasePrice || errors.sellingPrice || errors.minSellingPrice) setErrors({}); }}
+                    onKeyDown={blockInvalidNumberKeys}
+                    placeholder="0"
+                    className={`${fieldInput}${errCls('purchasePrice')}`}
+                  />
+                  {errMsg('purchasePrice')}
+                </div>
+              )}
+              <div>
+                <label className={`${fieldLabel} min-h-[28px] flex items-end`}>MRP (₹)</label>
+                <input type="number" min="0" step="0.01" value={form.mrp || ''} onChange={set('mrp')} onKeyDown={blockInvalidNumberKeys} placeholder="Printed max" className={fieldInput} />
+              </div>
+              <div data-field="sellingPrice">
+                <label className={`${fieldLabel} min-h-[28px] flex items-end`}>Default Sell (₹) *</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.sellingPrice}
+                  onChange={(e) => { set('sellingPrice')(e); setForm((f) => ({ ...f, defaultSellingPrice: e.target.value })); if (errors.sellingPrice || errors.minSellingPrice) setErrors((x) => ({ ...x, sellingPrice: undefined, minSellingPrice: undefined })); }}
+                  onKeyDown={blockInvalidNumberKeys}
+                  placeholder="0"
+                  className={`${fieldInput}${errCls('sellingPrice')}`}
+                />
+                {errMsg('sellingPrice')}
+              </div>
+              {isAdmin && (
+                <div data-field="minSellingPrice">
+                  <label className={`${fieldLabel} min-h-[28px] flex items-end`}>Floor (₹) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.minSellingPrice}
+                    onChange={(e) => { set('minSellingPrice')(e); if (errors.minSellingPrice) setErrors((x) => ({ ...x, minSellingPrice: undefined })); }}
+                    onKeyDown={blockInvalidNumberKeys}
+                    placeholder="0"
+                    className={`${fieldInput}${errCls('minSellingPrice')}`}
+                  />
+                  {errMsg('minSellingPrice')}
+                </div>
+              )}
+            </div>
+            {/* Live margins — admin only (reveals cost) */}
+            {isAdmin && (
+              <>
+                {(() => {
+                  const pp = parseFloat(form.purchasePrice) || 0;
+                  const sp = parseFloat(form.sellingPrice) || 0;
+                  const fp = parseFloat(form.minSellingPrice) || 0;
+                  const profit = sp - pp;
+                  const margin = sp > 0 ? (profit / sp) * 100 : 0;
+                  const floorProfit = fp - pp;
+                  return (
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-xs font-semibold pt-1">
+                      <span className="text-emerald-400 text-center">Profit: {formatINR(profit)} ({margin.toFixed(1)}%)</span>
+                      <span className="w-px h-5 bg-white/15" />
+                      <span className={`text-center ${floorProfit < 0 ? 'text-red-400' : 'text-amber-400'}`}>At floor: {formatINR(floorProfit)}</span>
+                    </div>
+                  );
+                })()}
+                <p className="text-[11px] text-white/45">
+                  Default Sell is what Billing starts at. Floor is the bargain minimum — sales below it need manager approval.
+                </p>
+              </>
+            )}
+          </div>
+          </div>
+          {/* STEP 3 — Supplier */}
+          <div className={stepCls(3)}>
+
+          {/* #1 + #2: id-based searchable supplier rows with preferred contact */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className={fieldLabel} style={{ marginBottom: 0 }}>Suppliers</label>
+              <button
+                type="button"
+                onClick={addSupplierRow}
+                className="flex items-center gap-1 text-[11px] font-semibold text-[#d4af37] hover:text-[#e8c84a] transition"
+              >
+                <Plus size={12} /> Add supplier
+              </button>
+            </div>
+            <div className="space-y-2.5">
+              {form.suppliers.map((row, idx) => (
+                <SupplierPicker
+                  key={supplierKeysRef.current[idx] ?? idx}
+                  suppliers={suppliers}
+                  row={row}
+                  onChange={(next) => updateSupplierRow(idx, next)}
+                  onRemove={() => removeSupplierRow(idx)}
+                  onSaveSupplier={onSaveSupplier}
+                  onCreateSupplier={onCreateSupplier}
+                />
+              ))}
+            </div>
+            <p className="text-[11px] text-white/45 mt-1.5">
+              Search links an existing supplier by its unique ID. The first supplier’s preferred number is used for WhatsApp reorders; new suppliers are saved to the Suppliers tab.
+            </p>
+          </div>
+          </div>
+          {/* END STEP 3 */}
+
+          {/* Mobile footer — Back / Next / Save (CHANGE-02) */}
+          <div
+            className="flex sm:hidden gap-3 pt-3 pb-1 mt-2 sticky bottom-0 -mx-5 px-5"
+            style={{ background: 'var(--surface-1)', borderTop: '1px solid rgba(var(--fg-rgb),0.08)', paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+          >
+            <button
+              type="button"
+              onClick={() => (mobileStep === 1 ? onClose() : setMobileStep((s) => s - 1))}
+              className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 active:scale-[0.98] transition"
+            >
+              {mobileStep === 1 ? 'Cancel' : 'Back'}
+            </button>
+            {mobileStep < STEPS.length ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (mobileStep === 1 && !form.name.trim()) {
+                    setErrors((x) => ({ ...x, name: 'Part name is required.' }));
+                    toast.error('Enter the part name to continue.');
+                    // Scroll the field into view and focus it so it's obvious why Next was blocked.
+                    const el = document.querySelector('[data-field="name"]');
+                    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus(); }
+                    return;
+                  }
+                  setMobileStep((s) => Math.min(STEPS.length, s + 1));
+                }}
+                className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-[0.98] transition"
+              >
+                Next
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={saving || !formValid}
+                title={partMissing.length ? `Required before saving: ${partMissing.join(', ')}` : undefined}
+                className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-[0.98] transition disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {saving && <Loader2 size={15} className="animate-spin" />}
+                {isEdit ? 'Save Changes' : 'Add Part'}
+              </button>
+            )}
+          </div>
+        </form>
+  );
+
+  // Mobile: full-screen phone page. PH27-01 — this used to render {bodyEl} in normal
+  // document flow ("the BODY scrolls natively"). It does NOT: the app shell pins
+  // `html, body { position: fixed; overflow: hidden; height: 100dvh }`
+  // (styles/globals.css), and this returns BEFORE <main id="app-scroll">, so nothing
+  // scrolls. On a short phone / with the keyboard open the required Category & Vehicle
+  // fields sat below the fold with no way to reach them — Add Part stays disabled and
+  // the part cannot be created. Cap to the dynamic viewport + ONE scroll region; the
+  // form's own `sticky bottom-0` Back/Next/Save bar now pins to that region's bottom.
+  // CONCURRENCY PHASE 1c — a viewer holding this popup open while someone else edits
+  // gets it READ-ONLY (one disabled <fieldset> switches off every control) with the
+  // lease / record-status banner on top, never force-closed.
+  const bodyEl = (
+    <>
+      {banner && <div className="px-5 pt-4">{banner}</div>}
+      <fieldset disabled={readOnly} style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>{formEl}</fieldset>
+    </>
+  );
+
+  if (asPage) {
+    return (
+      <div className="h-[100dvh] flex flex-col overflow-hidden" style={{ background: 'var(--surface-0)' }}>
+        <div
+          className="flex-shrink-0 flex items-center gap-2 px-3 py-3"
+          style={{ background: 'var(--surface-1)', borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}
+        >
+          <button type="button" onClick={onClose} aria-label="Back" className="w-10 h-10 -ml-1 rounded-full flex items-center justify-center text-white/75 active:bg-white/10 transition">
+            <ChevronLeft size={24} />
+          </button>
+          <div className="text-base font-bold bg-gradient-to-r from-[#d4af37] to-[#aa801e] bg-clip-text text-transparent">
+            {readOnly ? 'View Part' : isEdit ? 'Edit Part' : 'Add New Part'}
+          </div>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto dark-scroll">
+          {bodyEl}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Modal
+      onClose={onClose}
+      title={readOnly ? 'View Part' : isEdit ? 'Edit Part' : 'Add New Part'}
+      bodyClassName=""
+      footer={readOnly ? (
+        <div className="flex gap-3">
+          <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Close</button>
+        </div>
+      ) : (
+        <div className="flex gap-3">
+          <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Cancel</button>
+          <button type="submit" form="part-form" disabled={saving || !formValid} title={partMissing.length ? `Required before saving: ${partMissing.join(', ')}` : undefined} className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110 active:scale-[0.98] transition disabled:opacity-60 flex items-center justify-center gap-2">
+            {saving && <Loader2 size={15} className="animate-spin" />}
+            {isEdit ? 'Save Changes' : 'Add Part'}
+          </button>
+        </div>
+      )}
+    >
+      {bodyEl}
+    </Modal>
+  );
+}
+
+// LogoutConfirmModal + ReorderModal now live in ./inventory/modals/UtilityModals
+// (Refactor Phase 2).
+
+// ---------------------------------------------------------------------------
+// Add / Edit Supplier Modal
+// ---------------------------------------------------------------------------
+// Part 5: Indian garage-specific supplier categories.
+const SUPPLIER_TYPES = ['Authorized OEM Dealer', 'Local Spare Parts Dealer', 'Lubricant Distributor', 'Battery Dealer', 'Tyre Dealer', 'Accessories Dealer', 'Electrical Parts Dealer', 'Body Parts Dealer', 'Paint Supplier', 'Tools Supplier', 'Hardware Supplier', 'Used Parts Supplier', 'Scrap Vendor', 'Fleet Supplier', 'Wholesale Distributor', 'Retail Dealer', 'Importer', 'Manufacturer', 'Workshop Partner', 'Other'];
+const PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Credit', 'Cheque'];
+// GST state codes → state name (for auto-detection; GST is optional).
+const GST_STATE_CODES = { '01': 'Jammu & Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab', '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana', '07': 'Delhi', '08': 'Rajasthan', '09': 'Uttar Pradesh', 10: 'Bihar', 11: 'Sikkim', 12: 'Arunachal Pradesh', 13: 'Nagaland', 14: 'Manipur', 15: 'Mizoram', 16: 'Tripura', 17: 'Meghalaya', 18: 'Assam', 19: 'West Bengal', 20: 'Jharkhand', 21: 'Odisha', 22: 'Chhattisgarh', 23: 'Madhya Pradesh', 24: 'Gujarat', 27: 'Maharashtra', 29: 'Karnataka', 30: 'Goa', 32: 'Kerala', 33: 'Tamil Nadu', 34: 'Puducherry', 36: 'Telangana', 37: 'Andhra Pradesh' };
+
+function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demoMode = false, readOnly = false, banner = null, onDirtyChange }) {  const isEdit = !!supplier?.id;
+  const [form, setForm] = useState(() => {
+    const contacts = getSupplierContacts(supplier);
+    const altNames = Array.isArray(supplier?.altNames) ? supplier.altNames : [];
+    return {
+      name: supplier?.name || '',
+      // FIX 3: structured labeled contact cards
+      phoneNumbers: contacts.length ? contacts : [{ number: '', label: 'Primary' }],
+      altNames: altNames.length ? altNames : [''],
+      // Part 5: business + tax fields (GST is always OPTIONAL)
+      type: supplier?.type || 'Local Spare Parts Dealer',
+      contactPerson: supplier?.contactPerson || '',
+      ownerName: supplier?.ownerName || '',
+      email: supplier?.email || '',
+      website: supplier?.website || '',
+      whatsapp: supplier?.whatsapp || '',
+      gst: supplier?.gst || '',
+      pan: supplier?.pan || '',
+      businessReg: supplier?.businessReg || '',
+      address: supplier?.address || '',
+      area: supplier?.area || '',
+      city: supplier?.city || '',
+      district: supplier?.district || '',
+      state: supplier?.state || '',
+      pincode: supplier?.pincode || '',
+      // payment terms
+      paymentMode: supplier?.paymentMode || 'Cash',
+      creditDays: supplier?.creditDays ?? '',
+      openingBalance: supplier?.openingBalance ?? '',
+      outstanding: supplier?.outstanding ?? '',
+      // bank (optional)
+      bankName: supplier?.bankName || '',
+      accountHolder: supplier?.accountHolder || '',
+      accountNumber: supplier?.accountNumber || '',
+      ifsc: supplier?.ifsc || '',
+      upi: supplier?.upi || '',
+      // classification
+      preferred: !!supplier?.preferred,
+      status: supplier?.status || 'Active',
+      logo: supplier?.logo || '',
+      documents: Array.isArray(supplier?.documents) ? supplier.documents : [],
+      notes: supplier?.notes || '',
+      id: supplier?.id,
+    };
+  });
+  const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+
+  // Phase 4b (PH4-06) + Phase 5b (PH5-03) — one stable id per "Add Supplier"
+  // intent, kept in sessionStorage so it SURVIVES A BROWSER REFRESH: a reload +
+  // retry re-writes the SAME `suppliers/<id>` doc (setDoc merge), never a second
+  // one. Unused on edit. Cleared by the container once the create is confirmed.
+  const { opId: createOpId, hadPending: createPending } = useDurableOpId('create-supplier', 'sup');
+
+  // FIX 3: labeled multi-contact phone cards
+  const updateContact = (idx, key, val) =>
+    setForm((f) => {
+      const phoneNumbers = f.phoneNumbers.map((c, i) =>
+        i === idx ? { ...c, [key]: key === 'number' ? phoneInput(val) : val } : c
+      );
+      return { ...f, phoneNumbers };
+    });
+  const addContact = () =>
+    setForm((f) => ({ ...f, phoneNumbers: [...f.phoneNumbers, { number: '', label: 'WhatsApp' }] }));
+  const removeContact = (idx) =>
+    setForm((f) => {
+      const phoneNumbers = f.phoneNumbers.filter((_, i) => i !== idx);
+      return { ...f, phoneNumbers: phoneNumbers.length ? phoneNumbers : [{ number: '', label: 'Primary' }] };
+    });
+
+  // Issue 2: alternate names
+  const updateAltName = (idx, val) =>
+    setForm((f) => {
+      const altNames = [...f.altNames];
+      altNames[idx] = val;
+      return { ...f, altNames };
+    });
+  const addAltName = () => setForm((f) => ({ ...f, altNames: [...f.altNames, ''] }));
+  const removeAltName = (idx) =>
+    setForm((f) => {
+      const altNames = f.altNames.filter((_, i) => i !== idx);
+      return { ...f, altNames: altNames.length ? altNames : [''] };
+    });
+
+  // ---- Supplier draft autosave & restore (Add mode only) ----
+  const SUP_DRAFT_KEY = `maruti_supplier_draft_v1_${demoMode ? 'demo' : 'prod'}`;
+  const supInitialRef = useRef(null);
+  if (supInitialRef.current === null) supInitialRef.current = JSON.stringify(form);
+  const [supDraft, setSupDraft] = useState(null);
+  const supDirty = useMemo(() => JSON.stringify(form) !== supInitialRef.current, [form]);
+  const clearSupDraft = () => { try { localStorage.removeItem(SUP_DRAFT_KEY); } catch {} setSupDraft(null); };
+  const restoreSupDraft = () => { if (supDraft?.form) setForm(supDraft.form); setSupDraft(null); };
+  useEffect(() => {
+    if (isEdit) return;
+    try { const d = JSON.parse(localStorage.getItem(SUP_DRAFT_KEY) || 'null'); if (d?.form && String(d.form.name || '').trim()) setSupDraft({ ts: d.ts, form: d.form }); } catch {}
+  }, [isEdit]);
+  useEffect(() => {
+    if (isEdit) return;
+    if (String(form.name || '').trim()) { try { localStorage.setItem(SUP_DRAFT_KEY, JSON.stringify({ ts: Date.now(), form })); } catch {} }
+  }, [form, isEdit]);
+  useEffect(() => {
+    if (!supDirty) return undefined;
+    const h = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [supDirty]);
+  // PHASE 7b (PH7-02) — surface this editor's dirty state to the dashboard so an
+  // in-app tab switch (invisible to beforeunload above) also confirms before
+  // discarding unsaved changes. Reset to false unconditionally on unmount — reached
+  // via BOTH a successful save and a cancel/close — so the flag can never outlive
+  // the editor that set it.
+  useEffect(() => { if (onDirtyChange) onDirtyChange(supDirty); }, [supDirty, onDirtyChange]);
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, [onDirtyChange]);
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.name.trim()) {
+      toast.error('Supplier name is required.');
+      return;
+    }
+    // Task 3 (Task 6): validate every entered phone number (Add/Edit + alternates).
+    const entered = (form.phoneNumbers || []).filter((p) => digitsOnly(p.number).length > 0);
+    const bad = entered.find((p) => !isIndianMobile(p.number));
+    if (bad) {
+      toast.error(`“${bad.number}” isn’t a valid Indian number. Use a 10-digit mobile starting 6–9 (e.g. 9876543210).`);
+      return;
+    }
+    // Task 6: no duplicate numbers under the same supplier.
+    const seenNums = new Set();
+    const dupNum = entered.find((p) => { const k = normalizePhone(p.number); if (seenNums.has(k)) return true; seenNums.add(k); return false; });
+    if (dupNum) {
+      toast.error(`“${dupNum.number}” is listed more than once for this supplier.`);
+      return;
+    }
+    if (entered.length === 0) {
+      toast.error('Add at least one valid phone number.');
+      return;
+    }
+    // Part 5 business rule: GST is NEVER mandatory. But if entered, validate format.
+    let stateFromGst = form.state;
+    if (form.gst && form.gst.trim()) {
+      const g = form.gst.trim().toUpperCase();
+      if (!isValidGstin(g)) {
+        toast.error('GST number format looks invalid. Leave it blank for a non-GST supplier, or enter a valid 15-character GSTIN.');
+        return;
+      }
+      // auto-detect state from the GST state code (first 2 digits)
+      const detected = GST_STATE_CODES[g.slice(0, 2)];
+      if (detected && !form.state) stateFromGst = detected;
+    }
+    if (form.email && !isValidEmail(form.email)) { toast.error(`${EMAIL_ERROR}, or leave it blank.`); return; }
+    clearSupDraft();
+    // Phase 1a — carry the `_rev` this supplier had when the editor opened.
+    onSave({ ...form, gst: (form.gst || '').trim().toUpperCase(), state: stateFromGst, _rev: supplier?._rev, createOpId });
+  }
+
+  const fieldLabel = 'block text-[11px] uppercase tracking-wider text-white/45 mb-1.5';
+  const fieldInput =
+    'w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/60 transition backdrop-blur-sm';
+
+  const formEl = (
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 safe-bottom-pad">
+          {createPending && !isEdit && (
+            <div role="status" className="rounded-xl p-3 text-xs flex items-start gap-2" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#fbbf24' }}>
+              <span aria-hidden>⚠️</span>
+              <span>A new supplier may not have finished saving before the page reloaded. <b>Check the Suppliers list first.</b> Saving again is safe — it will not create a duplicate.</span>
+            </div>
+          )}
+          {supDraft && !isEdit && (
+            <div className="rounded-xl p-3 flex items-center gap-3 flex-wrap" style={{ background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.3)' }}>
+              <span className="text-xs text-white/75 flex-1 min-w-[140px]">Unsaved supplier draft{supDraft.ts ? ` from ${new Date(supDraft.ts).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : ''} found.</span>
+              <button type="button" onClick={restoreSupDraft} className="h-8 px-3 rounded-lg text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-95">Restore</button>
+              <button type="button" onClick={clearSupDraft} className="h-8 px-3 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white/70 active:scale-95">Discard</button>
+            </div>
+          )}
+          <div>
+            <label className={fieldLabel}>Supplier Name *</label>
+            <input value={form.name} onChange={set('name')} placeholder="e.g. Krishna Auto Parts" required className={fieldInput} />
+          </div>
+
+          {/* Issue 2: alternate names */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className={fieldLabel} style={{ marginBottom: 0 }}>Alternate Names</label>
+              <button type="button" onClick={addAltName} className="flex items-center gap-1 text-[11px] font-semibold text-[#d4af37] hover:text-[#e8c84a] transition">
+                <Plus size={12} /> Add name
+              </button>
+            </div>
+            <div className="space-y-2">
+              {form.altNames.map((n, idx) => (
+                <div key={idx} className="flex gap-2 items-center">
+                  <input
+                    value={n}
+                    onChange={(e) => updateAltName(idx, e.target.value)}
+                    placeholder="e.g. Krishna Spares / Krishna Bros"
+                    className={`${fieldInput} flex-1`}
+                  />
+                  <button type="button" onClick={() => removeAltName(idx)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20 transition">
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* FIX 3: labeled multi-contact phone cards */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className={fieldLabel} style={{ marginBottom: 0 }}>Phone Numbers</label>
+              <button type="button" onClick={addContact} className="flex items-center gap-1 text-[11px] font-semibold text-[#d4af37] hover:text-[#e8c84a] transition">
+                <Plus size={12} /> Add Alternate Number
+              </button>
+            </div>
+            <div className="space-y-2">
+              {form.phoneNumbers.map((c, idx) => (
+                <div key={idx} className="flex gap-2 items-center">
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
+                    pattern="[0-9]{10}"
+                    value={c.number}
+                    onChange={(e) => updateContact(idx, 'number', e.target.value)}
+                    placeholder={idx === 0 ? 'Primary 10-digit mobile' : 'Alternate 10-digit number'}
+                    className={`${fieldInput} flex-1`}
+                  />
+                  <div className="w-28 flex-shrink-0">
+                    <MiniSelect value={c.label} options={CONTACT_LABELS} onPick={(v) => updateContact(idx, 'label', v)} width={140} inputCls="px-2 py-2.5 rounded-xl text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 transition" />
+                  </div>
+                  <button type="button" onClick={() => removeContact(idx)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20 transition">
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-white/45 mt-1.5">First number is the primary line used for linking and quick reorders.</p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className={fieldLabel}>Supplier Type</label>
+              {/* Native <select> popups have NO reliable cross-browser max-height — the
+                  browser, not CSS, decides how tall the option list renders, so a 20-item
+                  list like this one could render as one very tall list that pushes past
+                  the modal. MiniSelect is a real DOM dropdown with a capped, internally
+                  scrolling panel (see components/common/DropdownPanel.jsx), so long lists
+                  are always contained regardless of item count. */}
+              <MiniSelect value={form.type || ''} placeholder="Select type" options={SUPPLIER_TYPES} onPick={(v) => setForm((f) => ({ ...f, type: v }))} inputCls={fieldInput} />
+            </div>
+            <div>
+              <label className={fieldLabel}>Contact Person</label>
+              <input value={form.contactPerson} onChange={set('contactPerson')} placeholder="e.g. Mahesh Reddy" className={fieldInput} />
+            </div>
+            <div>
+              <label className={fieldLabel}>Email <span className="text-white/45 normal-case">(optional)</span></label>
+              <input value={form.email} onChange={set('email')} placeholder="sales@supplier.com" className={fieldInput} />
+            </div>
+            <div>
+              <label className={fieldLabel}>WhatsApp <span className="text-white/45 normal-case">(optional)</span></label>
+              <input value={form.whatsapp} onChange={(e) => setForm((f) => ({ ...f, whatsapp: phoneInput(e.target.value) }))} placeholder="10-digit" className={fieldInput} />
+            </div>
+          </div>
+
+          <div className="rounded-xl p-3 space-y-3" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-[#d4af37]">Tax & Business <span className="text-white/45 normal-case font-normal">— GST optional (leave blank for non-GST suppliers)</span></p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className={fieldLabel}>GST Number <span className="text-white/45 normal-case">(optional)</span></label>
+                <input value={form.gst} onChange={(e) => setForm((f) => ({ ...f, gst: e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 15) }))} placeholder="36AAACM1234C1Z5" className={fieldInput} />
+                {form.gst && GST_STATE_CODES[form.gst.slice(0, 2)] && <p className="text-[10px] text-emerald-400 mt-1">State auto-detected: {GST_STATE_CODES[form.gst.slice(0, 2)]}</p>}
+              </div>
+              <div>
+                <label className={fieldLabel}>PAN <span className="text-white/45 normal-case">(optional)</span></label>
+                <input value={form.pan} onChange={(e) => setForm((f) => ({ ...f, pan: e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 10) }))} placeholder="AAACM1234C" className={fieldInput} />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="sm:col-span-2">
+              <label className={fieldLabel}>Address</label>
+              <input value={form.address} onChange={set('address')} placeholder="Shop / street / landmark" className={fieldInput} />
+            </div>
+            <div><label className={fieldLabel}>Area</label><input value={form.area} onChange={set('area')} className={fieldInput} /></div>
+            <div><label className={fieldLabel}>City</label><input value={form.city} onChange={set('city')} className={fieldInput} /></div>
+            <div><label className={fieldLabel}>District</label><input value={form.district} onChange={set('district')} className={fieldInput} /></div>
+            <div><label className={fieldLabel}>State</label><input value={form.state} onChange={set('state')} placeholder="Auto-fills from GST" className={fieldInput} /></div>
+            <div><label className={fieldLabel}>PIN Code</label><input value={form.pincode} onChange={(e) => setForm((f) => ({ ...f, pincode: e.target.value.replace(/\D/g, '').slice(0, 6) }))} className={fieldInput} /></div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className={fieldLabel}>Payment Mode</label>
+              {/* Universal dropdown architecture review — same fix as Supplier Type just
+                  above (see that field's own comment): native <select> is a browser-owned
+                  popup this app can't theme/contain/position. */}
+              <MiniSelect value={form.paymentMode} placeholder="Select mode" options={PAYMENT_MODES} onPick={(v) => setForm((f) => ({ ...f, paymentMode: v }))} inputCls={fieldInput} />
+            </div>
+            <div><label className={fieldLabel}>Credit Days</label><input value={form.creditDays} inputMode="numeric" onChange={(e) => setForm((f) => ({ ...f, creditDays: e.target.value.replace(/\D/g, '').slice(0, 3) }))} placeholder="0" className={fieldInput} /></div>
+            <div><label className={fieldLabel}>Opening Balance ₹</label><input value={form.openingBalance} inputMode="numeric" onChange={(e) => setForm((f) => ({ ...f, openingBalance: e.target.value.replace(/[^\d.]/g, '') }))} placeholder="0" className={fieldInput} /></div>
+          </div>
+
+          <details className="rounded-xl px-3 py-2" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+            <summary className="text-[11px] font-bold uppercase tracking-wide text-white/50 cursor-pointer">Bank Details (optional)</summary>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+              <div><label className={fieldLabel}>Account Holder</label><input value={form.accountHolder} onChange={set('accountHolder')} className={fieldInput} /></div>
+              <div><label className={fieldLabel}>Bank Name</label><input value={form.bankName} onChange={set('bankName')} className={fieldInput} /></div>
+              <div><label className={fieldLabel}>Account Number</label><input value={form.accountNumber} onChange={(e) => setForm((f) => ({ ...f, accountNumber: e.target.value.replace(/\D/g, '').slice(0, 18) }))} className={fieldInput} /></div>
+              <div><label className={fieldLabel}>IFSC</label><input value={form.ifsc} onChange={(e) => setForm((f) => ({ ...f, ifsc: e.target.value.toUpperCase().slice(0, 11) }))} className={fieldInput} /></div>
+              <div className="sm:col-span-2"><label className={fieldLabel}>UPI ID</label><input value={form.upi} onChange={set('upi')} placeholder="supplier@upi" className={fieldInput} /></div>
+            </div>
+          </details>
+
+          <div className="flex flex-wrap gap-4">
+            <div className="flex items-center gap-2.5"><Toggle on={!!form.preferred} onChange={(v) => setForm((f) => ({ ...f, preferred: v }))} aria-label="Preferred Supplier" /><span className="text-xs text-white/70">Preferred Supplier</span></div>
+            <label className="flex items-center gap-2 text-xs text-white/70">Status:
+              <MiniSelect
+                value={form.status}
+                options={['Active', 'Inactive', 'Blocked']}
+                emptyValue="Active"
+                onPick={(v) => setForm((f) => ({ ...f, status: v || 'Active' }))}
+                inputCls="px-2 py-1 rounded-lg text-xs bg-white/5 border border-white/10 text-white outline-none"
+                width={140}
+              />
+            </label>
+          </div>
+
+          <div>
+            <label className={fieldLabel}>Notes</label>
+            <textarea
+              value={form.notes}
+              onChange={set('notes')}
+              rows={2}
+              placeholder="Delivery time, special terms…"
+              className={`${fieldInput} resize-none`}
+            />
+          </div>
+
+          <div
+            className="flex gap-3 pt-3 pb-1 mt-2 sticky bottom-0 -mx-5 px-5"
+            style={{ background: 'var(--surface-1)', borderTop: '1px solid rgba(var(--fg-rgb),0.08)' }}
+          >
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110 active:scale-[0.98] transition disabled:opacity-60 flex items-center justify-center gap-2"
+            >
+              {saving && <Loader2 size={15} className="animate-spin" />}
+              {isEdit ? 'Save Changes' : 'Add Supplier'}
+            </button>
+          </div>
+        </form>
+  );
+  const title = readOnly ? 'View Supplier' : isEdit ? 'Edit Supplier' : 'Add New Supplier';
+  // CONCURRENCY PHASE 1c — read-only view for a viewer holding this popup open while
+  // another user edits; the disabled <fieldset> switches off every control at once.
+  const bodyEl = (
+    <>
+      {banner && <div className="px-5 pt-4">{banner}</div>}
+      <fieldset disabled={readOnly} style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>{formEl}</fieldset>
+    </>
+  );
+  if (asPage) return <MobileFormPage title={title} onClose={onClose}>{bodyEl}</MobileFormPage>;
+  return (
+    <Modal onClose={onClose} title={title} bodyClassName="">
+      {bodyEl}
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Refactor Phase 10 — AnalyticsView (the Executive Analytics tab) + AuditLogPanel
+// + ASearch / ViewMoreBar / SEVERITY / AGING_BUCKETS / AUDIT_FILTERS moved verbatim
+// to ./inventory/views/AnalyticsView.jsx, imported at the top of this file.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// ADD-01: Bulk import from Excel/CSV — column mapping, preview, dedupe, batched
+// writeBatch (max 500/commit) with progress.
+// ---------------------------------------------------------------------------
+const IMPORT_FIELDS = [
+  { key: 'name', label: 'Part Name', required: true, syn: ['name', 'part', 'item', 'description', 'product'] },
+  { key: 'sku', label: 'SKU / Part No', syn: ['sku', 'part no', 'partno', 'code', 'barcode'] },
+  { key: 'category', label: 'Category', syn: ['category', 'type', 'group'] },
+  { key: 'vehicle', label: 'Vehicle', syn: ['vehicle', 'car', 'model', 'compatible'] },
+  { key: 'stock', label: 'Stock', syn: ['stock', 'qty', 'quantity', 'on hand', 'onhand'] },
+  { key: 'minStock', label: 'Min Stock', syn: ['min stock', 'minstock', 'reorder', 'minimum'] },
+  { key: 'purchasePrice', label: 'Purchase Price', syn: ['purchase', 'cost', 'buy'] },
+  { key: 'sellingPrice', label: 'MRP / Selling', syn: ['mrp', 'selling', 'sell', 'price', 'rate'] },
+  { key: 'minSellingPrice', label: 'Min Selling', syn: ['min sell', 'floor', 'min selling'] },
+  { key: 'locationBin', label: 'Shelf / Bin', syn: ['shelf', 'bin', 'rack', 'location'] },
+];
+
+function ImportModal({ existingSkus, onClose, onImported }) {
+  useBodyScrollLock();
+  const [stage, setStage] = useState('upload'); // upload | map | importing | done
+  const [headers, setHeaders] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [mapping, setMapping] = useState({});
+  const [skipDup, setSkipDup] = useState(true);
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState({ added: 0, skipped: 0 });
+
+  async function onFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const XLSX = await import('xlsx');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
+      if (!aoa.length) { toast.error('That file looks empty.'); return; }
+      const hdr = (aoa[0] || []).map((h) => String(h ?? '').trim());
+      const data = aoa.slice(1).filter((r) => r.some((c) => String(c ?? '').trim() !== ''));
+      // Auto-map headers → fields.
+      const used = new Set();
+      const auto = {};
+      IMPORT_FIELDS.forEach((f) => {
+        const idx = hdr.findIndex((h, i) => !used.has(i) && f.syn.some((s) => safeLower(h).includes(s)));
+        if (idx >= 0) { auto[f.key] = idx; used.add(idx); }
+        else auto[f.key] = -1;
+      });
+      setHeaders(hdr);
+      setRows(data);
+      setMapping(auto);
+      setStage('map');
+    } catch (err) {
+      console.error(err);
+      toast.error('Could not read that file. Use .xlsx or .csv.');
+    }
+  }
+
+  const val = (row, key) => {
+    const i = mapping[key];
+    return i != null && i >= 0 ? row[i] : undefined;
+  };
+  const num = (v) => { const n = parseFloat(String(v ?? '').replace(/[^0-9.]/g, '')); return Number.isFinite(n) && n >= 0 ? n : 0; };
+  const validRows = rows.filter((r) => String(val(r, 'name') ?? '').trim() !== '');
+
+  async function runImport() {
+    setStage('importing');
+    setProgress(0);
+    let added = 0, skipped = 0;
+    const seen = new Set();
+    const rejected = []; // Issue 11: collect invalid rows + reasons
+    const toWrite = [];
+    validRows.forEach((r) => {
+      const name = String(val(r, 'name')).trim();
+      const sku = String(val(r, 'sku') ?? '').trim();
+      const stock = Math.round(num(val(r, 'stock')));
+      const pp = num(val(r, 'purchasePrice'));
+      const sp = num(val(r, 'sellingPrice'));
+      const msp = num(val(r, 'minSellingPrice'));
+      // Issue 11: validate before writing.
+      if (stock < 0) { rejected.push(`${name}: negative stock`); return; }
+      if (pp < 0 || sp < 0 || msp < 0) { rejected.push(`${name}: negative price`); return; }
+      if (sp > 0 && pp > 0 && sp < pp) { rejected.push(`${name}: MRP below purchase price`); return; }
+      if (msp > 0 && sp > 0 && msp > sp) { rejected.push(`${name}: floor above MRP`); return; }
+      if (skipDup && sku) {
+        const key = safeLower(sku);
+        if (existingSkus.has(key) || seen.has(key)) { skipped++; return; }
+        seen.add(key);
+      }
+      const cat = String(val(r, 'category') ?? '').trim();
+      toWrite.push({
+        name,
+        sku,
+        category: cat,
+        categories: cat ? [cat] : [],
+        vehicle: String(val(r, 'vehicle') ?? '').trim(),
+        compatibleCars: [],
+        locationBin: String(val(r, 'locationBin') ?? '').trim(),
+        stock,
+        minStock: Math.round(num(val(r, 'minStock'))) || 5,
+        purchasePrice: pp,
+        sellingPrice: sp,
+        minSellingPrice: msp,
+        salesCount: 0,
+        suppliers: [],
+        imageString: '',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    });
+
+    try {
+      const CHUNK = 450;
+      for (let i = 0; i < toWrite.length; i += CHUNK) {
+        const batch = writeBatch(db);
+        toWrite.slice(i, i + CHUNK).forEach((p) => batch.set(doc(collection(db, COLLECTIONS.PARTS)), p));
+        await batch.commit();
+        added += Math.min(CHUNK, toWrite.length - i);
+        setProgress(Math.round(((i + CHUNK) / toWrite.length) * 100));
+      }
+      setResult({ added, skipped, rejected });
+      setStage('done');
+      if (added > 0 && typeof onImported === 'function') onImported(added);
+    } catch (err) {
+      console.error(err);
+      toast.error('Import failed partway. Some rows may have saved.');
+      setStage('done');
+      setResult({ added, skipped, rejected });
+    }
+  }
+
+  const fld = 'px-2 py-1.5 rounded-lg text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60';
+  // Issue 7.15 class recurrence — this modal's column-mapping select is DYNAMIC
+  // length (one option per uploaded spreadsheet column, unbounded), exactly the
+  // "long native-select list pushes past the modal" scenario the Supplier Type
+  // MiniSelect migration was originally built to prevent — but this modal had no
+  // ref for its own dropdowns to clamp against.
+  const importModalRef = useRef(null);
+  // Header labels for the mapping select, de-duplicated so two identically-named
+  // (or both-blank) columns never collide on the same MiniSelect option string.
+  const headerLabels = (() => {
+    const seen = {};
+    return headers.map((h, i) => {
+      const base = h || `Col ${i + 1}`;
+      seen[base] = (seen[base] || 0) + 1;
+      return seen[base] > 1 ? `${base} (#${i + 1})` : base;
+    });
+  })();
+  const SKIP_LABEL = '— skip —';
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div ref={importModalRef} data-modal-panel="" className="w-full max-w-2xl rounded-2xl p-5 modal-sheet overflow-y-auto" style={{ background: 'var(--surface-3)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
+        <ModalBoundaryContext.Provider value={importModalRef}>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-base font-bold text-white">Import parts from Excel / CSV</h3>
+          <button onClick={onClose} className="text-white/45 hover:text-white"><X size={18} /></button>
+        </div>
+
+        {stage === 'upload' && (
+          <div className="mt-4">
+            <p className="text-sm text-white/50 mb-4">Upload a .xlsx or .csv with a header row. You’ll map columns next.</p>
+            <label className="flex flex-col items-center justify-center gap-2 py-10 rounded-xl border-2 border-dashed border-white/15 cursor-pointer hover:border-[#d4af37]/40 transition">
+              <Download size={22} className="text-[#d4af37] rotate-180" />
+              <span className="text-sm text-white/70">Tap to choose a file</span>
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={onFile} className="hidden" />
+            </label>
+          </div>
+        )}
+
+        {stage === 'map' && (
+          <div className="mt-4">
+            <p className="text-sm text-white/50 mb-3">Match your columns to fields. We guessed where we could.</p>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              {IMPORT_FIELDS.map((f) => (
+                <div key={f.key} className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-white/70">{f.label}{f.required && <span className="text-red-400"> *</span>}</span>
+                  <div className="w-32">
+                    <MiniSelect
+                      value={mapping[f.key] === -1 ? SKIP_LABEL : (headerLabels[mapping[f.key]] ?? SKIP_LABEL)}
+                      options={[SKIP_LABEL, ...headerLabels]}
+                      onPick={(v) => setMapping((m) => ({ ...m, [f.key]: v === SKIP_LABEL ? -1 : headerLabels.indexOf(v) }))}
+                      width={220}
+                      inputCls={fld}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[10px] uppercase tracking-wider text-white/45 mb-1">Preview (first 5 of {validRows.length} rows)</p>
+            <div className="overflow-x-auto rounded-lg border border-white/10 mb-3">
+              <table className="w-full text-xs">
+                <thead><tr>{['Name', 'SKU', 'Stock', 'MRP'].map((h) => <th key={h} className="text-left px-2 py-1.5 text-white/45">{h}</th>)}</tr></thead>
+                <tbody>
+                  {validRows.slice(0, 5).map((r, i) => (
+                    <tr key={i} style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+                      <td className="px-2 py-1.5 text-white">{String(val(r, 'name') ?? '')}</td>
+                      <td className="px-2 py-1.5 text-white/60">{String(val(r, 'sku') ?? '—')}</td>
+                      <td className="px-2 py-1.5 text-white/60">{String(val(r, 'stock') ?? '0')}</td>
+                      <td className="px-2 py-1.5 text-white/60">{String(val(r, 'sellingPrice') ?? '0')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-white/60 mb-4">
+              <input type="checkbox" checked={skipDup} onChange={(e) => setSkipDup(e.target.checked)} className="accent-[#d4af37]" />
+              Skip rows whose SKU already exists
+            </label>
+
+            <div className="flex gap-2">
+              <button onClick={() => setStage('upload')} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80">Back</button>
+              <button
+                onClick={runImport}
+                disabled={mapping.name < 0 || validRows.length === 0}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-bold ${mapping.name >= 0 && validRows.length ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]' : 'bg-white/5 text-white/45 cursor-not-allowed'}`}
+              >
+                Import {validRows.length} parts
+              </button>
+            </div>
+            {mapping.name < 0 && <p className="text-[11px] text-amber-400/80 mt-2">Map the Part Name column to continue.</p>}
+          </div>
+        )}
+
+        {stage === 'importing' && (
+          <div className="mt-6 py-8 text-center">
+            <p className="text-sm text-white/70 mb-3">Importing… {progress}%</p>
+            <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-[#e8c84a] to-[#aa801e] transition-all" style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+        )}
+
+        {stage === 'done' && (
+          <div className="mt-6 py-6 text-center">
+            <p className="text-lg font-bold text-emerald-400">Imported {result.added} parts</p>
+            {result.skipped > 0 && <p className="text-sm text-white/50 mt-1">{result.skipped} skipped (duplicate SKU)</p>}
+            {result.rejected?.length > 0 && (
+              <div className="mt-3 text-left max-w-sm mx-auto">
+                <p className="text-sm font-semibold text-red-400">{result.rejected.length} rejected (invalid data):</p>
+                <ul className="mt-1 max-h-32 overflow-y-auto text-xs text-white/50 space-y-0.5">
+                  {result.rejected.slice(0, 50).map((m, i) => <li key={i}>• {m}</li>)}
+                </ul>
+              </div>
+            )}
+            <button onClick={onClose} className="mt-5 px-6 py-2.5 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]">Done</button>
+          </div>
+        )}
+        </ModalBoundaryContext.Provider>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main Dashboard
+// ---------------------------------------------------------------------------
+// ProductLedgerModal now lives in ./inventory/modals/UtilityModals (Refactor Phase 2).
+
+
+// ===========================================================================
+// Phase B — OVERVIEW dashboard. Every widget reads REAL data from props; there
+// is no placeholder/sample content. Empty states show honest zeros.
+// ===========================================================================
+// Universal Dashboard Card/Grid Consistency review: the ONE shared widget-card shell
+// for every Dashboard card — previously three shapes existed (this component;
+// ScoreCard's own hand-rolled div; two more hand-rolled divs for Insights/Workshop
+// Progress), diverging in background alpha (0.02 vs 0.03) and backdrop-blur, which
+// section 19's "same card background" requirement flags as a real inconsistency, not
+// just a height one. All four now render through this one shell.
+//
+// Dashboard Card Height review: "same row = same structural height" is now achieved by
+// the grid row ITSELF, not by this card guessing a height — every multi-column Dashboard
+// row below uses PLAIN `grid grid-cols-1 lg:grid-cols-3 gap-4` with no items-start/
+// items-stretch override, so CSS Grid's default align-items:stretch does the real work:
+// the row auto-sizes to its tallest natural-content member, and every sibling in that
+// row is stretched to match — a 2-record Top Selling card gets exactly as tall as a
+// 5-record Low Stock Alerts card sitting next to it, without either one's OWN styling
+// needing to know about the other.
+//
+// The card primitives OverviewCard / DashEmpty / ScoreCard / ACard / RptCard (and the
+// DASH_CARD_MIN_H backstop) now live in ./inventory/ui/DashboardCards — pure
+// presentational shells, extracted verbatim (Refactor Phase 1).
+function QuickPickModal({ mode, inventory, purchaseOrders = [], onPick, onPickPO, onClose, demoMode = false }) {
+  useBodyScrollLock();
+  const [q, setQ] = useState('');
+  // Issue 7.2 — Receive Stock's entry point used to behave ONLY as "search a part,
+  // enter a quantity" with zero awareness that a supplier delivery is often against
+  // an already-existing Purchase Order. Surface open POs (something was ordered and
+  // hasn't fully arrived) so the user can jump straight into that PO's own receive
+  // form — which updates the PO's receivedQty/status — instead of recreating the
+  // same information by hand in an untracked ad-hoc receipt.
+  const pendingPOs = useMemo(() => {
+    if (mode !== 'receive') return [];
+    return purchaseOrders
+      .filter((po) => ['sent', 'approved', 'partial'].includes(po.status) && (po.items || []).some((it) => (it.receivedQty || 0) < it.qty))
+      .sort((a, b) => (tsToDate(a.expectedDate)?.getTime() || 0) - (tsToDate(b.expectedDate)?.getTime() || 0));
+  }, [mode, purchaseOrders]);
+  // Issue 7.1 — this quick-pick search used to match name+SKU only, strictly
+  // weaker than the Parts table's own search (name/SKU/OEM/barcode/category/
+  // vehicle) despite being the primary "find the part that just arrived" entry
+  // point for Receive Stock. Extended to the same identifier breadth so a
+  // workshop can search by whatever's printed on the box.
+  // Universal Search review: SKU/OEM No./barcode/Part No. are exact-then-partial
+  // identifiers via rankIndexed, no longer one flat substring-matched string — an
+  // exact SKU query no longer risks surfacing an unrelated part that merely contains
+  // it as a substring with no ranking to tell them apart.
+  const partSearchIndex = useSearchIndex(inventory, (p) => p.id, (p) => [p.name], (p) => [p.sku, p.oemNo, p.barcode, p.partNo]);
+  const byPopularity = (a, b) => (b.salesCount || 0) - (a.salesCount || 0);
+  const list = useMemo(() => {
+    const active = inventory.filter((p) => !p.archived);
+    if (!q.trim()) return [...active].sort(byPopularity).slice(0, 60);
+    return searchAndRank(active, partSearchIndex, (p) => p.id, q, byPopularity).slice(0, 60);
+  }, [inventory, q, partSearchIndex]);
+  const title = mode === 'sell' ? 'Record Sale' : mode === 'adjust' ? 'Adjust Stock' : 'Receive Stock';
+  const hint = mode === 'sell' ? 'Pick the part you sold' : mode === 'adjust' ? 'Pick the part to adjust' : 'Pick the part that arrived';
+  return (
+    <div className="fixed inset-0 z-[120] flex items-start justify-center p-4 pt-[8vh]" style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-white/8">
+          <div className="flex items-center gap-2">
+            {mode === 'sell' ? <ShoppingCart size={16} className="text-[#d4af37]" /> : <PackagePlus size={16} className="text-[#d4af37]" />}
+            <div><h3 className="text-sm font-bold text-white">{title}</h3><p className="text-[11px] text-white/45">{hint}</p></div>
+          </div>
+          <button onClick={onClose} className="text-white/45 hover:text-white"><X size={16} /></button>
+        </div>
+        {pendingPOs.length > 0 && (
+          <div className="p-3 pb-0">
+            <p className="text-[10px] uppercase tracking-wider text-white/45 font-semibold mb-1.5">Pending Deliveries</p>
+            <div className="max-h-[30vh] overflow-y-auto space-y-1.5 mb-1">
+              {pendingPOs.map((po) => {
+                const outstanding = (po.items || []).filter((it) => (it.receivedQty || 0) < it.qty).length;
+                // COLOR SYSTEM REVIEW: this badge showed EVERY po.status in the same
+                // flat cyan — a "Sent" PO here would read cyan while the exact same
+                // status reads violet in the main Purchase Orders list (InventoryPurchase
+                // Orders.jsx's own STATUS map). Reused that same map so this quick-picker
+                // can never drift from the canonical PO status colors again.
+                const st = PO_STATUS[po.status] || PO_STATUS.pending;
+                return (
+                  <button key={po.id} onClick={() => onPickPO(po)} className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-left hover:bg-[#d4af37]/[0.08] border border-white/10 hover:border-[#d4af37]/30 transition">
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-white truncate">{po.poNumber} · {po.supplierName}</span>
+                      <span className="block text-[11px] text-white/45 truncate">{outstanding} item{outstanding === 1 ? '' : 's'} outstanding{po.expectedDate ? ` · expected ${tsToDate(po.expectedDate)?.toLocaleDateString('en-IN')}` : ''}</span>
+                    </span>
+                    <span className="flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide" style={{ background: st.bg, color: st.color }}>{po.status}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] uppercase tracking-wider text-white/45 font-semibold pt-2 pb-1" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>Or pick a part directly</p>
+          </div>
+        )}
+        <div className="p-3 pt-2">
+          <div className="flex gap-2 mb-2">
+            <input autoFocus={pendingPOs.length === 0} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, SKU, OEM no., barcode…" className="flex-1 min-w-0 px-3 py-2.5 rounded-lg text-sm outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60" />
+            {/* Issue 7.1 — Scan Barcode -> identify part -> narrow this same list ->
+                pick -> (RestockModal) enter quantity -> receive. Populates the
+                search field rather than auto-selecting, so an ambiguous/partial
+                read still shows the candidate(s) instead of silently guessing. */}
+            <BarcodeScanButton onDetect={(code) => setQ(code)} label="" className="flex items-center justify-center w-11 h-11 rounded-lg bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:border-[#d4af37]/40 transition flex-shrink-0" />
+          </div>
+          <div className="max-h-[50vh] overflow-y-auto space-y-1">
+            {list.length === 0 ? <p className="text-sm text-white/45 py-6 text-center">No parts found.</p> : list.map((p) => (
+              <button key={p.id} onClick={() => onPick(p)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-[#d4af37]/[0.08] border border-transparent hover:border-[#d4af37]/30 transition">
+                <PartImageThumb src={p.imageString} alt={p.name} demoMode={demoMode} />
+                <span className="min-w-0 flex-1"><span className="block text-sm text-white truncate">{p.name}</span><span className="block text-[11px] text-white/45 truncate">{p.sku || 'no SKU'} · stock {p.stock ?? 0}</span></span>
+                {mode === 'sell' && (p.stock || 0) <= 0 && <span className="text-[10px] text-red-400 font-semibold">out</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// BulkReceiveModal now lives in ./inventory/modals/StockModals (Refactor Phase 2).
+
+// Rich, reassuring save confirmation (Priority 8 — smart notifications).
+function smartSaveToast(name, { isEdit = false, hasSupplier = false } = {}) {
+  toast.custom((t) => (
+    <div className={`max-w-sm w-full rounded-xl p-3.5 shadow-2xl ${t.visible ? 'animate-enter' : 'animate-leave'}`} style={{ background: 'var(--surface-2)', border: '1px solid rgba(52,211,153,0.3)' }}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(52,211,153,0.15)' }}><Check size={14} className="text-emerald-400" /></span>
+        <span className="text-sm font-bold text-white truncate">{name} {isEdit ? 'updated' : 'added'}</span>
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 pl-8">
+        {[hasSupplier && 'Supplier linked', 'Inventory updated', 'Search indexed', 'Ready for sale'].filter(Boolean).map((l) => (
+          <span key={l} className="inline-flex items-center gap-1 text-[11px] text-emerald-400/90"><Check size={10} /> {l}</span>
+        ))}
+      </div>
+    </div>
+  ), { duration: 3000 });
+}
+
+
+// Universal drill-down navigation — every Dashboard summary/KPI/"View all" interaction
+// that leads to a FULL workspace (search + filter + sort + pagination + real actions,
+// not a compact inline detail) opens that workspace in a NEW BROWSER TAB instead of
+// replacing the Dashboard in place. Two reasons this beats same-tab navigation here:
+// the Dashboard is itself a live "monitor" the owner keeps glancing back at (losing it
+// to switch to Inventory/Billing/Job Cards is real context loss, unlike navigating
+// WITHIN a module you're already inside — see InventoryOverview's own onNavigate,
+// which correctly stays same-tab since it's just switching Inventory's own sub-tabs);
+// and the destination is exactly the kind of workspace this app already treats as
+// new-tab-worthy everywhere else (View Customer/Vehicle/Invoice/Job Card from a detail
+// panel — see the ?open=<key>:<query>#<tab> router in the mount effect below).
+//
+// Reuses that SAME router rather than inventing a second mechanism: the {tab, opts}
+// shape is exactly what onNavigate already received, so nothing is re-derived —
+// just carried across the tab boundary instead of applied in-process. Because it's a
+// FILTER description (which sub-view, which status/KPI bucket), not a frozen list of
+// records, the destination tab fetches its own current data and applies the filter
+// live — a part that gets restocked between the click and the new tab opening is
+// correctly no longer "needs reorder" there, never a stale snapshot of what the
+// Dashboard showed at click-time.
+function dashboardDrillDownUrl(tab, opts) {
+  const payload = encodeURIComponent(JSON.stringify({ tab, opts: opts || {} }));
+  return `/?open=nav:${payload}#${tab}`;
+}
+
+// Refactor Phase 11 — OverviewView extracted verbatim to
+// ./inventory/views/OverviewView.jsx (imported above). MAX_INSIGHTS moved with it.
+
+// Refactor Phase 13 — CommandPalette (global Ctrl+K search overlay) extracted verbatim
+// to ./inventory/CommandPalette.jsx (imported above). The container keeps the global
+// Ctrl+K keydown listener + every onPick* navigation callback.
+// ===========================================================================
+// Phase 8.5 — dedicated pages. All read REAL data; honest empty states.
+// ===========================================================================
+// UNIVERSAL PAGE HEADER STANDARDIZATION: the local PageShell that used to live here
+// (title/subtitle/icon/action shape, used by exactly 4 of ~20 views since it wasn't
+// exported) has been promoted to components/common/PageHeader.jsx — the one shared
+// page-header component the whole app now imports, not just this file.
+// Issue 7.7/7.8/7.9 — LedgerRow/StatStrip/dstr/LedgerPage (+ the record-detail
+// drawer and the search/date-range/type filter logic) moved to
+// components/common/LedgerPage.jsx. This one component already backed four
+// modules (Sales/Services/Stock In/Stock Out below) but lived un-exported inside
+// this file, so the Inventory module's own "Stock" sub-tab couldn't reuse it and
+// grew a second, weaker, bespoke movement timeline instead — exactly the
+// "duplicated movement-history logic" this review was asked to hunt for. Now
+// genuinely shared: components/inventory/InventoryStock.jsx imports the same
+// filterLedgerItems/LedgerRow/LedgerDetailDrawer building blocks.
+// SalesView / ServicesView / StockInView / StockOutView (thin <LedgerPage> wrappers
+// over the sales / restocks / stockAdjustments ledgers) now live in
+// ./inventory/views/LedgerViews, imported at the top of this file (Refactor Phase 3).
+// The module-local `inr` that lived here moved with AnalyticsView (Refactor Phase 10),
+// its last consumer.
+// ---- Part 8: Reports & Business Intelligence Center ----
+// Shares the same data source as Analytics + all modules (no duplication). Reads the
+// invoice snapshot fields (grandTotal/gstAmount/profitAmount/balance) persisted by Billing.
+// Module-scope numeric coercion. NOTE: there is a `num()` inside ImportModal, but it
+// is scoped to that component AND it clamps negatives to 0 (fine for CSV import,
+// wrong for ledger maths, where a refund is a negative delta). This one is safe for
+// money: it accepts negatives and never returns NaN.
+// ---------------------------------------------------------------------------
+// TRANSACTION TRACER.
+// Set localStorage.setItem('TXN_DEBUG','1') in the browser console, then run a
+// Save & Collect. Every stage prints, with record counts before/after, so a silent
+// failure becomes impossible to miss. Zero cost when the flag is off.
+// ---------------------------------------------------------------------------
+// DEMO SCHEMA VERSION.
+//
+// Demo data lives in session/localStorage and SURVIVES a code update. When the shape of
+// the seed changes, that cached data becomes incompatible — and because the app quite
+// correctly refuses to clobber saved data, the stale copy silently wins. That is exactly
+// what happened when the fabricated `genSales()` ledger (~1,800 rows with no parent
+// invoice) was replaced by invoice-derived history: users kept running on the old
+// disconnected ledger and had no way to know.
+//
+// Bump this whenever the seeded data's shape changes. Mismatched caches are purged on
+// load so the demo always matches the code that is running.
+const DEMO_SCHEMA = 'v5-salescount-from-ledger';
+
+// Runs synchronously, at most once, BEFORE any hydration effect reads storage.
+// (Doing this inside a useEffect was too late: the invoice-hydration effect is declared
+// earlier in the component, so it would already have loaded the stale cache.)
+let _demoSchemaChecked = false;
+function purgeStaleDemoData() {
+  if (_demoSchemaChecked || typeof window === 'undefined') return;
+  _demoSchemaChecked = true;
+  try {
+    if (localStorage.getItem(STORAGE.DEMO_SCHEMA) === DEMO_SCHEMA) return;
+    [STORAGE.DEMO_INVENTORY, STORAGE.DEMO_SUPPLIERS, STORAGE.DEMO_SALES, STORAGE.DEMO_RESTOCKS,
+     STORAGE.DEMO_ADJUSTMENTS, STORAGE.DEMO_PURCHASE_ORDERS, STORAGE.DEMO_AUDIT, STORAGE.DEMO_GARAGE_SEED]
+      .forEach((k) => sessionStorage.removeItem(k));
+    [STORAGE.DEMO_CUSTOMERS, STORAGE.DEMO_JOB_CARDS, STORAGE.DEMO_INVOICES]
+      .forEach((k) => localStorage.removeItem(k));
+    localStorage.setItem(STORAGE.DEMO_SCHEMA, DEMO_SCHEMA);
+    console.info('[DEMO] Seed format changed — stale demo data cleared, re-seeding.');
+  } catch (e) {
+    console.error('[DEMO] Could not clear stale demo data. You may be running on an old cached dataset — use Reset Demo Data.', e);
+  }
+}
+
+const TXN_DEBUG = () => { try { return typeof window !== 'undefined' && localStorage.getItem('TXN_DEBUG') === '1'; } catch { return false; } };
+const txn = (step, msg, data) => {
+  if (!TXN_DEBUG()) return;
+  const style = 'color:#d4af37;font-weight:bold';
+  if (data !== undefined) console.log(`%c[TXN ${step}] ${msg}`, style, data);
+  else console.log(`%c[TXN ${step}] ${msg}`, style);
+};
+
+// Refactor Phase 5 — the invoice money maths and status derivation are ONE
+// implementation now, in services/billingService.js. `invTotals` was the transaction
+// engine's SECOND copy — kept in sync with BillingModule.totalsOf by hand across ~30
+// phases of fixes, and Stage 1 found it had still drifted (unrounded gst, stored
+// profitAmount, a `taxable` alias, and no `sub`/`cgst`/`sgst`). `invStatus` was a
+// THIRD status copy (PH11-02 added its overpayment guard here specifically because
+// billingService.invoiceStatus lacked it). Both now delegate to the canonical, so
+// isRealized / planInvoiceRealization / Reports / customer-outstanding and
+// billingService.invoiceTotals compute one way. `toNum` (Phase 4) comes from the
+// same module. Local names kept — every call site here uses them.
+//
+// Shape note vs the old local `invTotals`: `.taxable` → `.afterDisc` (2 dp), `.gst`
+// is now 2 dp (was raw float), `.profit` is a live `afterDisc − cost` (was the stored
+// `iv.profitAmount`), and `.parts`/`.labour` → `.partsRev`/`.labourRev` (they had no
+// consumer here). New fields: `sub`, `cgst`, `sgst`, `igst`, `isIgst`, `roundOff`.
+const invTotals = invoiceTotals;
+const invStatus = invoiceStatus;
+
+// Refactor Phase 8 — ReportTable + ReportsView (the Reports tab) moved verbatim
+// to ./inventory/views/ReportsView.jsx (which carries its own RPT_COLORS copy).
+// Phase 10 — AnalyticsView (this file's last RPT_COLORS consumer) likewise moved.
+// AlertsView (the Alert Center) now lives in ./inventory/views/AlertsView,
+// imported at the top of this file (Refactor Phase 3).
+// Path B — real, non-color preferences (font size, motion, compact sidebar,
+// region/format). No theme-color faking; the working subset only.
+
+// Refactor Phase 12 — SettingsView (+ normalizeSettings / SETTINGS_DEFAULTS / the
+// SETTINGS_* width-tier constants) extracted verbatim to ./inventory/views/SettingsView.jsx.
+// NAV_GROUPS / NAV_ITEMS / GROUP_OF_TAB (the sidebar nav config) moved with
+// Sidebar to ./inventory/Sidebar.jsx (Refactor Phase 8).
+
+// ---- Demo permissions --------------------------------------------------
+// Refactor Phase 12 — the demo-permission model (DEMO_PERM_DEFAULTS / DEMO_PERM_KEY /
+// DEMO_PERM_GROUPS / loadDemoPerms) moved to ../lib/demoPerms so SettingsView and this
+// container share ONE source of truth. `loadDemoPerms` is imported at the top of this file.
+// SidebarTheme (the Dark / Warm / Light preset switch, + THEME_STOPS / posFromTheme /
+// applyThemeGlobally) now lives in ./inventory/ui/SidebarTheme, imported at the top of
+// this file (Refactor Phase 1 — leaf UI extraction).
+
+// Refactor Phase 8 — Sidebar (app-shell nav rail + mobile drawer) moved verbatim
+// to ./inventory/Sidebar.jsx, imported at the top of this file.
+
+export default function InventoryDashboard() {
+  const router = useRouter();
+  // Aliased `tr` (not `t`) deliberately — this component-scope already reuses the
+  // identifier `t` extensively as a local variable name (timeouts, totals, toast
+  // handles, tab-loop items) in dozens of unrelated nested scopes; introducing the
+  // translation function as `t` here would silently shadow-collide with several of
+  // them (calling the shadowed value as a function would crash). `tr` is not used
+  // anywhere else in this file.
+  const { t: tr } = useTranslation();
+  const { user, role, perms, dbAdmins = [], staffPerms = {}, bootstrapAdmins = [], demoMode = false, demoAdmin = false, exitDemo } = useAuth(); // user + role + permissions + admin/staff lists + demo
+  const isAdmin = role === 'admin'; // FIX-02: gate sensitive actions
+  // Capacity-cleanup audit trail ("who initiated") — same identity resolution pushAudit
+  // already uses below, hoisted so every module wired into the capacity system can share it.
+  const capacityActorEmail = demoMode ? 'demo@balajiautoos.com' : (user?.email || null);
+  // ONE shared cleanup-wizard instance for every capacity-guarded action inside this
+  // monolith (restocks, stock adjustments, and any future one) — a moduleKey string
+  // opens it for that module; null keeps it closed. Avoids instantiating a separate
+  // CapacityCleanupModal at each of the many "New X" entry points scattered through
+  // this file (see the many setRestockTarget/setAdjustTarget call sites).
+  const [capacityCleanupModule, setCapacityCleanupModule] = useState(null);
+  // Bumped by the wizard's onComplete so every capacity banner fed by this tick
+  // refreshes its count — NOT used to close the modal (that's onClose/"Done", so the
+  // wizard's own success/result screen stays visible instead of vanishing the instant
+  // the cleanup finishes).
+  const [capacityRefreshTick, setCapacityRefreshTick] = useState(0);
+  // Per-person staff permissions (admins implicitly have all). These let an
+  // admin grant a non-admin staff member specific abilities from Settings.
+  const canSeeCost = isAdmin || !!perms?.costPrices;
+  const canDelete = isAdmin || !!perms?.deletes;
+  // Demo Admin acts as an admin over DEMO data (full CRUD on inventory, suppliers,
+  // alerts, etc.) while production-account features stay gated on real isAdmin.
+  const canManageData = isAdmin || demoAdmin;
+  const canExport = isAdmin || !!perms?.exports;
+  // Demo permission map (owner-configured). Live-updates when Settings saves it.
+  const [demoPerms, setDemoPerms] = useState(() => loadDemoPerms());
+  useEffect(() => {
+    const refresh = () => setDemoPerms(loadDemoPerms());
+    window.addEventListener('maruti-demo-perms', refresh);
+    return () => window.removeEventListener('maruti-demo-perms', refresh);
+  }, []);
+  // True if the current demo USER is allowed to perform `action` (per owner config).
+  // Demo Admin and production always pass. Undefined action → treat as destructive.
+  const demoCan = useCallback((action) => {
+    if (!demoMode || demoAdmin) return true;
+    return action ? !!demoPerms[action] : false;
+  }, [demoMode, demoAdmin, demoPerms]);
+  // Settings QA fix: Demo Permissions' "View Analytics" / "View Reports" / "Access
+  // Settings" toggles saved correctly but gated nothing — a Demo User could always
+  // open all three regardless of the toggle. The card's own description promises
+  // the disabled control "still shows its button, but clicking shows an
+  // administrator disabled message". Declared here (not inline where first used)
+  // because THREE separate tab-resolution paths need it — the guarded setActiveTab
+  // wrapper below, but ALSO the initial hash-on-load effect, the ?open= deep-link
+  // resolver, and the hashchange listener all call setActiveTabRaw directly and
+  // bypassed the gate entirely until this fix: a Demo User could reach a blocked
+  // page just by typing #reports in the address bar or hitting Back/Forward.
+  const NAV_DEMO_PERM = { analytics: 'viewAnalytics', reports: 'viewReports', settings: 'accessSettings' };
+  const demoBlockedTab = useCallback((tab) => {
+    const requiredPerm = NAV_DEMO_PERM[tab];
+    return !!(requiredPerm && demoMode && !demoCan(requiredPerm));
+  }, [demoMode, demoCan]);
+  // The hashchange listener (below, in the tab-routing effect) is registered once
+  // with [] deps, so its closure would otherwise see the demoBlockedTab from mount
+  // forever — stale if the admin flips a permission mid-session. Ref keeps it current.
+  const demoBlockedTabRef = useRef(demoBlockedTab);
+  useEffect(() => { demoBlockedTabRef.current = demoBlockedTab; }, [demoBlockedTab]);
+  // Demo Admin may modify demo data; Demo User may not perform destructive actions.
+  function protectedDemoToast(adminDisabled = false) {
+    toast(
+      adminDisabled
+        ? 'This action has been disabled by the administrator.'
+        : 'Protected Demo Environment\nThis is a shared demo workspace. Delete, archive, restore, and reset actions are disabled to maintain a consistent experience for all users.',
+      { icon: <Lock size={16} />, duration: 5000, style: { maxWidth: 420 } }
+    );
+  }
+  const [inventory, setInventory] = useState([]);
+  // C-2 fix: ref-current pattern (same as customersRef/jobCardsRef/invoicesRef) — lets
+  // applyStockDelta/applyReserveDelta read the latest inventory synchronously and return
+  // a real write promise instead of computing `next` inside the setInventory updater.
+  const inventoryRef = useRef([]);
+  useEffect(() => { inventoryRef.current = inventory; }, [inventory]);
+  const [sales, setSales] = useState([]); // recent sales ledger (per-part analytics)
+  const [rollups, setRollups] = useState([]); // FIX-07: unbounded monthly aggregates
+  const [restocks, setRestocks] = useState([]); // ADD-02: restock ledger
+  const [auditLog, setAuditLog] = useState([]); // ADD-06: audit entries
+  const [customCategories, setCustomCategories] = useState([]); // Task 1: user-added categories
+  const [customVehicles, setCustomVehicles] = useState([]); // Task 1: user-added vehicles
+  const [loading, setLoading] = useState(true);
+  // ADD-08: connection + sync status.
+  // Refactor Phase 14 — the navigator.onLine tracking (window online/offline
+  // listeners) moved verbatim to hooks/useOnlineStatus.
+  const online = useOnlineStatus();
+  const [pendingWrites, setPendingWrites] = useState(false);
+  const [lastSync, setLastSync] = useState(null); // IMPORTANT: last successful sync
+  const [lastBackup, setLastBackup] = useState(null); // Phase B: last backup timestamp
+  const isMobile = useIsMobile(); // phones get full-screen form pages instead of modals
+  const [invSubView, setInvSubView] = useState('dashboard'); // Phase 1: Inventory module sub-pages (dashboard | parts)
+  const [supSubView, setSupSubView] = useState('directory'); // Suppliers module sub-pages (directory | performance)
+  const [poSeed, setPoSeed] = useState(null); // {id, _n} → seed a part into the docked PO builder
+  const [perfSelectId, setPerfSelectId] = useState(null); // Performance row → open supplier in Directory
+  const [showPOBuilder, setShowPOBuilder] = useState(false); // global PO builder drawer
+  // Import/Export history (local, capped at 50) — namespaced so demo & production never share it.
+  const [ioHistory, setIoHistory] = useState([]);
+  const ioHistoryKey = demoMode ? 'maruti_io_history_demo' : 'maruti_io_history_prod';
+  useEffect(() => { try { const v = JSON.parse(localStorage.getItem(ioHistoryKey) || '[]'); setIoHistory(Array.isArray(v) ? v : []); } catch { setIoHistory([]); } }, [ioHistoryKey]);
+  const recordIO = useCallback((type, count) => {
+    const entry = { type, count: Number(count) || 0, ts: Date.now() };
+    setIoHistory((prev) => { const next = [entry, ...prev].slice(0, 50); try { localStorage.setItem(ioHistoryKey, JSON.stringify(next)); } catch {} return next; });
+  }, [ioHistoryKey]);
+  // Parts bulk selection. Unlike Job Cards/Customers/Vehicles/Billing, this selection
+  // is intentionally cleared on every search/category/filter change (see the effect
+  // keyed on [debouncedSearch, categoryFilter, invFilter, invPerPage] below) rather
+  // than persisted-with-a-warning — a different but equally deterministic answer to
+  // the same "what happens to selection when the view changes" question (Universal
+  // Print/PDF selection-scope review, Scenario 6), kept as-is here since it already
+  // makes an invisible/stale selection impossible by construction. What it did NOT
+  // guard against is a part disappearing for a reason that ISN'T a filter change (e.g.
+  // deleted via another tab/session) — pruned the same way every other module's
+  // selection already is, so "N selected" can never overstate the real actionable set.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  const toggleSelect = useCallback((id) => setSelectedIds((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; }), []);
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const liveIds = new Set(inventory.map((p) => p.id));
+      const next = new Set([...prev].filter((id) => liveIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [inventory]);
+  const bulkArchive = async () => {
+    const ids = [...selectedIds].filter((id) => { const p = inventory.find((x) => x.id === id); return p && !p.archived; });
+    if (!ids.length) { toast('Selected parts are already archived.'); return; }
+    // Universal Notification Architecture review — this used to fire N identical
+    // "Part archived" toasts (deduped down to one that never said how many), with
+    // no partial-failure reporting if some writes failed. { silent: true } suppresses
+    // handleArchive's own per-item toast so this one aggregate summary is authoritative.
+    const results = await Promise.allSettled(ids.map((id) => handleArchive(id, { silent: true })));
+    const okCount = results.filter((r) => r.status === 'fulfilled' && r.value?.ok).length;
+    clearSelection();
+    if (okCount === ids.length) toast.success(`Archived ${okCount} part${okCount === 1 ? '' : 's'}${demoMode ? ' (demo)' : ''}`);
+    else if (okCount > 0) toast.error(`${okCount} of ${ids.length} archived — check your connection and retry the rest.`);
+    else toast.error('Could not archive the selected parts. Check your connection and try again.');
+  };
+  // Parts review (Issue 6.10/6.16) — restore is the exact inverse of bulk archive,
+  // and every row already offers both actions individually; the bulk toolbar only
+  // had the one-way version, so a batch of archived parts could never be restored
+  // together.
+  const bulkRestore = async () => {
+    const ids = [...selectedIds].filter((id) => { const p = inventory.find((x) => x.id === id); return p && p.archived; });
+    if (!ids.length) { toast('Selected parts are not archived.'); return; }
+    // Issue 6.15 — bulk restore must state its scope, exactly like every other
+    // state-changing bulk action, before touching anything.
+    const confirmed = await confirmDialog({
+      title: `Restore ${ids.length} part${ids.length === 1 ? '' : 's'}?`,
+      message: `${ids.length} archived part${ids.length === 1 ? '' : 's'} selected. These will move from Archived back to the active Parts inventory.`,
+      confirmText: `Restore ${ids.length} Part${ids.length === 1 ? '' : 's'}`,
+    });
+    if (!confirmed) return;
+    const results = await Promise.allSettled(ids.map((id) => handleRestore(id, { silent: true })));
+    const okCount = results.filter((r) => r.status === 'fulfilled' && r.value?.ok).length;
+    const conflictCount = results.filter((r) => r.status === 'fulfilled' && r.value?.reason === 'conflict').length;
+    clearSelection();
+    if (okCount === ids.length) toast.success(`Restored ${okCount} part${okCount === 1 ? '' : 's'}${demoMode ? ' (demo)' : ''}`);
+    else if (conflictCount && okCount + conflictCount === ids.length) toast.error(`Restored ${okCount} of ${ids.length} — ${conflictCount} skipped due to an identifier conflict with an active part.`, { duration: 6000 });
+    else if (okCount > 0) toast.error(`${okCount} of ${ids.length} restored — check your connection and retry the rest.`);
+    else toast.error('Could not restore the selected parts. Check your connection and try again.');
+  };
+  // Parts review (Issue 6.1) — row actions were up to 9 always-visible icon buttons
+  // per row (Receive/Adjust/History/Edit/Duplicate/Archive/Restore/Delete, plus the
+  // stock stepper). Consolidated into the same per-row "more actions" ActionMenu
+  // pattern already used for invoice rows in Billing — one open row at a time,
+  // keyed by part id, anchored off a ref-per-row map (identical convention).
+  const [rowMenuFor, setRowMenuFor] = useState(null);
+  const rowMenuAnchorRefs = useRef(new Map());
+  const rowMenuAnchorRef = (id) => {
+    if (!rowMenuAnchorRefs.current.has(id)) rowMenuAnchorRefs.current.set(id, { current: null });
+    return rowMenuAnchorRefs.current.get(id);
+  };
+  useEffect(() => {
+    try { const v = localStorage.getItem('maruti_last_backup'); if (v) setLastBackup(Number(v)); } catch {}
+  }, []);
+  // Phase 8.4: global Ctrl/Cmd+K opens the command palette (Esc handled inside).
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); setCmdkOpen((v) => !v); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  // C-3 fix: centralized listener-error surface. Every onSnapshot's error callback below
+  // funnels through handleListenerError/clearListenerError instead of each writing its own
+  // (previously console-only) handler — a permission-denied/disabled-Firestore/offline
+  // failure on ANY of the ~15 live collections is now surfaced consistently. Before this,
+  // only the `parts` listener updated user-visible state; the rest only console.error'd, so
+  // nothing told the user their Customers/Job Cards/Billing/etc. screen had silently
+  // stopped receiving updates. `connError` (read by the sidebar status pill, alerts, and
+  // OverviewView) is now derived from this map instead of being set ad hoc.
+  const [listenerErrors, setListenerErrors] = useState({}); // { collectionName: message }
+  const listenerErrorToastShown = useRef(false);
+  const describeListenerError = (err) => (
+    /has not been used|disabled/i.test(err?.message || '')
+      ? 'Firestore is not enabled for this project. Enable it in the Google Cloud console, create the database, and publish the rules.'
+      : err?.code === 'permission-denied'
+      ? 'Access denied by security rules. Make sure you are signed in and the rules are published.'
+      : 'Could not reach the database. Check your connection and try again.'
+  );
+  const handleListenerError = useCallback((collectionName, err) => {
+    console.error(`[${collectionName}] listener error:`, err);
+    const msg = describeListenerError(err);
+    setListenerErrors((prev) => (prev[collectionName] === msg ? prev : { ...prev, [collectionName]: msg }));
+    // ONE toast for the whole app, not one per collection — a permission/auth failure
+    // typically hits every listener within the same tick, and 15 stacked toasts would
+    // bury the message rather than surface it.
+    if (!listenerErrorToastShown.current) {
+      listenerErrorToastShown.current = true;
+      toast.error(`Live sync lost (${collectionName}). ${msg}`, { id: 'listener-sync-error', duration: 6000 });
+    }
+  }, []);
+  const clearListenerError = useCallback((collectionName) => {
+    setListenerErrors((prev) => {
+      if (!(collectionName in prev)) return prev;
+      const next = { ...prev };
+      delete next[collectionName];
+      if (Object.keys(next).length === 0) listenerErrorToastShown.current = false;
+      return next;
+    });
+  }, []);
+  const connError = useMemo(() => {
+    const cols = Object.keys(listenerErrors);
+    if (!cols.length) return null;
+    return cols.length === 1 ? listenerErrors[cols[0]] : `${listenerErrors[cols[0]]} (${cols.length} collections affected: ${cols.join(', ')})`;
+  }, [listenerErrors]);
+  const [syncNonce, setSyncNonce] = useState(0); // Issue 6: bump to re-subscribe (Retry)
+  // Phase 6b (PH6-02) — a soft, NON-BLOCKING heads-up before a mutation that needs
+  // a live round-trip (a runTransaction call, or an awaited setDoc/updateDoc whose
+  // promise won't resolve until the server acks). `navigator.onLine` is only a
+  // browser connectivity hint, not proof Firestore is reachable — a captive portal
+  // or a corporate proxy can report "online" while nothing real is reachable — so
+  // this WARNS and nothing more: the write is still attempted exactly as before,
+  // no durable operation id is touched, and no form data is discarded. Reuses the
+  // existing amber `notify.warning` (TriangleAlert, 5s) rather than inventing a
+  // new visual language, and the shared toast dedup (lib/toast.js) collapses
+  // repeated warnings for the same action into one refreshed toast, not a stack.
+  const warnIfOffline = useCallback((thing) => {
+    if (!online) notify.warning(`You appear to be offline — ${thing} may not go through until your connection returns.`);
+  }, [online]);
+  const [search, setSearch] = useState('');
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ISSUE 1 — "characters appear after several seconds".
+  //
+  // `search` lives in THIS component: a ~4,500-line container with 73 useState hooks
+  // that renders the sidebar and every module. So a single keystroke re-renders the
+  // entire application tree. The filter itself is only ~6ms — the RE-RENDER is the freeze.
+  //
+  // The old fix was a 150ms setTimeout debounce. That cannot work, and it is worth being
+  // precise about why: `setSearch` still fires on every character, so the whole tree
+  // still re-renders on every character. Debouncing `debouncedSearch` only delays the
+  // *filter*; it does nothing about the render that is actually blocking the keystroke.
+  // It made the freeze arrive 150ms later, not go away.
+  //
+  // useDeferredValue is the right instrument. React 18 renders the input update at
+  // URGENT priority (the character appears immediately, always) and re-renders the
+  // expensive list at LOW priority — and, critically, it will ABANDON that low-priority
+  // render as soon as the next keystroke arrives. Typing can therefore never wait on the
+  // list, no matter how big the list gets. No architecture change; no debounce timer.
+  // Was `useDeferredValue(search)` called directly here — functionally identical to,
+  // but a separate reimplementation of, the shared useDeferredSearch hook already
+  // imported and used elsewhere in this same file (line ~5883). Switched to the
+  // shared hook so there's exactly one place this pattern is written.
+  const [debouncedSearch, isSearchStale] = useDeferredSearch(search);
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [showModal, setShowModal] = useState(false);
+  const [editPart, setEditPart] = useState(null);
+  const duplicateOriginRef = useRef(null); // Section 2: origin id when creating a copy
+  const backupInputRef = useRef(null); // Issue 14: hidden file input for Restore
+  const actionsAnchorRef = useRef(null); // header Actions ▼ menu trigger, anchors the shared ActionMenu
+  const [actionsOpen, setActionsOpen] = useState(false); // header Actions ▼ menu
+  const [cmdkOpen, setCmdkOpen] = useState(false); // Ctrl+K command palette
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // --demo-banner-h is published by the banner's own ref, but the banner only renders
+  // in demo mode — so on leaving demo the variable kept its last value forever, and
+  // every consumer that reads it unconditionally (module sticky toolbars, DetailsPanel)
+  // stayed offset by a banner that is no longer on screen. Zero it when there's no banner.
+  useEffect(() => {
+    if (!demoMode) document.documentElement.style.setProperty('--demo-banner-h', '0px');
+  }, [demoMode]);
+  // Refactor Phase 14 — the login→app splash/arrival lifecycle (arriving +
+  // bootFading/bootHidden, driven by `loading`) moved verbatim to hooks/useBootSplash.
+  const { arriving, bootFading, bootHidden } = useBootSplash(loading);
+  // Apply saved appearance preferences on load (font size, reduce motion) so they persist across reloads and tabs.
+  useEffect(() => {
+    try {
+      const p = JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}');
+      const sizes = { sm: '15px', md: '16px', lg: '17.5px' };
+      if (p.fontSize) document.documentElement.style.fontSize = sizes[p.fontSize] || '16px';
+      document.documentElement.classList.toggle('reduce-motion', !!p.reduceMotion);
+      document.documentElement.setAttribute('data-theme', p.theme || 'dark');
+      // BUG-LIVE-SETTINGS-01 fix — density needs the SAME "apply on every app load"
+      // treatment as theme/fontSize/reduceMotion above, not only SettingsView's own
+      // effect (which only runs once Settings has actually been opened this
+      // session). Without this, a saved "Compact" preference silently reverted to
+      // Comfortable's styling on every fresh reload until the user happened to
+      // revisit Settings.
+      document.documentElement.setAttribute('data-density', p.density || 'comfortable');
+    } catch {}
+  }, []);
+  const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
+  // Critical #1: alert read/archive state lives here so the sidebar badge and the
+  // Alert Center share one source and update together. Persisted across refresh.
+  //
+  // Universal capacity rollout (Alerts): alert ids are content-stable (e.g. "out-p1") —
+  // the SAME id always represents the SAME underlying condition, verified by
+  // tests/alerts-sync.test.cjs. Once that condition resolves (the part is restocked, the
+  // invoice gets paid, etc.), computeAlerts() below never produces that id again — but
+  // nothing ever removed it from these two sets, so they grow forever even though most
+  // shops will only ever have a few dozen truly ACTIVE alerts at once. That's the real,
+  // unbounded-growth problem here (there is no Firestore "alerts" collection — see
+  // services/localCapacityService.js's header for why this doesn't use capacityService).
+  // Each entry now carries an `at` timestamp (when it was marked read/archived) so
+  // cleanup can go oldest-first, same as every Firestore-backed module.
+  // Settings QA finding: these two keys were NOT demo-isolated the way every other
+  // per-mode store in this app is (SETTINGS_KEY, DEMO_* dataset keys, etc.) — a
+  // Demo/Demo Admin session's read/archived alert-tracking entries were written
+  // into the SAME 'maruti_read_alerts'/'maruti_archived_alerts' localStorage keys a
+  // real Production admin's browser also uses. In practice demo alert ids are
+  // namespaced distinctly (e.g. 'low-demo-part-2') so they don't visibly collide
+  // with real Firestore-id-based alerts, but the array still grows unbounded by
+  // mixing entries from every mode ever used in this browser, and it breaks the
+  // isolation guarantee the rest of the app maintains. Demo Admin intentionally
+  // shares the demo key with Regular Demo (same as SETTINGS_KEY) — they're one
+  // demo session, not two.
+  const ALERT_READ_KEY = demoMode ? 'maruti_read_alerts_demo' : 'maruti_read_alerts';
+  const ALERT_ARCHIVED_KEY = demoMode ? 'maruti_archived_alerts_demo' : 'maruti_archived_alerts';
+  const [readAlertEntries, setReadAlertEntries] = useState([]); // [{id, at}]
+  const [archivedAlertEntries, setArchivedAlertEntries] = useState([]); // [{id, at}]
+  const readAlerts = useMemo(() => new Set(readAlertEntries.map((e) => e.id)), [readAlertEntries]);
+  const archivedAlerts = useMemo(() => new Set(archivedAlertEntries.map((e) => e.id)), [archivedAlertEntries]);
+  // Reads both the current {id, at} shape and the pre-rollout plain-string-array shape
+  // (existing users' localStorage) — old entries get at:null, which sorts as "oldest" in
+  // the cleanup preview, a safe default since an entry with no recorded timestamp is, if
+  // anything, more likely to be genuinely stale than a freshly-added one.
+  const normalizeAlertEntries = (raw) => {
+    try {
+      const parsed = JSON.parse(raw || '[]');
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((x) => (typeof x === 'string' ? { id: x, at: null } : { id: x?.id, at: x?.at || null }))
+        .filter((e) => e.id);
+    } catch { return []; }
+  };
+  useEffect(() => {
+    try {
+      setReadAlertEntries(normalizeAlertEntries(localStorage.getItem(ALERT_READ_KEY)));
+      setArchivedAlertEntries(normalizeAlertEntries(localStorage.getItem(ALERT_ARCHIVED_KEY)));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoMode]);
+  useEffect(() => {
+    try { setSidebarCollapsed(localStorage.getItem(STORAGE.SIDEBAR_COLLAPSED) === '1'); } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE.SIDEBAR_COLLAPSED, sidebarCollapsed ? '1' : '0'); } catch {}
+  }, [sidebarCollapsed]);
+  const [restoreConfirm, setRestoreConfirm] = useState(false); // typed-RESTORE modal
+  const [restoreText, setRestoreText] = useState('');
+  const pendingRestoreFile = useRef(null);
+  const [saving, setSaving] = useState(false); // Fix 3: loading state for save, owned by parent
+  // Refactor Phase 14 — Web Speech API voice search (listening / voiceLang /
+  // liveTranscript + the start/stop toggle) moved verbatim to hooks/useVoiceSearch;
+  // `onTranscript` is the one adapter — it replaces the old direct `setSearch(text)`.
+  const { listening, voiceLang, setVoiceLang, liveTranscript, startVoiceSearch } = useVoiceSearch(setSearch);
+  // Refactor Phase 14 — the root-level image hover preview (rAF-throttled, tracked by
+  // mouse coordinates) moved verbatim to hooks/useImageHoverPreview.
+  const { hoveredImage, handleImageHover, handleImageMove, handleImageLeave } = useImageHoverPreview();
+
+  // New: tabs, suppliers, logout confirmation
+  // DEEP LINKING. All 16 modules live behind a single route, with the active module
+  // held in useState. That meant:
+  //   - browser Back EXITED the app instead of returning to the previous module
+  //   - a refresh (or the PWA being killed on a phone) dumped you back on the Dashboard
+  //   - you could not bookmark or share "the Billing screen" with a colleague
+  //   - a mis-tap on Back mid-invoice lost the tab
+  // Syncing the tab to the URL hash fixes all of that with ZERO UI change and no
+  // routing rewrite: #billing, #inventory, #reports. The hash is used rather than a
+  // real route because the modules share one mounted component tree — converting them
+  // to pages would remount everything and is a v2-scale change.
+  const [activeTab, setActiveTabRaw] = useState('overview');
+  // Stale-closure guard for the hashchange listener below, which is registered once
+  // ([] deps) so it can't see activeTab updates through a normal render closure.
+  const activeTabRef = useRef('overview');
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  // Surfaced from SettingsView so navigation can guard unsaved high-risk config. The
+  // beforeunload handler already covers refresh/close; this covers in-app tab switches,
+  // which otherwise discarded a dirty GST/invoice/notification change without warning.
+  const [settingsDirty, setSettingsDirty] = useState(false);
+  const settingsDirtyRef = useRef(false);
+  useEffect(() => { settingsDirtyRef.current = settingsDirty; }, [settingsDirty]);
+  // PHASE 7b (PH7-02) — the SAME guard, generalized: every other entity editor
+  // (Customer, Part, Supplier, Job Card, Invoice) reports its own dirty state
+  // through this single shared flag via the `onDirtyChange` prop each module/modal
+  // now accepts. Only one editor is ever open at a time (each module unmounts on
+  // tab switch, per the existing conditional-render architecture — see
+  // tests/browser-lifecycle-discovery.test.cjs §6), so one flag is sufficient; no
+  // per-module bookkeeping is needed. A plain ref (not state) is enough — it is
+  // only ever READ synchronously inside setActiveTab below, never rendered.
+  const moduleDirtyRef = useRef(false);
+  const handleModuleDirtyChange = useCallback((v) => { moduleDirtyRef.current = !!v; }, []);
+
+  // PHASE 28 (PH28-02) — the Part / Supplier / Checkout / Restock / Stock-Adjust modals
+  // render OUTSIDE the `activeTab === …` conditionals (so they can open over any
+  // module). A browser Back while one is open used to fire the hashchange handler and
+  // silently swap the module BEHIND the modal — leaving the address bar pointing at a
+  // tab the user can't see. `onPop` reads this ref to keep Back inert while such a
+  // modal owns the screen (the modal has its own close control). Updated in an effect
+  // below, once those state vars are declared.
+  const blockingModalRef = useRef(false);
+
+  // Restore the tab from the URL on first paint (and honour Back/Forward). Also handle
+  // deep-links opened in a NEW BROWSER TAB via ?open=<tab>:<query> — e.g. a job card or
+  // invoice opened from the Customers drawer opens here, on the right module, pre-searched.
+  useEffect(() => {
+    const fromHash = () => {
+      const h = (typeof window !== 'undefined' ? window.location.hash : '').replace(/^#/, '');
+      return TAB_KEYS.includes(h) ? h : null;
+    };
+    const initial = fromHash();
+    // Settings QA fix: a Demo User could reach a permission-gated tab (Reports/
+    // Analytics/Settings) just by loading the page with that hash already in the
+    // address bar — this initial-load path set the tab directly, bypassing
+    // setActiveTab's guard entirely (see demoBlockedTab above).
+    if (initial && demoBlockedTabRef.current(initial)) {
+      protectedDemoToast(true);
+      try { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#overview`); } catch {}
+    } else if (initial) setActiveTabRaw(initial);
+    // Deep-link: ?open=<tab>:<recordQuery>
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const open = params.get('open');
+      if (open) {
+        const [tabPart, ...rest] = open.split(':');
+        const query = rest.join(':');
+        const tabMap = { jobcard: 'jobcards', invoice: 'billing', newjobcard: 'jobcards', newinvoice: 'billing', customer: 'customers', jobcardlist: 'jobcards', invoicelist: 'billing' };
+        // Universal drill-down navigation (dashboardDrillDownUrl, above) — a Dashboard
+        // KPI/"View all" click carries its full {tab, opts} shape as JSON under the
+        // `nav` key instead of a single short alias, since the destination isn't just
+        // one module but that module PLUS the exact filter state the summary promised.
+        let navPayload = null;
+        if (tabPart === 'nav' && query) {
+          try { navPayload = JSON.parse(decodeURIComponent(query)); } catch { navPayload = null; }
+        }
+        const targetTab = (navPayload?.tab && TAB_KEYS.includes(navPayload.tab))
+          ? navPayload.tab
+          : tabMap[tabPart] || (TAB_KEYS.includes(tabPart) ? tabPart : null);
+        if (targetTab && demoBlockedTabRef.current(targetTab)) {
+          protectedDemoToast(true);
+        } else if (targetTab) {
+          setActiveTabRaw(targetTab);
+          // New-record: promote this tab's token-scoped draft into the canonical key the
+          // module reads on mount, then drop the token key. Prevents multi-tab collisions.
+          if (tabPart === 'newjobcard' && query) {
+            try { const d = localStorage.getItem(`maruti_jobcard_draft_v2::${query}`); if (d) { localStorage.setItem('maruti_jobcard_draft_v2', d); localStorage.removeItem(`maruti_jobcard_draft_v2::${query}`); } } catch {}
+          } else if (tabPart === 'newinvoice' && query) {
+            try { const d = localStorage.getItem(`maruti_invoice_prefill::${query}`); if (d) { localStorage.setItem('maruti_invoice_prefill', d); localStorage.removeItem(`maruti_invoice_prefill::${query}`); } } catch {}
+          } else if (tabPart === 'jobcard' && query) {
+            try { localStorage.setItem('maruti_jobcard_open', query); } catch {}
+            setSearch(query);
+          } else if (tabPart === 'invoice' && query) {
+            try { localStorage.setItem('maruti_invoice_open', query); } catch {}
+            setSearch(query);
+          } else if (tabPart === 'jobcardlist' && query) {
+            // View All Job Cards, filtered to a vehicle's registration.
+            try { localStorage.setItem('maruti_jobcard_list_filter', query); } catch {}
+            setSearch(query);
+          } else if (tabPart === 'invoicelist' && query) {
+            // View All Invoices, filtered to a vehicle's registration.
+            try { localStorage.setItem('maruti_invoice_list_filter', query); } catch {}
+            setSearch(query);
+          } else if (tabPart === 'customer' && query) {
+            try { localStorage.setItem('maruti_customer_open', query); } catch {}
+          } else if (tabPart === 'inventory' && query) {
+            // View Part Details: land on Parts (not the Dashboard sub-view — the exact
+            // "generic Inventory landing page" bug this fixes) in the SAME synchronous
+            // block as setActiveTabRaw above, so there's no frame where the Dashboard
+            // sub-view is visible before the part resolves. The actual part lookup and
+            // PartModal open happen once real data has loaded — see openPartDetail's
+            // consuming effect (the inventory array isn't populated yet at this point
+            // in a fresh page load).
+            try { localStorage.setItem('maruti_inventory_highlight', query); } catch {}
+            setInvSubView('parts');
+          } else if (tabPart === 'vehicles' && query) {
+            // View Vehicle: filter the Vehicles list to a registration.
+            try { localStorage.setItem('maruti_vehicles_open', query); } catch {}
+          } else if (tabPart === 'suppliers' && query) {
+            // Issue 6 (Suppliers module review) — Performance's "Open in new tab" used to
+            // drop the supplier id entirely (`?open=suppliers#suppliers`, no query), so this
+            // landed on the generic Suppliers tab instead of the specific supplier. Same
+            // stash-and-consume pattern as the other tabs above.
+            try { localStorage.setItem('maruti_supplier_open', query); } catch {}
+          } else if (tabPart === 'nav' && navPayload) {
+            // Universal drill-down navigation — same opts shape (subView/invFilter/
+            // stockFilter/statusFilter/kpiFilter) the Dashboard's onNavigate used to
+            // apply in-process before this became a new-tab destination; applying it
+            // here instead means the destination tab lands pre-filtered on its OWN
+            // first render, against its own current data — never a stale snapshot of
+            // what the Dashboard counted at click-time.
+            const opts = navPayload.opts || {};
+            if (targetTab === 'inventory') {
+              if (opts.subView) setInvSubView(opts.subView);
+              if (opts.invFilter) setInvFilter(opts.invFilter);
+              if (opts.stockFilter) setPendingStockFilter(opts.stockFilter);
+              if (opts.subView === 'po' && opts.statusFilter) setPendingPOStatusFilter(opts.statusFilter);
+            } else if (targetTab === 'suppliers' && opts.subView) {
+              setSupSubView(opts.subView);
+            } else if (targetTab === 'billing' && opts.statusFilter) {
+              setPendingBillingStatusFilter(opts.statusFilter);
+            } else if (targetTab === 'jobcards' && opts.kpiFilter) {
+              setPendingJobKpiFilter(opts.kpiFilter);
+            }
+          }
+        }
+        // strip the param so a refresh/bookmark stays clean
+        params.delete('open');
+        const qs = params.toString();
+        window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}#${targetTab || initial || 'overview'}`);
+      }
+    } catch {}
+
+    // Settings QA fix: this fires on EVERY hashchange, including a Demo User
+    // typing #reports straight into the address bar or hitting Back/Forward onto
+    // a gated tab — neither goes through setActiveTab's guard. Block here too,
+    // and snap the address bar back to whatever tab is actually on screen so the
+    // hash never lies about where the user really is.
+    const onPop = () => {
+      const t = fromHash();
+      if (!t) return;
+      // Snap the address bar back to the tab actually on screen. Used by every branch
+      // that refuses the navigation, so the hash never lies about where the user is.
+      const snapBack = () => {
+        try { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${activeTabRef.current}`); } catch {}
+      };
+      if (demoBlockedTabRef.current(t)) { protectedDemoToast(true); snapBack(); return; }
+      if (t === activeTabRef.current) return;
+      // PHASE 28 (PH28-02) — a Part/Supplier/Checkout/Restock/Adjust modal is open over
+      // the current module. Back does not tear the module out from under it; the modal
+      // stays and Back is a no-op (close it with its own control).
+      if (blockingModalRef.current) { snapBack(); return; }
+      // PHASE 28 (PH28-03) — Back/Forward must honour the SAME unsaved-changes guard a
+      // sidebar click goes through (setActiveTab). Without this, backing out of a dirty
+      // Settings page or entity editor discarded the edits with no prompt.
+      if (settingsDirtyRef.current && typeof window !== 'undefined'
+          && !window.confirm('You have unsaved settings. Leave without saving?')) { snapBack(); return; }
+      if (moduleDirtyRef.current && typeof window !== 'undefined'
+          && !window.confirm('You have unsaved changes. Leave without saving?')) { snapBack(); return; }
+      setActiveTabRaw(t);
+    };
+    window.addEventListener('hashchange', onPop);
+    return () => window.removeEventListener('hashchange', onPop);
+  }, []);
+
+  // Issue 6 (Suppliers module review) — consumes the `maruti_supplier_open` id the deep-link
+  // effect above just stashed (?open=suppliers:<id>), same shape as CustomersModule.jsx's own
+  // maruti_customer_open. Runs after that effect (declared below it) so the key is already
+  // written by the time this reads it.
+  useEffect(() => {
+    let id = '';
+    try { id = localStorage.getItem('maruti_supplier_open') || ''; } catch { id = ''; }
+    if (!id) return;
+    setSupSubView('directory');
+    setPerfSelectId(id);
+    setTimeout(() => setPerfSelectId(null), 100);
+    try { localStorage.removeItem('maruti_supplier_open'); } catch {}
+  }, []);
+
+  const setActiveTab = useCallback((tab) => {
+    if (demoBlockedTab(tab)) { protectedDemoToast(true); return; }
+    // Leaving Settings with unsaved high-risk config? Confirm before discarding, so a
+    // sidebar click can't silently lose a GST/invoice/notification change.
+    if (tab !== 'settings' && settingsDirtyRef.current) {
+      if (typeof window !== 'undefined' && !window.confirm('You have unsaved settings. Leave without saving?')) return;
+      setSettingsDirty(false);
+    }
+    // PHASE 7b (PH7-02) — same protection, generalized to every other entity
+    // editor (Customer/Part/Supplier/Job Card/Invoice) via moduleDirtyRef. Gated
+    // on `tab !== activeTabRef.current` so re-clicking the ALREADY-active tab (a
+    // no-op navigation) never prompts — only an actual departure does.
+    if (tab !== activeTabRef.current && moduleDirtyRef.current) {
+      if (typeof window !== 'undefined' && !window.confirm('You have unsaved changes. Leave without saving?')) return;
+      moduleDirtyRef.current = false;
+    }
+    setActiveTabRaw(tab);
+    if (typeof window === 'undefined') return;
+    // Always land at the top of the newly-opened module — otherwise the previous scroll
+    // position is retained and the new page's first section looks clipped (Issue 1).
+    try { appScrollTo({ top: 0 }); } catch {}
+    // replaceState for the first tab, pushState afterwards, so Back walks the modules
+    // the user actually visited instead of stacking duplicates.
+    if (window.location.hash.replace(/^#/, '') !== tab) {
+      window.history.pushState(null, '', `#${tab}`);
+    }
+  }, [demoBlockedTab]);
+  // Job Cards — v1 stores locally per workspace (demo/prod); Firestore sync is a later step.
+  const [jobCards, setJobCards] = useState([]);
+  useEffect(() => {
+    if (!demoMode) return; // prod driven by subscription below
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE.DEMO_JOB_CARDS) || '[]');
+      if (saved.length === 0) { const s = getGarageSeed().jobCards; setJobCards(s); try { localStorage.setItem(STORAGE.DEMO_JOB_CARDS, JSON.stringify(s)); } catch {} }
+      else setJobCards(saved);
+    } catch { setJobCards([]); }
+  }, [demoMode]);
+  // THE PERSISTENCE ADAPTER. One interface, two backends (demo -> browser storage,
+  // production -> Firestore). Callers no longer write `if (demoMode)`, so the two modes
+  // cannot silently diverge — which was the root cause of every data bug this project
+  // has had (fabricated demo ledger, re-seed race, audit lost in demo, ISO dates dropped).
+  const store = useMemo(() => createStore(demoMode), [demoMode]);
+
+  // Phase 1a — surface a stale/deleted guarded-save rejection safely. The full
+  // "review / keep my changes" conflict UX is Phase 1c; here the editor stays
+  // open (so nothing typed is lost) and the user gets a plain instruction.
+  const concToast = useCallback((err, thing) => {
+    if (err && err.code === CONC_DELETED) {
+      toast.error(`This ${thing} was deleted by another user. Close it and start again.`, { duration: 6000 });
+    } else {
+      toast.error(`This ${thing} was changed by another user while you had it open. Reopen it to see the latest, then re-apply your change.`, { duration: 7000 });
+    }
+  }, []);
+
+  // Job cards are keyed by jobNo (their natural id). Persist with per-doc diff.
+  const jobCardsRef = useRef([]);
+  useEffect(() => { jobCardsRef.current = jobCards; }, [jobCards]);
+  // C-1 fix: returns the write promise (instead of swallowing it) so callers can await
+  // real persistence before showing success/resetting the form. Still logs + toasts here
+  // (the single shared error surface for every caller, awaited or fire-and-forget), then
+  // re-throws so an awaiting caller can also gate its own success/failure handling.
+  const persistJobCardsDiff = (prev, next) => {
+    // Job cards key on jobNo (their natural id), NOT on `id` — hence the idField arg.
+    // Getting this wrong would write every card to a doc named "undefined".
+    return store.syncAll(COLLECTIONS.JOB_CARDS, prev, next, 'jobNo').catch((e) => {
+      console.error('[jobCards] sync failed — change is in memory but may not have saved.', e);
+      toast.error('Could not save job card. Check your connection.');
+      throw e;
+    });
+  };
+  useEffect(() => {
+    if (demoMode) return;
+    const unsub = onSnapshot(
+      query(collection(db, COLLECTIONS.JOB_CARDS), orderBy('createdAt', 'desc'), limit(LIMITS.JOB_CARDS_LIVE)),
+      { includeMetadataChanges: true },
+      (snap) => { if (!snap.metadata.hasPendingWrites) { setJobCards(snap.docs.map((d) => ({ ...d.data(), jobNo: d.data().jobNo || d.id }))); clearListenerError('jobCards'); } },
+      (err) => handleListenerError('jobCards', err)
+    );
+    return unsub;
+  }, [demoMode, syncNonce]);
+  // Customers — Firestore-backed in production, local demo dataset in demo mode.
+  const [customers, setCustomersRaw] = useState([]);
+  // Same ref-current pattern as jobCardsRef/invoicesRef below — lets setCustomers() read
+  // the latest value synchronously without going through a setState updater (needed so it
+  // can return a real persistence promise; see C-1 fix on setCustomers).
+  const customersRef = useRef([]);
+  useEffect(() => { customersRef.current = customers; }, [customers]);
+  // Demo mode: seed from local demo dataset (sandbox, never hits Firestore).
+  // Production: hydrated by the live onSnapshot subscription below.
+  useEffect(() => {
+    if (!demoMode) return; // prod is driven by the Firestore subscription
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE.DEMO_CUSTOMERS) || '[]');
+      if (saved.length === 0) { const s = getGarageSeed().customers; setCustomersRaw(s); try { localStorage.setItem(STORAGE.DEMO_CUSTOMERS, JSON.stringify(s)); } catch {} }
+      else setCustomersRaw(saved);
+    } catch { setCustomersRaw([]); }
+  }, [demoMode]);
+  // Diff two arrays of {id,...} docs and write only what changed to a Firestore
+  // collection: upsert changed/new docs, delete removed ones. Keeps per-document
+  // granularity (no whole-array rewrites) so concurrent edits from other devices
+  // aren't clobbered. Offline writes queue and replay automatically.
+  // C-1 fix: returns the write promise instead of swallowing it, so callers can await
+  // real persistence before showing success/resetting a form. Logs + toasts here (the
+  // single shared error surface for every caller), then re-throws so an awaiting caller
+  // can gate its own success/failure handling too.
+  const persistDocsDiff = useCallback((coll, prev, next) => {
+    // Delegates to the adapter, which upserts what changed and deletes what disappeared
+    // — verified op-for-op identical to the previous inline implementation (5/5), including
+    // the "nothing changed -> write NOTHING" case that protects the Firestore bill.
+    return store.syncAll(coll, prev, next).catch((e) => {
+      console.error(`[${coll}] sync failed — the change is in memory but may not have saved.`, e);
+      toast.error(`Could not save ${coll}. Check your connection.`);
+      throw e;
+    });
+  }, [store]);
+  // C-1 fix: reads/writes customersRef synchronously (same ref-based pattern already used
+  // for jobCards/invoices below) instead of computing `next` inside the setCustomersRaw
+  // updater — a promise cannot be returned from inside a state updater. This lets setCustomers
+  // return the real persistence promise while keeping every existing call site's signature
+  // (`setCustomers(updater)`) unchanged; callers that don't care can still ignore the return.
+  const setCustomers = useCallback((updater) => {
+    const prev = customersRef.current;
+    const next = typeof updater === 'function' ? updater(prev) : updater;
+    customersRef.current = next;
+    setCustomersRaw(next);
+    return persistDocsDiff(COLLECTIONS.CUSTOMERS, prev, next);   // adapter picks the backend
+  }, [persistDocsDiff]);
+  // Phase 1a — the Customer WIZARD save (an edit of an existing customer, which
+  // also carries the nested vehicles[]) goes through the revision-guarded
+  // transaction. Every other setCustomers() mutation (add note, quick vehicle,
+  // bulk archive, billing's totals write-back) now persists field-by-field via
+  // store.syncAll's Phase-3b path — those touch narrow fields off the live listener
+  // state and must not start rejecting.
+  // Phase 3b (CWF-03) — `opts.clientBefore` (the record the wizard opened) lets the
+  // guarded save replay ONLY the vehicles this editor changed onto server truth,
+  // so a vehicle added from the detail panel while the wizard was open isn't
+  // dropped by the wizard's save.
+  const saveCustomerEdit = useCallback(async (record, expectedRev, opts = {}) => {
+    warnIfOffline('this customer'); // Phase 6b (PH6-02) — non-blocking heads-up only
+    const fresh = await store.saveGuarded(COLLECTIONS.CUSTOMERS, record, expectedRev, {
+      label: 'This customer',
+      idArrayKeys: ['vehicles'],
+      clientBefore: opts.clientBefore || null,
+    });
+    const prev = customersRef.current;
+    const next = prev.map((c) => (c.id === record.id ? { ...c, ...record, vehicles: fresh.vehicles || record.vehicles, _rev: fresh._rev } : c));
+    customersRef.current = next;
+    setCustomersRaw(next);
+    return fresh;
+    // `warnIfOffline` must stay a dependency — it closes over `online`, and this
+    // callback's own memoization would otherwise pin it to whatever `online` was
+    // on first render (this callback's other dependency, `store`, is a `useMemo`
+    // keyed only to `demoMode`, so without this it would never refresh).
+  }, [store, warnIfOffline]);
+  // Live subscription (prod). Customer docs carry their nested vehicles[] inline.
+  useEffect(() => {
+    if (demoMode) return;
+    const unsub = onSnapshot(
+      // BOUNDED. This used to stream the whole `customers` collection. Firestore bills
+      // per document read, so at 100k customers this cost 100,000 reads on EVERY mount
+      // (~$30 across 500 concurrent users, repeated on every reconnect) and put 100k
+      // objects into a React array — enough to exhaust a browser tab. The UI only ever
+      // shows a searchable window, so we subscribe to a window and page/search the rest.
+      query(collection(db, COLLECTIONS.CUSTOMERS), orderBy('createdAt', 'desc'), limit(LIMITS.CUSTOMERS_LIVE)),
+      { includeMetadataChanges: true },
+      (snap) => { if (!snap.metadata.hasPendingWrites) { setCustomersRaw(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('customers'); } },
+      (err) => handleListenerError('customers', err)
+    );
+    return unsub;
+  }, [demoMode, syncNonce]);
+  // Billing — invoices persisted per workspace; on save/delete we recompute the
+  // owning customer's totalSpent (sum of paid) and outstanding (sum of balances)
+  // so Customers / Reminders / Dashboard stay in sync (single source of truth).
+  const [invoices, setInvoicesRaw] = useState([]);
+  // Hydrate the demo invoice store ONCE. Two things were wrong here:
+  //  1. It never seeded from the demo dataset, so Billing started empty while the
+  //     Sales/Services ledger was full of history — two stores telling different
+  //     stories about the same workshop.
+  //  2. It re-ran on every `demoMode` identity change and called setInvoicesRaw(),
+  //     which would clobber invoices the user had just created.
+  // Now: seed once from getDemoData().invoices (the SAME invoices the ledger is
+  // derived from), preferring anything already saved this session.
+  const invoicesSeeded = useRef(false);
+  useEffect(() => {
+    if (!demoMode) { invoicesSeeded.current = false; return; }
+    if (invoicesSeeded.current) return;
+    invoicesSeeded.current = true;
+    purgeStaleDemoData();   // MUST run before we read any cached demo data
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE.DEMO_INVOICES) || 'null');
+      if (Array.isArray(saved) && saved.length) { setInvoicesRaw(saved); return; }
+      const seeded = getDemoData().invoices || [];
+      setInvoicesRaw(seeded);
+      try { localStorage.setItem(STORAGE.DEMO_INVOICES, JSON.stringify(seeded)); } catch {}
+    } catch { setInvoicesRaw([]); }
+  }, [demoMode]);
+  const invoicesRef = useRef([]);
+  useEffect(() => { invoicesRef.current = invoices; }, [invoices]);
+  // Live subscription (prod) for invoices.
+  useEffect(() => {
+    if (demoMode) return;
+    const unsub = onSnapshot(
+      query(collection(db, COLLECTIONS.INVOICES), orderBy('createdAt', 'desc'), limit(LIMITS.INVOICES_LIVE)),
+      { includeMetadataChanges: true },
+      (snap) => { if (!snap.metadata.hasPendingWrites) { setInvoicesRaw(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('invoices'); } },
+      (err) => handleListenerError('invoices', err)
+    );
+    return unsub;
+  }, [demoMode, syncNonce]);
+  // PHASE 8B: returns setCustomers' own persistence promise (previously
+  // discarded) so runPostCommitDerivedEffects can actually await/catch it
+  // instead of firing an unhandled rejection on failure. Already idempotent —
+  // a full recompute over `allInvoices`, not an increment — so re-running it
+  // (a retry, or the next invoice for this customer) always self-corrects.
+  const syncCustomerTotals = (custId, allInvoices) => {
+    if (!custId) return Promise.resolve();
+    const mine = allInvoices.filter((iv) => iv.customerId === custId);
+    // Use the shared invTotals (derives from lines, ignores stale grandTotal) so this
+    // customer's outstanding always matches what Billing and Reports show. A local copy
+    // here previously trusted the stored total first and could diverge.
+    //
+    // PH23-D2 — but ONLY over invoices that are really the customer's money. This used
+    // to sum `.paid` and `.balance` over EVERY invoice with this customerId, so:
+    //   • a Draft or Estimate (balance === grand, no payments) inflated "Outstanding"
+    //     by its full amount — the customer had not been billed anything;
+    //   • a Refunded / Returned invoice still counted its (returned) payment in
+    //     "Total Spent", and a Cancelled unpaid invoice still counted its balance.
+    // isRealized (Paid) and isOutstanding (Unpaid / Partially Paid) are the two states
+    // where real money is, or is owed; nothing else contributes.
+    const paid = mine.reduce((s, iv) => s + ((isRealized(iv) || isOutstanding(iv)) ? invTotals(iv).paid : 0), 0);
+    const outstanding = mine.reduce((s, iv) => s + (isOutstanding(iv) ? invTotals(iv).balance : 0), 0);
+    return setCustomers((prev) => prev.map((c) => (c.id === custId ? { ...c, totalSpent: paid, outstanding } : c)));
+  };
+  // Phase 3: automatic inventory sync from Billing. Each invoice remembers the
+  // net part quantities it consumed (by partId). On save we apply the DELTA vs.
+  // the previously-stored version so edits adjust the difference; on delete we
+  // restore. Non-part/labour lines and lines without a partId are ignored.
+  const invoicePartQtys = (iv) => {
+    const map = {};
+    (iv?.lines || []).forEach((l) => { if (l.partId && l.kind === 'Part') map[l.partId] = (map[l.partId] || 0) + (Number(l.qty) || 0); });
+    return map;
+  };
+  // Full revenue snapshot for an invoice: EVERY billable line (parts, labour,
+  // services, outside purchases, misc) keyed by a stable line key, each carrying
+  // its category, quantity/hours, actual billed revenue (after per-line discount),
+  // and cost. Only inventory parts carry a real cost (purchasePrice) — labour and
+  // services have zero cost so their profit equals the full charge (spec #11).
+  // Keyed by partId for parts (so re-adding the same part aggregates), else by the
+  // stable line id, so edits diff correctly.
+  const lineCategory = (l) => {
+    if (l.partId && l.kind === 'Part') return 'Parts';
+    if (l.kind === 'Labour') return 'Labour';
+    if (l.kind === 'Service') return 'Service';
+    if (l.kind === 'Other') return 'Outside Purchase';
+    if (l.kind === 'Part') return 'Parts'; // manual part line (no inventory link)
+    return 'Miscellaneous';
+  };
+  const invoiceRevenueLines = (iv) => {
+    const map = {};
+    let sub = 0;
+    (iv?.lines || []).forEach((l) => {
+      if (!(l.desc || '').trim()) return;
+      const qty = Number(l.qty) || 0;
+      const rate = Number(l.rate) || 0;
+      if (qty <= 0 && rate <= 0) return;
+      const disc = Number(l.disc) || 0;
+      const rev = qty * rate * (1 - disc / 100);
+      sub += rev;
+      const isPartLine = l.partId && l.kind === 'Part';
+      // PH23-D1 — COGS from the line's OWN `purchasePrice` snapshot (captured at billing
+      // time by BillingModule.partLineData — "the inventory price itself is never
+      // mutated"), NOT the live catalogue. totalsOf()/iv.profitAmount and
+      // billingService.revenueLines already use this snapshot; the ledger diff loops
+      // below re-read inventory.find(...).purchasePrice, so an invoice drafted before a
+      // part-cost change and paid after it recorded a DIFFERENT profit in the sales
+      // ledger / salesRollups / analytics than on its own invoice. Catalogue is the
+      // fallback only for a legacy line that carries no snapshot.
+      const unitCost = isPartLine
+        ? (l.purchasePrice != null && l.purchasePrice !== ''
+          ? Number(l.purchasePrice) || 0
+          : (inventory.find((p) => p.id === l.partId)?.purchasePrice || 0))
+        : 0;
+      const key = isPartLine ? `part:${l.partId}` : `line:${l.id}`;
+      // PH23-D1 — `listPrice` is likewise the catalogue price snapshotted on the line at
+      // billing time; carry it so the "Extra Charged" indicator reflects what the part
+      // was actually listed at when billed, not today's catalogue.
+      const e = map[key] || { qty: 0, revenue: 0, cost: 0, listPrice: (l.listPrice != null && l.listPrice !== '') ? Number(l.listPrice) || 0 : 0, name: l.desc || '', category: lineCategory(l), partId: isPartLine ? l.partId : null, kind: l.kind || 'Part', gst: Number(l.gst) || 0, disc, technician: l.technician || l.tech || '', hsn: l.hsn || '' };
+      e.qty += qty; e.revenue += rev; e.cost += qty * unitCost; map[key] = e;
+    });
+    // PHASE 23 (PH23-01) — an invoice-level discount (flat ₹ or %) is money the customer
+    // does NOT pay for these lines. invTotals()/totalsOf() already fold it into `afterDisc`
+    // (and rescale GST by afterDisc/sub — see PHASE 11 §), so `iv.grandTotal` / `profitAmount`
+    // and the Billing reports are net-of-it. The sales ledger / salesRollups / dashboard
+    // analytics / Monthly-Profit-Trend read THESE line revenues, and without the same
+    // rescale they overstated Revenue AND Profit by the whole discount for every discounted
+    // paid invoice (Cost is unchanged, so Margin was overstated too). Same afterDisc/sub
+    // ratio, applied once here so every downstream aggregate reconciles to the invoice's
+    // own post-discount total.
+    const invDisc = iv?.discountType === 'percent' ? sub * (toNum(iv?.discount) / 100) : toNum(iv?.discount);
+    if (invDisc > 0 && sub > 0) {
+      const scale = Math.max(0, sub - invDisc) / sub;
+      Object.values(map).forEach((e) => { e.revenue *= scale; });
+    }
+    return map;
+  };
+  // Legacy alias kept for any external callers (returns part lines only).
+  const invoicePartSales = (iv) => {
+    const map = {};
+    const all = invoiceRevenueLines(iv);
+    Object.values(all).forEach((e) => { if (e.partId) map[e.partId] = { qty: e.qty, revenue: e.revenue, name: e.name }; });
+    return map;
+  };
+  // Record the NET revenue change of an invoice to the sales ledger + monthly
+  // rollup. Now covers EVERY billable category — parts, labour, services, outside
+  // purchases, misc — so a garage's full takings (not just spare parts) feed
+  // Sales → Reports → Analytics. Idempotent across edits (records only the delta)
+  // and reversible on delete (negative delta). Skipped in demo mode (no Firestore).
+  // Only inventory parts carry a cost; labour/service profit = full charge (#11).
+  // THE TRANSACTION ENGINE.
+  // Demo mode runs the EXACT same business logic as production — it used to bail out
+  // here, which meant a demo sale reduced stock but never produced Sales / Services /
+  // Stock Out / analytics rows, so demo silently behaved differently from the real
+  // product. The only difference now is the DESTINATION of the writes: production
+  // persists to Firestore, demo persists to local demo state (and can be reset).
+  const recordInvoiceSalesDelta = (prior, next) => {
+    const before = invoiceRevenueLines(prior); const after = invoiceRevenueLines(next);
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    const monthAgg = {};
+    const pendingDemoSales = [];
+    const ctx = next || prior || {};
+    const paidTotal = (ctx.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0) || Number(ctx.paid) || 0;
+    const payModes = (ctx.payments || []).map((p) => p.mode).filter(Boolean).join(', ') || ctx.payMode || '';
+    const src = next?.invNo || prior?.invNo || '';
+    keys.forEach((key) => {
+      const b = before[key] || { qty: 0, revenue: 0, cost: 0 };
+      const a = after[key] || { qty: 0, revenue: 0, cost: 0, name: '', category: 'Miscellaneous', partId: null, kind: 'Part', gst: 0, disc: 0, technician: '' };
+      const dQty = a.qty - b.qty;
+      const dRev = a.revenue - b.revenue;
+      if (dQty === 0 && Math.abs(dRev) < 0.005) return;
+      const meta = after[key] || before[key];
+      const isPart = !!meta.partId;
+      const part = isPart ? inventory.find((p) => p.id === meta.partId) : null;
+      // PH23-D1 — COGS diffs the line's OWN cost snapshot (carried by invoiceRevenueLines),
+      // symmetric with the revenue diff; re-reading the live catalogue here mis-priced any
+      // invoice drafted before and paid after a part-cost change.
+      const dCost = (a.cost || 0) - (b.cost || 0);
+      const unitCost = dQty !== 0 ? dCost / dQty : (isPart ? (part?.purchasePrice || 0) : 0);
+      // Catalogue (list) price captured on the invoice line at pick-time. Lets the
+      // Sales module report "catalogue Rs.690 -> sold Rs.790 -> extra Rs.100" instead
+      // of silently hiding that the part was billed above/below its listed price.
+      const listPrice = toNum(meta.listPrice) || (isPart ? toNum(part?.defaultSellingPrice || part?.sellingPrice) : 0);
+      const soldUnit = dQty !== 0 ? dRev / dQty : 0;
+      const extraRevenue = (isPart && listPrice > 0) ? (soldUnit - listPrice) * dQty : 0;
+      const record = {
+        partId: meta.partId || null,
+        name: (part?.name) || meta.name || '',
+        sku: part?.sku || '',
+        category: meta.category || 'Miscellaneous',
+        revenueType: meta.category || 'Miscellaneous',
+        isService: !isPart,
+        qty: dQty,
+        unitPrice: soldUnit,
+        listPrice,
+        extraRevenue,
+        unitCost,
+        revenue: dRev,
+        cost: dCost,
+        profit: dRev - dCost,
+        margin: dRev > 0 ? Math.round(((dRev - dCost) / dRev) * 1000) / 10 : 0,
+        partCategory: part?.category || '',
+        brands: part ? brandsOf(part) : [],
+        gst: meta.gst || 0,
+        discount: meta.disc || 0,
+        technician: meta.technician || '',
+        soldBy: user?.uid || null,
+        soldByEmail: user?.email || null,
+        source: 'invoice',
+        invoiceNo: src,
+        customer: ctx.customer || '',
+        customerId: ctx.customerId || '',
+        vehicle: ctx.vehicle || '',
+        regNo: ctx.regNo || '',
+        payModes,
+        paidAmount: paidTotal,
+        outstanding: Math.max(0, (Number(ctx.grandTotal) || 0) - paidTotal),
+        createdAt: demoMode ? new Date().toISOString() : serverTimestamp(),
+      };
+      // PHASE 14 (ledger integrity audit) — this whole function is reached ONLY
+      // from runInvoiceRealizationDemo, which is itself only ever called with
+      // demoMode true (see its own header comment: "Never called for
+      // production — see createInvoiceTransactional / editInvoiceTransactional
+      // ... for that path"). The `else` branch that used to sit here —
+      // `addDoc(collection(db, COLLECTIONS.SALES), record)` — was therefore
+      // dead: unreachable today, but a live hazard if a future refactor ever
+      // called this function outside demo mode, since it would write a SECOND,
+      // non-transactional, non-idempotent sales row alongside whatever
+      // createInvoiceTransactional/editInvoiceTransactional's own atomic
+      // realization plan already wrote for the same invoice — exactly the
+      // "1 invoice -> 2 sales rows" duplicate this audit exists to prevent.
+      // Removed rather than left as unreachable code (see the matching removal
+      // a few lines below, for the same reason, on this function's rollup write).
+      txn(record.isService ? 7 : 6, record.isService ? 'Services record' : 'Sales record', { name: record.name, qty: record.qty, revenue: record.revenue, category: record.category });
+      if (demoMode) pendingDemoSales.push({ id: `dsale_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, ...record });
+      const now = new Date();
+      const mk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const m = monthAgg[mk] || { revenue: 0, cost: 0, profit: 0, units: 0, partsRev: 0, labourRev: 0, serviceRev: 0, outsideRev: 0 };
+      m.revenue += dRev; m.cost += dCost; m.profit += dRev - dCost; m.units += dQty;
+      const cat = meta.category;
+      if (cat === 'Parts') m.partsRev += dRev;
+      else if (cat === 'Labour') m.labourRev += dRev;
+      else if (cat === 'Service') m.serviceRev += dRev;
+      else if (cat === 'Outside Purchase') m.outsideRev += dRev;
+      monthAgg[mk] = m;
+    });
+    // Demo: push the new ledger rows into state (newest first, so the latest
+    // transaction always appears at the top of Sales/Services/Stock Out).
+    // PHASE 14 (ledger integrity audit) — this function is reached only in
+    // demo mode (see the comment on the sales-row write above), so the
+    // production `salesRollups` write that used to sit below this block was
+    // unreachable dead code — and, like the sales-row write above, a hazard
+    // if ever mistakenly reactivated: a SECOND, non-transactional rollup
+    // increment alongside createInvoiceTransactional/editInvoiceTransactional's
+    // own atomic rollup write for the same invoice. Removed.
+    txn(12, 'DEMO flush -> setSales()', { newRows: pendingDemoSales.length });
+    if (pendingDemoSales.length) setSales((prev) => { const nx = [...pendingDemoSales.reverse(), ...prev]; txn(12, 'sales store size', { before: prev.length, after: nx.length }); return nx; });
+    // rollups are a Firestore aggregate; demo derives its figures from `sales`
+  };
+  // C-2 fix: was `setInventory((prev) => { ...; ids.forEach(id => { try { updateDoc(...) }
+  // catch {} }); return next; })` — updateDoc was never awaited inside a SYNCHRONOUS
+  // try/catch, so the catch could never fire for a real (asynchronous) write rejection;
+  // it was dead code. Now reads/writes inventoryRef synchronously (same pattern as the
+  // other persist* functions), genuinely awaits every write via Promise.allSettled, and
+  // returns that promise so a rejection is real and callers can observe it — while still
+  // logging + toasting here as the shared, single error surface (mirrors the C-1 fix's
+  // pattern in persistDocsDiff). The optimistic local update and negative-stock handling
+  // are unchanged.
+  const applyStockDelta = (deltaMap) => {
+    const ids = Object.keys(deltaMap).filter((id) => deltaMap[id] !== 0);
+    if (!ids.length) return Promise.resolve();
+    const prev = inventoryRef.current;
+    // 🔴 DO NOT CLAMP TO ZERO.
+    //
+    // This used to be Math.max(0, stock + delta), which silently INVENTED INVENTORY:
+    //   stock 2, bill 5  -> max(0, 2-5) = 0   (the -3 deficit is destroyed)
+    //   cancel, reverse  ->     0 + 5   = 5   (was 2, now 5)
+    // The workshop just conjured 3 brake pads out of nothing. The deduction was
+    // clamped but the reversal was not, so the diff-based engine stopped being
+    // reversible the moment stock hit the floor.
+    //
+    // A negative stock figure is not a bug to be hidden — it is the TRUTH that the
+    // shop floor issued parts it did not have on the books, and the owner must see it
+    // to go and reconcile. Hiding it corrupts inventory valuation permanently.
+    const next = prev.map((p) => {
+      if (!ids.includes(p.id)) return p;
+      const updated = (p.stock || 0) + deltaMap[p.id];
+      if (updated < 0) {
+        console.error(`[TXN] NEGATIVE STOCK: "${p.name}" is now ${updated}. Parts were issued that were not in stock — reconcile physically.`);
+      }
+      // PH23-D3 — this is the demo invoice-realization stock path (its ONLY caller is
+      // runInvoiceRealizationDemo). Move salesCount with stock, same as production's
+      // applyRealizationPlanInTx, so demo Dead Stock / Fast Mover analytics are right.
+      return { ...p, stock: updated, salesCount: (p.salesCount || 0) - deltaMap[p.id], lastSaleAt: deltaMap[p.id] < 0 ? Date.now() : p.lastSaleAt };
+    });
+    inventoryRef.current = next;
+    setInventory(next);
+    // In demo mode persist to the demo store; in production, write each change to Firestore.
+    if (demoMode) {
+      // NOT a silent catch. If persistence fails (quota exceeded, storage blocked in
+      // private mode), the stock change survives in memory but dies on reload — the
+      // user must know, not silently lose the transaction.
+      try { sessionStorage.setItem(STORAGE.DEMO_INVENTORY, JSON.stringify(next)); }
+      catch (e) {
+        console.error('[TXN] FAILED to persist inventory — this change will be LOST on reload.', e);
+        toast.error('Could not save stock change to demo storage. It will be lost on reload.');
+        return Promise.reject(e);
+      }
+      return Promise.resolve();
+    }
+    return Promise.allSettled(ids.map((id) => updateDoc(doc(db, COLLECTIONS.PARTS, id), { stock: increment(deltaMap[id]), updatedAt: serverTimestamp() })))
+      .then((results) => {
+        const failed = results.filter((r) => r.status === 'rejected');
+        if (failed.length) {
+          console.error(`[TXN] Stock sync failed for ${failed.length} of ${ids.length} part(s) — local stock may not match Firestore.`, failed.map((f) => f.reason));
+          toast.error(`Stock change for ${failed.length} part${failed.length === 1 ? '' : 's'} may not have saved. Check your connection.`);
+          throw new Error(`applyStockDelta: ${failed.length} of ${ids.length} writes failed`);
+        }
+      });
+  };
+  // Spec: inventory deduction and Sales/Service records happen only once an
+  // invoice is realized (fully Paid). An unpaid/partially-paid invoice or estimate
+  // contributes nothing yet; moving away from Paid (refund/return/cancel/edit)
+  // reverses it. We express this by zeroing the "consumed" snapshot unless the
+  // invoice is Paid, then reusing the existing delta machinery — so create / edit /
+  // pay / refund / delete all net out correctly and idempotently.
+  const isRealized = (iv) => {
+    if (!iv || iv.isEstimate) return false;
+    if (['Cancelled', 'Refunded', 'Returned'].includes(iv.status)) return false;
+    return invStatus(iv) === 'Paid';
+  };
+  // PH23-D2 — the receivable counterpart of isRealized: a finalised bill (not a draft
+  // or estimate, not cancelled/refunded/returned) that still has money owed. Used by
+  // syncCustomerTotals so a customer's "Outstanding" is real receivables only.
+  const isOutstanding = (iv) => {
+    if (!iv || iv.isEstimate) return false;
+    const s = invStatus(iv);
+    return s === 'Unpaid' || s === 'Partially Paid';
+  };
+  const realizedPartQtys = (iv) => (isRealized(iv) ? invoicePartQtys(iv) : {});
+  const realizedRevenue = (iv) => (isRealized(iv) ? iv : { invNo: iv?.invNo, lines: [] });
+  // Audit entry that works in BOTH modes. The existing writeAudit() only ever wrote
+  // to Firestore, so demo produced no audit trail at all — and invoices never wrote
+  // one in either mode. This routes to the same audit store the UI reads from.
+  const pushAudit = ({ action, entity, entityId, detail }) => {
+    const entry = {
+      id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      action,
+      entity: entity || '',
+      entityId: entityId || '',
+      details: detail || '',
+      performedBy: user?.uid || null,
+      performedByEmail: demoMode ? 'demo@balajiautoos.com' : (user?.email || null),
+      createdAt: demoMode ? new Date().toISOString() : serverTimestamp(),
+    };
+    if (demoMode) {
+      // Persist, don't just set state. setAuditLog() alone is in-memory, so the demo
+      // audit trail vanished on reload — failing "updates persist after reloading".
+      setAuditLog((prev) => {
+        const next = [entry, ...(prev || [])].slice(0, 500); // newest first, bounded
+        try { sessionStorage.setItem(STORAGE.DEMO_AUDIT, JSON.stringify(next)); }
+        catch (e) { console.error('[TXN] FAILED to persist audit log.', e); }
+        return next;
+      });
+    } else {
+      addDoc(collection(db, COLLECTIONS.AUDIT_LOG), entry).catch((e) => console.error('Audit write skipped:', e));
+    }
+  };
+
+  // VEHICLE HISTORY. Vehicles are stored nested on the customer (c.vehicles[]), so
+  // "vehicle history" means stamping the serviced vehicle with its last service date,
+  // the invoice that did it, and a running lifetime spend. Billing never touched this
+  // before, so a vehicle's service record stayed empty no matter how much work it had.
+  // PHASE 8B: returns setCustomers' own persistence promise (previously
+  // discarded) so runPostCommitDerivedEffects can actually await/catch it.
+  // Also now IDEMPOTENT: buildVehicleHistoryUpdate unconditionally prepends a
+  // history entry and increments totalSpend/serviceCount, so re-applying the
+  // SAME invoice's "became Paid" transition twice (e.g. a retry after a lost
+  // ack, or runPostCommitDerivedEffects being awaited a second time) used to
+  // double-count. Skip a vehicle whose most recent entry already carries this
+  // exact invoice number — a genuinely later invoice always has a different
+  // invNo, so this never suppresses a real, separate service visit.
+  const touchVehicleHistory = (iv) => {
+    const reg = String(iv.regNo || '').trim().toUpperCase();
+    const label = String(iv.vehicle || '').trim();
+    if (!reg && !label) return Promise.resolve();
+    // Pre-check against the CURRENT ref (read-only) so an already-applied
+    // invoice skips setCustomers entirely — no pointless re-render/diff.
+    const already = customersRef.current.some((c) => {
+      if (iv.customerId && c.id !== iv.customerId) return false;
+      const vs = c.vehicles || [];
+      const idx = findVehicleIndex(vs, { reg, label });
+      return idx !== -1 && vs[idx].lastInvoiceNo && iv.invNo && vs[idx].lastInvoiceNo === iv.invNo;
+    });
+    if (already) return Promise.resolve();
+    const spend = invTotals(iv).grand;
+    return setCustomers((prev) => prev.map((c) => {
+      if (iv.customerId && c.id !== iv.customerId) return c;
+      const vs = c.vehicles || [];
+      const idx = findVehicleIndex(vs, { reg, label });
+      if (idx === -1) return c;
+      if (vs[idx].lastInvoiceNo && iv.invNo && vs[idx].lastInvoiceNo === iv.invNo) return c; // already applied
+      const updated = buildVehicleHistoryUpdate(vs[idx], {
+        invoiceNo: iv.invNo || '', date: iv.date, amount: spend, odometer: iv.odometer || null,
+        maxHistory: LIMITS.MAX_VEHICLE_HISTORY, // keep the vehicle doc bounded
+      });
+      const nextVs = [...vs]; nextVs[idx] = updated;
+      return { ...c, vehicles: nextVs };
+    }));
+  };
+
+  // =====================================================================
+  //  THE TRANSACTION ENGINE — PHASE 8B (PH8-01/PH8-01b/PH8-01c)
+  //
+  //  Phase 8 discovery found this engine's stock/sales/rollup effects were
+  //  fire-and-forget relative to the invoice/payment write that triggered them
+  //  — an invoice could show Paid (or be deleted) while stock, the sales
+  //  ledger, or salesRollups silently never landed. Phase 8B closes that by
+  //  splitting the engine into two phases:
+  //
+  //  PHASE A — planInvoiceRealization() + applyRealizationPlanInTx(): a PURE
+  //  planner (no I/O) and a WRITER that only ever runs INSIDE the same
+  //  top-level Firestore transaction as the invoice/payment write itself
+  //  (createInvoiceTransactional / editInvoiceTransactional /
+  //  collectInvoicePayment / deleteInvoiceTransactional, below). Invoice
+  //  financial state, stock, the sales ledger, and salesRollups therefore
+  //  commit together or not at all — never partially. NEVER call
+  //  runTransaction from inside applyRealizationPlanInTx — it only receives
+  //  an already-open `tx` and issues tx.set/tx.update on it.
+  //
+  //  PHASE B — runPostCommitDerivedEffects(): customer totals and vehicle
+  //  history are DERIVED, non-authoritative data (Phase 8 report §17/§31) —
+  //  folding a full customer-totals recompute or a vehicle-history append
+  //  into the SAME transaction as every invoice write would make that
+  //  transaction touch documents unrelated to the invoice/stock/ledger
+  //  invariant and would not improve correctness, so per the Phase 8B brief's
+  //  explicit allowance they stay outside it. What changes: this is no longer
+  //  a bare fire-and-forget `.catch(console.error)` (or, for vehicle history,
+  //  not even that) — it is AWAITED by every caller, its failure is reported
+  //  (not swallowed as an unhandled rejection), and BOTH effects are
+  //  idempotent so a later invoice for the same customer/vehicle self-heals
+  //  any drift: syncCustomerTotals is already a full recompute over that
+  //  customer's current invoices (recomputing twice yields the same answer),
+  //  and touchVehicleHistory below is now guarded so re-applying the SAME
+  //  invoice's "became paid" transition is a no-op instead of double-counting
+  //  totalSpend/serviceCount or duplicating a history entry.
+  // =====================================================================
+
+  /**
+   * PURE. Computes the realization delta between two invoice states: which
+   * parts' stock must move, which sales/services ledger rows must be written,
+   * and which monthly salesRollups deltas must apply. No Firestore access —
+   * safe to call any number of times, including inside a transaction retry.
+   *
+   * DIFF-BASED, therefore IDEMPOTENT: always diffs prior->next on REALIZED
+   * (paid) values, never applies an absolute amount. Saving the same paid
+   * invoice twice produces a zero delta, so nothing moves. Un-paying,
+   * refunding, cancelling, or deleting produces the exact inverse delta, so
+   * stock and the ledgers unwind cleanly. There is no "already applied?" flag
+   * to get wrong.
+   */
+  const planInvoiceRealization = (prior, next) => {
+    // --- stock: realized qty diff (parts leave the shelf only when paid)
+    const oldQ = realizedPartQtys(prior);
+    const newQ = realizedPartQtys(next);
+    const stockDeltas = {};
+    new Set([...Object.keys(oldQ), ...Object.keys(newQ)]).forEach((id) => {
+      const d = (oldQ[id] || 0) - (newQ[id] || 0);
+      if (d !== 0) stockDeltas[id] = d;
+    });
+
+    // --- sales/services ledger + monthly rollup: realized revenue diff.
+    // Mirrors the pre-Phase-8B recordInvoiceSalesDelta line-for-line — same
+    // math, now returning data instead of performing writes.
+    const before = invoiceRevenueLines(realizedRevenue(prior));
+    const after = invoiceRevenueLines(realizedRevenue(next));
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    const monthAgg = {};
+    const salesLines = [];
+    const ctx = next || prior || {};
+    const paidTotal = (ctx.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0) || Number(ctx.paid) || 0;
+    const payModes = (ctx.payments || []).map((p) => p.mode).filter(Boolean).join(', ') || ctx.payMode || '';
+    const src = next?.invNo || prior?.invNo || '';
+    keys.forEach((key) => {
+      const b = before[key] || { qty: 0, revenue: 0, cost: 0 };
+      const a = after[key] || { qty: 0, revenue: 0, cost: 0, name: '', category: 'Miscellaneous', partId: null, kind: 'Part', gst: 0, disc: 0, technician: '' };
+      const dQty = a.qty - b.qty;
+      const dRev = a.revenue - b.revenue;
+      if (dQty === 0 && Math.abs(dRev) < 0.005) return;
+      const meta = after[key] || before[key];
+      const isPart = !!meta.partId;
+      const part = isPart ? inventory.find((p) => p.id === meta.partId) : null;
+      // PH23-D1 — COGS diffs the line's OWN cost snapshot (carried by invoiceRevenueLines),
+      // symmetric with the revenue diff; re-reading the live catalogue here mis-priced any
+      // invoice drafted before and paid after a part-cost change (and disagreed with
+      // totalsOf()/iv.profitAmount, which use the same snapshot).
+      const dCost = (a.cost || 0) - (b.cost || 0);
+      const unitCost = dQty !== 0 ? dCost / dQty : (isPart ? (part?.purchasePrice || 0) : 0);
+      const listPrice = toNum(meta.listPrice) || (isPart ? toNum(part?.defaultSellingPrice || part?.sellingPrice) : 0);
+      const soldUnit = dQty !== 0 ? dRev / dQty : 0;
+      const extraRevenue = (isPart && listPrice > 0) ? (soldUnit - listPrice) * dQty : 0;
+      salesLines.push({
+        partId: meta.partId || null,
+        name: (part?.name) || meta.name || '',
+        sku: part?.sku || '',
+        category: meta.category || 'Miscellaneous',
+        revenueType: meta.category || 'Miscellaneous',
+        isService: !isPart,
+        qty: dQty,
+        unitPrice: soldUnit,
+        listPrice,
+        extraRevenue,
+        unitCost,
+        revenue: dRev,
+        cost: dCost,
+        profit: dRev - dCost,
+        margin: dRev > 0 ? Math.round(((dRev - dCost) / dRev) * 1000) / 10 : 0,
+        partCategory: part?.category || '',
+        brands: part ? brandsOf(part) : [],
+        gst: meta.gst || 0,
+        discount: meta.disc || 0,
+        technician: meta.technician || '',
+        soldBy: user?.uid || null,
+        soldByEmail: user?.email || null,
+        source: 'invoice',
+        invoiceNo: src,
+        customer: ctx.customer || '',
+        customerId: ctx.customerId || '',
+        vehicle: ctx.vehicle || '',
+        regNo: ctx.regNo || '',
+        payModes,
+        paidAmount: paidTotal,
+        outstanding: Math.max(0, (Number(ctx.grandTotal) || 0) - paidTotal),
+      });
+      const now = new Date();
+      const mk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const m = monthAgg[mk] || { revenue: 0, cost: 0, profit: 0, units: 0, partsRev: 0, labourRev: 0, serviceRev: 0, outsideRev: 0 };
+      m.revenue += dRev; m.cost += dCost; m.profit += dRev - dCost; m.units += dQty;
+      const cat = meta.category;
+      if (cat === 'Parts') m.partsRev += dRev;
+      else if (cat === 'Labour') m.labourRev += dRev;
+      else if (cat === 'Service') m.serviceRev += dRev;
+      else if (cat === 'Outside Purchase') m.outsideRev += dRev;
+      monthAgg[mk] = m;
+    });
+    return { stockDeltas, salesLines, rollupDeltas: monthAgg };
+  };
+
+  // PHASE 9 (PH9-01) — a part can be permanently, HARD-deleted from the catalog
+  // (handleDelete does deleteDoc, no dependency check) while a historical
+  // invoice still references it — intentional: "Past sales and analytics
+  // history are kept." tx.update() throws "No document to update" against a
+  // missing doc, which would abort the WHOLE invoice transaction (create,
+  // edit, payment, or delete) — silently making that invoice permanently
+  // impossible to pay or delete. This resolves, via reads that (per
+  // Firestore's read-before-write rule) MUST run before the caller issues its
+  // own invoice write, which of a plan's stockDeltas target parts that still
+  // exist. Called once per transaction, right after planInvoiceRealization and
+  // before any write.
+  const resolveExistingPartIds = async (tx, stockDeltas) => {
+    const ids = Object.keys(stockDeltas);
+    if (!ids.length) return new Set();
+    const snaps = await Promise.all(ids.map((id) => tx.get(doc(db, COLLECTIONS.PARTS, id))));
+    return new Set(ids.filter((_, i) => snaps[i].exists()));
+  };
+
+  /**
+   * Applies a planInvoiceRealization() plan's writes onto an ALREADY-OPEN
+   * Firestore transaction (`tx`). Never opens its own transaction — the
+   * caller's runTransaction is the one and only atomic boundary. Every doc
+   * ref used here is generated client-side (no reads), so this is safe to
+   * call after the caller's own reads inside the same transaction.
+   *
+   * `existingPartIds` (PH9-01) — a Set, resolved by resolveExistingPartIds
+   * BEFORE any write in this transaction. A stock delta for a part id NOT in
+   * this set targets a since-deleted catalog part: there is no stock document
+   * left to adjust, so that one delta is skipped — the invoice's own
+   * financial fields, sales-ledger row, and salesRollups delta (which never
+   * depended on the part still existing) are unaffected.
+   */
+  const applyRealizationPlanInTx = (tx, plan, existingPartIds) => {
+    Object.entries(plan.stockDeltas).forEach(([partId, delta]) => {
+      if (!existingPartIds.has(partId)) return; // PH9-01: part deleted from catalog — nothing to adjust
+      // PH23-D3 — `salesCount` is the part's lifetime units-sold counter (Quick Sell
+      // maintains it alongside `stock` in ONE update; see runQuickSaleTx). The invoice
+      // realization moved `stock` but NOT `salesCount`, so a part that only ever sells
+      // through invoices stayed at salesCount 0 — and the Dead Stock / Dead Capital /
+      // Fast Mover analytics, which classify on `salesCount === 0`, flagged bestsellers
+      // as "never-sold" (a 14-unit / ₹39,508 part topped the demo Dead Stock list).
+      // The delta is negative when parts leave the shelf on a sale, so `-delta` is the
+      // units sold; a reversal (delta positive) unwinds it, exactly like `stock`.
+      tx.update(doc(db, COLLECTIONS.PARTS, partId), { stock: increment(delta), salesCount: increment(-delta), updatedAt: serverTimestamp() });
+    });
+    plan.salesLines.forEach((record) => {
+      tx.set(doc(collection(db, COLLECTIONS.SALES)), { ...record, createdAt: serverTimestamp() });
+    });
+    Object.entries(plan.rollupDeltas).forEach(([mk, m]) => {
+      tx.set(doc(db, 'salesRollups', mk), {
+        month: mk,
+        revenue: increment(m.revenue),
+        cost: increment(m.cost),
+        profit: increment(m.profit),
+        units: increment(m.units),
+        partsRevenue: increment(m.partsRev),
+        labourRevenue: increment(m.labourRev),
+        serviceRevenue: increment(m.serviceRev),
+        outsideRevenue: increment(m.outsideRev),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    });
+  };
+
+  // Local optimistic stock mirror for whatever a realization plan just
+  // committed atomically — separate from applyStockDelta (used by quick
+  // restock / manual stock adjustment, not by any invoice-status path;
+  // see PH11-01), this ONLY updates React state; the actual write already
+  // happened inside the transaction above.
+  const applyPlanToLocalInventory = (plan) => {
+    const ids = Object.keys(plan.stockDeltas);
+    if (!ids.length) return;
+    const next = inventoryRef.current.map((p) => (ids.includes(p.id)
+      ? { ...p, stock: (p.stock || 0) + plan.stockDeltas[p.id], salesCount: (p.salesCount || 0) - plan.stockDeltas[p.id] } // PH23-D3 — mirror the tx's salesCount move
+      : p));
+    inventoryRef.current = next;
+    setInventory(next);
+  };
+
+  // DEMO MODE ONLY — demo has no Firestore, so there is nothing to make
+  // atomic (a single-threaded in-memory update cannot partially fail the way
+  // a network write can); this preserves the pre-Phase-8B transaction
+  // engine's stock+ledger behavior verbatim, via the same two functions
+  // (applyStockDelta / recordInvoiceSalesDelta) that already branch on
+  // demoMode internally. Never called for production — see
+  // createInvoiceTransactional / editInvoiceTransactional /
+  // collectInvoicePayment / deleteInvoiceTransactional below for that path.
+  const runInvoiceRealizationDemo = (prior, next) => {
+    const oldQ = realizedPartQtys(prior);
+    const newQ = realizedPartQtys(next);
+    const delta = {};
+    new Set([...Object.keys(oldQ), ...Object.keys(newQ)]).forEach((id) => {
+      const d = (oldQ[id] || 0) - (newQ[id] || 0);
+      if (d !== 0) delta[id] = d;
+    });
+    if (Object.keys(delta).length) applyStockDelta(delta);
+    recordInvoiceSalesDelta(realizedRevenue(prior), realizedRevenue(next));
+  };
+
+  /**
+   * PHASE B (post-commit, AWAITED, idempotent derived-data sync) — audit,
+   * customer totals, vehicle history. Called AFTER the authoritative
+   * transaction has already committed. Never throws to its caller: a
+   * derived-data hiccup must not make the UI claim the (already-successful)
+   * financial operation failed — it is reported distinctly instead.
+   */
+  const runPostCommitDerivedEffects = async (prior, next, action, allInvoicesForTotals) => {
+    const target = next || prior;
+    if (!target) return;
+    const becamePaid = !isRealized(prior) && isRealized(next);
+    const unPaid = isRealized(prior) && !isRealized(next);
+    // PHASE 15 (audit-log integrity) — a payment that does NOT fully realize
+    // the invoice (a partial payment, or any payment after the first) used
+    // to fall all the way through to the generic 'Invoice Updated' label —
+    // exactly the "payment recorded as generic invoice edit" failure mode
+    // this phase's own brief calls out. `next.payments[]` already carries
+    // this information (it's the array collectInvoicePayment itself just
+    // appended to); diffing its length against `prior` is enough to detect
+    // "a payment was added this call" without a new field or mechanism.
+    const newPayment = (next?.payments?.length || 0) > (prior?.payments?.length || 0)
+      ? next.payments[next.payments.length - 1] : null;
+    const auditAction = action === 'delete' ? 'Invoice Deleted'
+      : becamePaid ? 'Invoice Paid'
+      : (newPayment && !unPaid) ? 'Payment Received'
+      : unPaid ? `Invoice ${next?.status || 'Reversed'}`
+      : !prior ? 'Invoice Created'
+      : 'Invoice Updated';
+    pushAudit({
+      action: auditAction,
+      entity: 'Invoice',
+      entityId: target.invNo || target.id,
+      detail: (newPayment && !unPaid)
+        ? `${target.invNo || ''} · ${target.customer || ''} · ${formatINR(Number(newPayment.amount) || 0)} (${newPayment.mode || ''})`
+        : `${target.invNo || ''} · ${target.customer || ''}${target.vehicle ? ` · ${target.vehicle}` : ''} · ${formatINR(Number(target.grandTotal) || 0)}`,
+    });
+    // touchVehicleHistory carries its own idempotency guard (skips a vehicle
+    // whose lastInvoiceNo already matches this invoice — see its own comment);
+    // syncCustomerTotals is a full recompute, inherently idempotent. Both now
+    // return their real persistence promise (store.syncAll under setCustomers
+    // handles demo vs production transparently), so both are safe to await
+    // uniformly here regardless of mode.
+    const jobs = [];
+    if (becamePaid && (target.regNo || target.vehicle)) jobs.push(touchVehicleHistory(target));
+    if (target.customerId && allInvoicesForTotals) jobs.push(syncCustomerTotals(target.customerId, allInvoicesForTotals));
+    if (!jobs.length) return;
+    const results = await Promise.allSettled(jobs);
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length) {
+      console.error('[TXN] Derived-data sync (customer totals / vehicle history) failed — will self-correct on the next invoice for this customer/vehicle.', failed.map((f) => f.reason));
+      toast.error('Invoice saved. Customer totals or vehicle history may take a moment to refresh.');
+    }
+  };
+
+  // C-1 fix: async + awaits the write before syncing customer totals, and propagates
+  // rejection to the caller (BillingModule's onSave) instead of resolving instantly
+  // regardless of outcome. The optimistic local commit (setInvoicesRaw) is unchanged —
+  // only the "did this actually finish" signal and the downstream completion step
+  // (syncCustomerTotals) are now gated on the real write.
+  // PHASE 8B (PH8-01) — the invoice document itself, its realized stock, its
+  // sales-ledger rows, and its salesRollups delta now commit inside ONE
+  // Firestore transaction. Idempotent the same way createInvoiceTransactional's
+  // sibling functions already are elsewhere in this file: read the invoice
+  // doc FIRST — if it already exists, this create was already applied (a
+  // retry after a lost ack), so write nothing and hand back the server state.
+  const createInvoiceTransactional = async (target) => {
+    const invRef = doc(db, COLLECTIONS.INVOICES, target.id);
+    return withTimeout(runTransaction(db, async (tx) => {
+      const snap = await tx.get(invRef);
+      if (snap.exists()) {
+        return { alreadyApplied: true, invoice: { ...snap.data(), id: target.id }, plan: null };
+      }
+      const stamped = { ...target, _rev: 0 };
+      const plan = planInvoiceRealization(null, stamped);
+      const existingPartIds = await resolveExistingPartIds(tx, plan.stockDeltas); // PH9-01 — read before any write
+      tx.set(invRef, { ...stamped, createdAt: target.createdAt || serverTimestamp(), updatedAt: serverTimestamp() });
+      applyRealizationPlanInTx(tx, plan, existingPartIds);
+      return { alreadyApplied: false, invoice: stamped, plan };
+    }), TX_TIMEOUT_MS, 'This invoice');
+  };
+
+  // PHASE 8B (PH8-01) — an EDIT of an existing invoice: the Phase 1a `_rev`
+  // guard, the invoice field write, AND the realization delta (stock/sales/
+  // rollup) now all happen inside the SAME transaction — a rejected stale
+  // save moves no stock and posts no ledger row (unchanged), and a save that
+  // DOES commit can no longer leave its cascade to a separate, un-awaited
+  // step (fixed).
+  const editInvoiceTransactional = async (target, expectedRev) => {
+    const invRef = doc(db, COLLECTIONS.INVOICES, target.id);
+    return withTimeout(runTransaction(db, async (tx) => {
+      const snap = await tx.get(invRef);
+      const state = revState(snap.exists() ? snap.data() : null, expectedRev);
+      const err = conflictError(state, 'This invoice');
+      if (err) throw err;
+      const server = snap.data();
+      const prior = { ...server, id: target.id };
+      const { id: _dropId, _rev: _dropRev, ...clean } = target;
+      const merged = { ...clean, _rev: state.nextRev };
+      const plan = planInvoiceRealization(prior, merged);
+      const existingPartIds = await resolveExistingPartIds(tx, plan.stockDeltas); // PH9-01 — read before any write
+      tx.set(invRef, { ...clean, _rev: state.nextRev, updatedAt: serverTimestamp() }, { merge: true });
+      applyRealizationPlanInTx(tx, plan, existingPartIds);
+      return { merged: { ...server, ...clean, _rev: state.nextRev }, prior, plan };
+    }), TX_TIMEOUT_MS, 'This invoice');
+  };
+
+  const persistInvoice = async (iv) => {
+    txn(3, 'persistInvoice called', { invNo: iv.invNo, status: iv.status, lines: (iv.lines || []).length, payments: (iv.payments || []).length, demoMode });
+
+    // CONCURRENCY PHASE 2 — allocate the authoritative INV-/EST- number BEFORE the
+    // write. The editor tags a fresh invoice with { __allocSeq, __allocPrefix,
+    // __allocSeed } instead of a client-computed number; store.allocateNumber runs a
+    // Firestore transaction on counters/<sequence> (retry-safe, never-decreasing)
+    // and hands out exactly one value, so two terminals billing at once can never
+    // get the same number. If the write below then fails the number is SKIPPED
+    // (a legal gap under GST Rule 46(b)), never reused for another document. This
+    // is a SEPARATE transaction from the invoice write below by necessity — Phase
+    // 8B does not nest it inside the invoice transaction (see PH8-01's own note in
+    // the Phase 8B report: a consumed number is a documented gap, not a partial
+    // financial transaction, as long as it can never leave stock/sales/rollup
+    // half-applied — the invoice transaction below guarantees exactly that).
+    let target = iv;
+    if (iv.__allocSeq) {
+      const { __allocSeq, __allocPrefix, __allocSeed, ...rest } = iv;
+      // Phase 5b (PH5-07) — if THIS invoice id already exists with a real number,
+      // this is a retry (e.g. after a browser refresh whose ack was lost, using
+      // the recovered draft): reuse that number, never allocate a second one.
+      const already = invoicesRef.current.find((x) => x.id === iv.id);
+      if (already && already.invNo && !/^DRF/i.test(already.invNo)) {
+        target = { ...rest, invNo: already.invNo };
+      } else {
+        warnIfOffline('this invoice number'); // Phase 6b (PH6-02) — non-blocking heads-up only
+        let n;
+        try {
+          n = await store.allocateNumber(__allocSeq, __allocSeed);
+        } catch (err) {
+          // The counter transaction needs connectivity (as does every other invoice
+          // write — the guarded edit and the payment transaction). Tell the user;
+          // BillingModule's onSave wrapper keeps the editor open with nothing lost.
+          // Phase 6b (PH6-03) — a timeout here is genuinely ambiguous (the counter
+          // may have already advanced); say so instead of claiming a definite
+          // failure. Retrying is always safe either way — the counter never issues
+          // the same number twice, so a retry after a real commit only costs a
+          // legal, documented gap, never a duplicate.
+          toast.error(isTxTimeout(err)
+            ? timeoutMessage('The invoice number')
+            : 'Could not reserve an invoice number — check your connection and try again.');
+          throw err;
+        }
+        target = { ...rest, invNo: formatDocNo(__allocPrefix, n) };
+      }
+    }
+
+    // Read prior from a ref, NOT from inside the updater, so the effects below run
+    // exactly once regardless of how many times React re-invokes the updater.
+    const prior = invoicesRef.current.find((x) => x.id === target.id) || null;
+
+    // PHASE 8B — production, EXISTING invoice: one atomic transaction (Phase 1a
+    // `_rev` guard + invoice write + realization delta).
+    if (prior && !demoMode) {
+      let result;
+      warnIfOffline('this invoice'); // Phase 6b (PH6-02) — non-blocking heads-up only
+      try {
+        result = await editInvoiceTransactional(target, revOf(target));
+      } catch (err) {
+        // Phase 6b — this used to re-throw a non-concurrency failure with NO
+        // toast at all. Say what actually happened before handing off, same as
+        // every other guarded save in this file already does.
+        if (isConcurrencyError(err)) concToast(err, 'invoice');
+        else toast.error(isTxTimeout(err)
+          ? timeoutMessage('This invoice')
+          : 'Couldn’t confirm the invoice saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.');
+        throw err; // BillingModule's onSave wrapper catches and keeps the editor open
+      }
+      const { merged, prior: serverPrior, plan } = result;
+      applyPlanToLocalInventory(plan);
+      const prevList = invoicesRef.current;
+      const nextList = [...prevList.filter((x) => x.id !== target.id), merged];
+      invoicesRef.current = nextList;
+      setInvoicesRaw(nextList);
+      await runPostCommitDerivedEffects(serverPrior, merged, 'persist', nextList);
+      return merged;
+    }
+
+    // PHASE 8B — production, NEW invoice: one atomic transaction (invoice create +
+    // realization delta), instead of the pre-Phase-8B ordering where the fire-and-
+    // forget cascade could begin — and even land — BEFORE the invoice document
+    // itself was written.
+    if (!demoMode) {
+      warnIfOffline('this invoice'); // Phase 6b (PH6-02) — non-blocking heads-up only
+      let result;
+      try {
+        result = await createInvoiceTransactional(target);
+      } catch (err) {
+        toast.error(isTxTimeout(err)
+          ? timeoutMessage('This invoice')
+          : 'Couldn’t confirm the invoice saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.');
+        throw err;
+      }
+      const { invoice, plan } = result;
+      if (plan) applyPlanToLocalInventory(plan);
+      const prev = invoicesRef.current;
+      const next = [...prev.filter((x) => x.id !== target.id), invoice];
+      invoicesRef.current = next;
+      setInvoicesRaw(next);
+      await runPostCommitDerivedEffects(prior, invoice, 'persist', next);
+      return invoice;
+    }
+
+    // DEMO MODE — unchanged: single in-memory client, no Firestore, no
+    // partial-failure surface to close. See runInvoiceRealizationDemo's own
+    // comment.
+    runInvoiceRealizationDemo(prior, target);
+    // E2E workflow QA fix: `prev` MUST be captured before invoicesRef.current is
+    // overwritten. writeInvoices() used to re-read invoicesRef.current internally as
+    // its "prev" arg — but by then the ref already held `next` (set two lines below,
+    // synchronously, before the write "started"), so persistDocsDiff was diffing
+    // `next` against itself. Every comparison came back equal, `ops` stayed empty, and
+    // persistenceStore's syncAll() correctly-but-silently took its "nothing changed ->
+    // write nothing" path.
+    const prev = invoicesRef.current;
+    const next = [...prev.filter((x) => x.id !== target.id), target];
+    invoicesRef.current = next;          // keep the ref authoritative immediately
+    setInvoicesRaw(next);                // pure commit
+    await persistDocsDiff(COLLECTIONS.INVOICES, prev, next);
+    await runPostCommitDerivedEffects(prior, target, 'persist', next);
+    return target;
+  };
+
+  // BUG-CONC-01 — concurrent payment collection.
+  // collectPayment() in BillingModule builds `payments: [...iv.payments, pay]` from the
+  // snapshot the modal opened with, then persists the WHOLE invoice. Two cashiers
+  // collecting on the same invoice each start from `payments: []`, so the second write
+  // replaces the array and the first payment is lost silently — the customer paid in
+  // full, the books show a balance.
+  //
+  // Fix: post the payment inside a Firestore transaction that RE-READS the invoice and
+  // appends to the server's current `payments`, so two legitimate concurrent payments
+  // are both preserved and paid/balance/status are recomputed from server truth.
+  //
+  // Phase 3b (CWF-01) — the realized stock/ledger/audit cascade is diff-based, so it
+  // is only idempotent if `prior` is the invoice's TRUE pre-payment state. It used to
+  // read `prior` from `invoicesRef.current` — stale React state — so two cashiers both
+  // closing the balance at once each saw `prior = unpaid`, `fresh = Paid`, and BOTH ran
+  // the full realization (double stock deduction, double revenue). The transaction
+  // returns its OWN server pre-image (`serverPrior`, read before the write); the
+  // cascade diffs against that. Firestore serialises the two attempts, so the
+  // second payment's committed attempt re-reads an already-Paid invoice → its
+  // `serverPrior` is Paid → `Paid -> Paid` is a zero delta → realization runs
+  // exactly once, on whichever payment actually crossed unpaid -> Paid.
+  //
+  // PHASE 8B (PH8-01b) — that realization delta (stock/sales/rollup) is now applied
+  // INSIDE this same transaction (planInvoiceRealization + applyRealizationPlanInTx),
+  // not as a separate un-awaited call afterward — an invoice can no longer show Paid
+  // while those effects are silently missing. Demo mode has one client and no
+  // server — it keeps the existing in-memory path (never routed through this
+  // function; BillingModule receives `onCollectPayment={demoMode ? undefined : ...}`).
+  const collectInvoicePayment = async (invoiceId, pay) => {
+    warnIfOffline('this payment'); // Phase 6b (PH6-02) — non-blocking heads-up only
+    const invRef = doc(db, COLLECTIONS.INVOICES, invoiceId);
+    // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+    const { serverPrior, fresh, alreadyApplied, plan } = await withTimeout(runTransaction(db, async (tx) => {
+      const snap = await tx.get(invRef);
+      if (!snap.exists()) {
+        const err = new Error('This invoice was deleted by another user. Reload before collecting payment.');
+        err.code = 'conc/deleted';
+        throw err;
+      }
+      const data = snap.data();
+      if (data.isEstimate) {
+        const err = new Error('Convert this estimate to an invoice before collecting payment.');
+        err.code = 'conc/estimate';
+        throw err;
+      }
+      const priorPayments = Array.isArray(data.payments) ? data.payments : [];
+      // Phase 4b (PH4-01) — IDEMPOTENCY. `pay.id` is generated ONCE per logical
+      // "collect payment" intent (PaymentModal holds it in a ref) and reused for
+      // every retry / double-submit / transaction-callback replay. If this payment
+      // id is already on the server invoice, this is a duplicate delivery — return
+      // the authoritative current state, write NOTHING (no second payment row, no
+      // _rev bump, no history entry, no realization). A genuinely separate payment
+      // carries a different id and flows through normally.
+      if (pay && pay.id && priorPayments.some((p) => p && p.id === pay.id)) {
+        const t0 = invTotals({ ...data, id: invoiceId });
+        const image = { ...data, id: invoiceId, paid: t0.paid, grandTotal: t0.grand, balance: t0.balance, gstAmount: t0.gst, status: invStatus({ ...data, id: invoiceId }) };
+        return { serverPrior: image, fresh: image, alreadyApplied: true, plan: null };
+      }
+      // Authoritative pre-payment image — captured from the transaction's own read,
+      // BEFORE any mutation. This, not client state, is what the cascade diffs against.
+      const serverPrior = { ...data, id: invoiceId };
+      const payments = [...priorPayments, pay];
+      const merged = { ...data, id: invoiceId, payments };
+      const t = invTotals(merged);
+      // PHASE 11 (PH11-02) — PaymentModal and BillingModule.save() both reject an
+      // overpayment, but only against CLIENT-HELD totals. Client A editing the
+      // invoice's total down and Client B paying against the OLD (higher) balance
+      // can each look valid on their own stale snapshot yet interleave into a real
+      // overpayment once both land — the exact concurrent edit+payment race this
+      // phase's audit requires closing. Re-checked here against `t`, computed from
+      // THIS transaction's own fresh `data` read, the same ₹1 rounding slack as
+      // BillingModule.save()'s guard: whichever operation reaches this transaction
+      // second sees the other's committed effect and is rejected, never silently
+      // merged into a mislabeled "Paid" invoice with paid > grandTotal.
+      if (t.grand > 0 && t.paid > t.grand + 1) {
+        const err = new Error(`This payment would make the invoice overpaid (₹${t.paid.toFixed(2)} against a total of ₹${t.grand.toFixed(2)}) — the total may have just changed. Reload before collecting payment.`);
+        err.code = 'conc/overpaid';
+        throw err;
+      }
+      const status = invStatus(merged);
+      // Phase 1a — a payment also bumps `_rev`, so an invoice editor that was open
+      // when the payment landed is correctly rejected as stale on save (otherwise
+      // its stale `payments` copy could clobber this one).
+      const nextRev = revOf(data) + 1;
+      const fresh = { ...merged, paid: t.paid, grandTotal: t.grand, balance: t.balance, gstAmount: t.gst, status, _rev: nextRev };
+      const plan = planInvoiceRealization(serverPrior, fresh);
+      const existingPartIds = await resolveExistingPartIds(tx, plan.stockDeltas); // PH9-01 — read before any write
+      tx.update(invRef, {
+        payments,
+        paid: t.paid,
+        grandTotal: t.grand,
+        balance: t.balance,
+        gstAmount: t.gst,
+        status,
+        _rev: nextRev,
+        history: [...(Array.isArray(data.history) ? data.history : []),
+          { at: Date.now(), action: `Payment ${pay.amount} (${pay.mode})`, by: user?.email || 'Staff' }],
+        updatedAt: serverTimestamp(),
+      });
+      applyRealizationPlanInTx(tx, plan, existingPartIds);
+      return { serverPrior, fresh, alreadyApplied: false, plan };
+    }), TX_TIMEOUT_MS, 'This payment');
+    // Duplicate delivery — nothing changed on the server, so run nothing downstream.
+    if (alreadyApplied) return fresh;
+    // Money, stock, the sales ledger, and salesRollups all committed atomically above.
+    applyPlanToLocalInventory(plan);
+    const next = [...invoicesRef.current.filter((x) => x.id !== invoiceId), fresh];
+    invoicesRef.current = next;
+    setInvoicesRaw(next);
+    await runPostCommitDerivedEffects(serverPrior, fresh, 'persist', next);
+    return fresh;
+  };
+
+  // PHASE 8B (PH8-01c) — invoice deletion AND its reversal (stock restored,
+  // a compensating negative sales row + salesRollups delta) now commit inside
+  // ONE transaction — a delete can no longer succeed while its reversal
+  // silently fails, or vice versa. The compensating-negative-row pattern for
+  // the sales ledger is unchanged (append-only, per the established design);
+  // only the atomicity boundary moved.
+  const deleteInvoiceTransactional = async (iv) => {
+    const invRef = doc(db, COLLECTIONS.INVOICES, iv.id);
+    return withTimeout(runTransaction(db, async (tx) => {
+      const snap = await tx.get(invRef);
+      if (!snap.exists()) return { alreadyDeleted: true, prior: null, plan: null }; // already gone — nothing to unwind or delete
+      const prior = { ...snap.data(), id: iv.id };
+      const plan = planInvoiceRealization(prior, null);
+      const existingPartIds = await resolveExistingPartIds(tx, plan.stockDeltas); // PH9-01 — read before any write
+      tx.delete(invRef);
+      applyRealizationPlanInTx(tx, plan, existingPartIds);
+      return { alreadyDeleted: false, prior, plan };
+    }), TX_TIMEOUT_MS, 'This delete');
+  };
+
+  const deleteInvoice = async (iv) => {
+    // Phase 3b (CWF-01) — same root cause as the payment path: the unwind cascade
+    // must see the invoice's TRUE server state, not stale local state. In
+    // production, read + delete + unwind atomically in one transaction so a
+    // payment that landed on this invoice from another client just before the
+    // delete is still correctly reversed. Demo has one client — local state IS
+    // the truth, and has no Firestore transaction to run at all.
+    let serverPrior = null;
+    let plan = null;
+    if (!demoMode) {
+      warnIfOffline('this delete'); // Phase 6b (PH6-02) — non-blocking heads-up only
+      try {
+        // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+        const result = await deleteInvoiceTransactional(iv);
+        serverPrior = result.prior;
+        plan = result.plan;
+      } catch (err) {
+        console.error('Invoice delete failed:', err);
+        // A delete is naturally idempotent — the retry's own `!snap.exists()` check
+        // makes a repeat safe regardless of whether the first attempt actually
+        // committed — so this is always framed as "check before retrying", never
+        // as a definite failure the way it used to claim.
+        toast.error(isTxTimeout(err)
+          ? timeoutMessage('This delete')
+          : 'Couldn’t confirm the invoice was deleted. Check the invoice list, or press Delete again (a repeat is safe).');
+        throw err;
+      }
+      if (plan) applyPlanToLocalInventory(plan);
+    }
+    const prior = demoMode ? (invoicesRef.current.find((x) => x.id === iv.id) || iv) : serverPrior;
+    if (demoMode && prior) runInvoiceRealizationDemo(prior, null);
+    // Same prev-before-mutation fix as persistInvoice above.
+    const prev = invoicesRef.current;
+    const next = prev.filter((x) => x.id !== iv.id);
+    invoicesRef.current = next;
+    setInvoicesRaw(next);
+    if (demoMode) await persistDocsDiff(COLLECTIONS.INVOICES, prev, next);
+    await runPostCommitDerivedEffects(prior, null, 'delete', next);
+  };
+  const writeJobCardDraft = (c, token) => {
+    const v = primaryVehicle(c);
+    // H-5B: nextJobCardNumber from services/jobCardService.js (pure) replaces the
+    // inline max-scan — same algorithm, single source of truth.
+    // H-5C: the rest of the draft's fields come from services/vehicleService.js
+    // (pure customer+vehicle → draft mapping).
+    // Settings QA fix: pass the live Job Card Prefix (biz.jcPrefix) through — this
+    // call site (creating a job card from a Customer/Vehicle record) was the one
+    // other place besides JobCardModule.jsx itself generating a jobNo, and it was
+    // hardcoded to "SBBMC" the same way the service used to be.
+    let jcPrefix = 'SBBMC';
+    try { jcPrefix = JSON.parse(localStorage.getItem(demoMode ? 'maruti_settings_demo' : 'maruti_settings') || '{}').jcPrefix || 'SBBMC'; } catch {}
+    // PH10-01 — see JobCardModule.jsx's emptyCard comment: fold invoices'
+    // jobNo values into the max-scan so a deleted job card's number is never
+    // handed out again while an invoice still links to it by that number.
+    const draft = { jobNo: nextJobCardNumber([...jobCards, ...invoices], jcPrefix), ...buildJobCardDraftFields(c, v) };
+    try { localStorage.setItem(token ? `maruti_jobcard_draft_v2::${token}` : 'maruti_jobcard_draft_v2', JSON.stringify(draft)); } catch {}
+    return draft;
+  };
+  const writeInvoicePrefill = (c, token) => {
+    const v = primaryVehicle(c);
+    try { localStorage.setItem(token ? `maruti_invoice_prefill::${token}` : 'maruti_invoice_prefill', JSON.stringify(buildInvoicePrefillFields(c, v))); } catch {}
+  };
+  const startJobCardFor = (c) => {
+    writeJobCardDraft(c);
+    setActiveTab('jobcards');
+    toast.success(`Starting a job card for ${c.name}`);
+  };
+  // Part 4: parts reservation. A job card's `parts` array [{partId, qty}] reserves
+  // inventory stock (increments each part's `reserved` bucket). Reservation is
+  // released when the card is Cancelled/Closed, when parts are removed, or when the
+  // card is deleted. Delta-based like invoice stock sync so re-saves never double-count.
+  // H-5A: cardReservedQtys is now imported from services/inventoryService.js (pure,
+  // framework-independent) — same logic, single source of truth.
+  // C-2 fix: same defect and same fix as applyStockDelta above — updateDoc was fire-and-
+  // forget inside a synchronous try/catch that could never catch a real write rejection.
+  // Now reads/writes inventoryRef synchronously, genuinely awaits every write, and
+  // returns a promise that rejects (after logging + toasting) if any write failed.
+  // Phase 5b (PH5-04) — `reserveOpId` (durable, per job-card-save intent) makes the
+  // reserved-stock increment idempotent across a browser refresh + retry: each
+  // part records the applied reservation-op ids in a bounded `appliedReserveIds`
+  // list, read inside a transaction BEFORE the increment. So a queued replay of
+  // the write plus a user retry apply `reserved += delta` exactly once.
+  //
+  // PHASE 8B (PH8-02) — production used to run ONE INDEPENDENT transaction PER
+  // PART (Promise.allSettled over N separate runTransaction calls): a job card
+  // reserving 3 parts could end with 2 committed and 1 not if that one part's
+  // transaction failed. All N parts now read+validate+write inside a SINGLE
+  // transaction — reads happen for every part FIRST (a Promise.all of tx.get,
+  // satisfying Firestore's read-before-write rule), then every write is issued,
+  // so the whole reservation/release is now all-or-nothing across every part on
+  // the card. The `appliedReserveIds` idempotency marker per part is unchanged.
+  const applyReserveDelta = (deltaMap, reserveOpId = null) => {
+    const ids = Object.keys(deltaMap).filter((id) => deltaMap[id] !== 0);
+    if (!ids.length) return Promise.resolve();
+    if (demoMode) {
+      const prev = inventoryRef.current;
+      const next = prev.map((p) => (ids.includes(p.id) ? { ...p, reserved: Math.max(0, (p.reserved || 0) + deltaMap[p.id]) } : p));
+      inventoryRef.current = next;
+      setInventory(next);
+      // NOT a silent catch. If persistence fails (quota exceeded, storage blocked in
+      // private mode), the stock change survives in memory but dies on reload — the
+      // user must know, not silently lose the transaction.
+      try { sessionStorage.setItem(STORAGE.DEMO_INVENTORY, JSON.stringify(next)); }
+      catch (e) {
+        console.error('[TXN] FAILED to persist inventory — this change will be LOST on reload.', e);
+        toast.error('Could not save stock change to demo storage. It will be lost on reload.');
+        return Promise.reject(e);
+      }
+      return Promise.resolve();
+    }
+    warnIfOffline('this reservation update'); // Phase 6b (PH6-02) — non-blocking heads-up only
+    const refs = ids.map((id) => doc(db, COLLECTIONS.PARTS, id));
+    // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+    return withTimeout(runTransaction(db, async (tx) => {
+      // ALL READS FIRST — every affected part, before any write.
+      const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+      const decisions = snaps.map((snap) => {
+        if (!snap.exists()) return { skip: true };
+        const applied = Array.isArray(snap.data().appliedReserveIds) ? snap.data().appliedReserveIds : [];
+        if (reserveOpId && applied.includes(reserveOpId)) return { skip: true }; // already on the server
+        return { skip: false, applied };
+      });
+      // ALL WRITES — atomic across every part on this card.
+      decisions.forEach((d, i) => {
+        if (d.skip) return;
+        tx.update(refs[i], {
+          reserved: increment(deltaMap[ids[i]]),
+          ...(reserveOpId ? { appliedReserveIds: [...d.applied, reserveOpId].slice(-40) } : {}),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      return { applied: decisions.map((d) => !d.skip) };
+    }), TX_TIMEOUT_MS, 'This reservation update')
+      .then(({ applied }) => {
+        // Mirror locally ONLY the parts the transaction actually wrote — after
+        // it committed, not before, so the UI never shows a reservation the
+        // server hasn't confirmed.
+        const wroteIds = ids.filter((id, i) => applied[i]);
+        if (!wroteIds.length) return;
+        const next = inventoryRef.current.map((p) => (wroteIds.includes(p.id) ? { ...p, reserved: Math.max(0, (p.reserved || 0) + deltaMap[p.id]) } : p));
+        inventoryRef.current = next;
+        setInventory(next);
+      })
+      .catch((err) => {
+        console.error('[TXN] Reserved-stock sync failed — no part\'s reserved count changed (the transaction is all-or-nothing).', err);
+        toast.error('Reserved-stock update did not save. Check your connection and try again — a repeat is safe.');
+        throw err;
+      });
+  };
+  // C-1 fix: reads/writes jobCardsRef synchronously (same pattern persistInvoice already
+  // used) instead of computing `next` inside the setJobCards updater — a promise cannot be
+  // returned from inside a state updater. This lets both functions return the real
+  // persistence promise so callers (JobCardModule's saveCard) can await genuine success.
+  // Phase 4b (PH4-07) — reservation idempotency baseline. Maps jobNo → the card
+  // object whose reserved-stock effect is currently reflected in `inventory`
+  // (absent = no reservation applied yet). The reserve delta for a save/delete is
+  // ALWAYS computed as reserveDelta(baseline, card) and the baseline is advanced
+  // ONLY after the job-card doc write is confirmed. So a retry after a failed write
+  // recomputes the SAME delta from the SAME baseline (no double-reserve, and — the
+  // trap the naïve "move one line down" fix falls into — no LOST reservation
+  // either), while a genuine later edit diffs from the now-advanced baseline.
+  // In-memory only (like every opId ref this phase) — documented limitation.
+  const reserveBaselineRef = useRef(new Map());
+  const pinReserveBaseline = (jobNo, prior) => {
+    const m = reserveBaselineRef.current;
+    if (!m.has(jobNo)) m.set(jobNo, prior || null);
+    return m.get(jobNo);
+  };
+  const deleteJobCard = async (jobNo) => {
+    const prev = jobCardsRef.current;
+    const prior = prev.find((c) => c.jobNo === jobNo);
+    const baseline = pinReserveBaseline(jobNo, prior);
+    const relScope = `jc-reserve-del:${jobNo}`;
+    const relOpId = demoMode ? null : readOrCreateOpId(relScope, 'jcrd');
+    const next = prev.filter((c) => c.jobNo !== jobNo);
+    jobCardsRef.current = next;
+    setJobCards(next);
+    await persistJobCardsDiff(prev, next);
+    // release any reservation this card held — only after the delete is confirmed,
+    // so a failed delete + retry doesn't free reserved stock while the card lives.
+    await applyReserveDelta(reserveDelta(baseline, null), relOpId);
+    reserveBaselineRef.current.delete(jobNo);
+    clearOpId(relScope);
+  };
+  const persistJobCard = async (card) => {
+    const prev = jobCardsRef.current;
+    const prior = prev.find((c) => c.jobNo === card.jobNo);
+    const reserveBaseline = pinReserveBaseline(card.jobNo, prior);
+    // Phase 5b (PH5-04) — durable reservation-op id for THIS save intent; recovered
+    // on a refresh + retry so the reserved-stock increment applies exactly once.
+    const reserveScope = `jc-reserve:${card.jobNo}`;
+    const reserveOpId = demoMode ? null : readOrCreateOpId(reserveScope, 'jcr');
+    // preserve creation order for the Firestore orderBy('createdAt') subscription
+    const stamped = prior ? card : { ...card, createdAt: card.createdAt || serverTimestamp(), createdAtMs: card.createdAtMs || Date.now() };
+    // Phase 1a — editing an EXISTING job card goes through the revision-guarded
+    // transaction. Nothing local (reserve delta, optimistic state) is applied
+    // until the write is confirmed, so a rejected stale save changes nothing.
+    if (prior && !demoMode) {
+      let fresh;
+      warnIfOffline('this job card'); // Phase 6b (PH6-02) — non-blocking heads-up only
+      try {
+        fresh = await store.saveGuarded(COLLECTIONS.JOB_CARDS, card, revOf(card), { idField: 'jobNo', label: 'This job card' });
+      } catch (err) {
+        // Phase 6b — same silent-failure gap as the invoice path above: a
+        // non-concurrency rejection used to reach JobCardModule's catch with no
+        // toast at all (the comment claimed one already fired; none did).
+        if (isConcurrencyError(err)) concToast(err, 'job card');
+        else toast.error(isTxTimeout(err)
+          ? timeoutMessage('This job card')
+          : 'Couldn’t confirm the job card saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.');
+        throw err; // JobCardModule's own catch leaves the editor untouched
+      }
+      const merged = { ...card, _rev: fresh._rev };
+      const next = [...prev.filter((c) => c.jobNo !== card.jobNo), merged];
+      jobCardsRef.current = next;
+      setJobCards(next);
+      // PH4-07 — reservation delta from the pinned baseline, after the guarded
+      // write is confirmed; advance the baseline so a later edit diffs from here.
+      await applyReserveDelta(reserveDelta(reserveBaseline, card), reserveOpId);
+      reserveBaselineRef.current.set(card.jobNo, card);
+      clearOpId(reserveScope); // Phase 5b — this save is confirmed; the next edit is a new intent
+      const label = `${merged.jobNo} · ${merged.customer || ''}${merged.vehicle ? ` · ${merged.vehicle}` : ''}`;
+      if (prior.status !== merged.status) {
+        pushAudit({ action: 'Job Card Status Changed', entity: 'Job Card', entityId: merged.jobNo, detail: `${label} · ${prior.status || ''} → ${merged.status || ''}` });
+      } else {
+        pushAudit({ action: 'Job Card Updated', entity: 'Job Card', entityId: merged.jobNo, detail: label });
+      }
+      return;
+    }
+    const next = [...prev.filter((c) => c.jobNo !== card.jobNo), stamped];
+    jobCardsRef.current = next;
+    setJobCards(next);
+    await persistJobCardsDiff(prev, next);
+    // PH4-07 — apply the reservation delta ONLY after the job-card doc write is
+    // confirmed, computed from the pinned baseline so a retry after a failed write
+    // neither double-reserves nor drops the reservation. H-5A: reserveDelta (pure).
+    await applyReserveDelta(reserveDelta(reserveBaseline, card), reserveOpId);
+    reserveBaselineRef.current.set(card.jobNo, card);
+    clearOpId(reserveScope); // Phase 5b — this save is confirmed
+    // Audit AFTER the write above has actually succeeded (an awaited call that
+    // throws on failure) — one entry per save, picking status-change over a
+    // generic "Updated" when that's what actually happened, same rule as invoices.
+    const label = `${stamped.jobNo} · ${stamped.customer || ''}${stamped.vehicle ? ` · ${stamped.vehicle}` : ''}`;
+    if (prior && prior.status !== stamped.status) {
+      pushAudit({ action: 'Job Card Status Changed', entity: 'Job Card', entityId: stamped.jobNo, detail: `${label} · ${prior.status || ''} → ${stamped.status || ''}` });
+    } else {
+      pushAudit({ action: prior ? 'Job Card Updated' : 'Job Card Created', entity: 'Job Card', entityId: stamped.jobNo, detail: label });
+    }
+  };
+  // #6 View-More context: remember scroll position per tab so returning lands you where
+  // you left off. Records into a ref on scroll (no setState → no re-render, no reflow);
+  // must listen on the content container, since the window no longer scrolls.
+  const scrollMem = useRef({});
+  useEffect(() => {
+    const off = onAppScroll(() => { scrollMem.current[activeTab] = appScrollY(); });
+    return off;
+  }, [activeTab]);
+  useEffect(() => {
+    const y = scrollMem.current[activeTab];
+    if (y == null) return undefined;
+    // Cancel if activeTab changes again (or we unmount) before the frame fires — otherwise
+    // a stale restore can land AFTER the next tab has already rendered and snap it to the
+    // wrong scroll position.
+    const id = requestAnimationFrame(() => appScrollTo({ top: y }));
+    return () => cancelAnimationFrame(id);
+  }, [activeTab]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [suppliersLoading, setSuppliersLoading] = useState(true);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  // FIX-09: styled, on-brand confirmation modal (replaces native confirm()).
+  const [confirmState, setConfirmState] = useState(null); // { title, message, confirmLabel, danger, onConfirm }
+  const askConfirm = useCallback((opts) => setConfirmState(opts), []);
+  const [showSupplierModal, setShowSupplierModal] = useState(false);
+  const [editSupplier, setEditSupplier] = useState(null);
+  const [supplierSaving, setSupplierSaving] = useState(false);
+
+  // CONCURRENCY PHASE 1b/1c — single active editor for parts & suppliers. The lease
+  // is acquired when an editor opens for an EXISTING record and released on close
+  // (save or cancel). If another user already holds it, the popup stays OPEN in a
+  // read-only view (Phase 1c) — never force-closed — and becomes editable in place
+  // via [Edit] once the lease frees. New records (no id) never take a lease. Phase
+  // 1a `_rev` remains the authoritative save-time guard.
+  const partLease = useEditLease('parts', showModal && editPart && editPart.id ? editPart.id : null);
+  const supplierLease = useEditLease('suppliers', showSupplierModal && editSupplier && editSupplier.id ? editSupplier.id : null);
+  const [partViewOnly, setPartViewOnly] = useState(false);
+  const [supplierViewOnly, setSupplierViewOnly] = useState(false);
+  const [partReviewOpen, setPartReviewOpen] = useState(false);
+  const [supplierReviewOpen, setSupplierReviewOpen] = useState(false);
+  const partSync = useRecordSync('parts', showModal && editPart && editPart.id ? editPart.id : null, editPart && editPart._rev);
+  const supplierSync = useRecordSync('suppliers', showSupplierModal && editSupplier && editSupplier.id ? editSupplier.id : null, editSupplier && editSupplier._rev);
+  useLeaseReleaseToast(partLease.status);
+  useLeaseReleaseToast(supplierLease.status);
+  useEffect(() => {
+    if (!(showModal && editPart && editPart.id)) { setPartViewOnly(false); return undefined; }
+    let cancelled = false;
+    setPartViewOnly(false);
+    partSync.markSynced(revOf(editPart));
+    partLease.acquire(editPart.id).then((r) => {
+      if (cancelled) return;
+      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this part. You can view it, but editing is temporarily unavailable.`, { duration: 6000 }); setPartViewOnly(true); }
+    });
+    return () => { cancelled = true; };
+  }, [showModal, editPart && editPart.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!(showSupplierModal && editSupplier && editSupplier.id)) { setSupplierViewOnly(false); return undefined; }
+    let cancelled = false;
+    setSupplierViewOnly(false);
+    supplierSync.markSynced(revOf(editSupplier));
+    supplierLease.acquire(editSupplier.id).then((r) => {
+      if (cancelled) return;
+      if (!r.ok) { toast.error(`🔒 ${r.heldBy} is editing this supplier. You can view it, but editing is temporarily unavailable.`, { duration: 6000 }); setSupplierViewOnly(true); }
+    });
+    return () => { cancelled = true; };
+  }, [showSupplierModal, editSupplier && editSupplier.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Phase 1c — a view-only holder claims the editor once the lease frees ([Edit]).
+  const claimPartEdit = useCallback(async () => {
+    if (!editPart || !editPart.id) return;
+    const r = await partLease.acquire(editPart.id);
+    if (!r.ok) { toast.error(`🔒 ${r.heldBy} is still editing this part.`); return; }
+    if (partSync.latest) setEditPart(partSync.latest);
+    partSync.markSynced();
+    setPartViewOnly(false);
+  }, [editPart, partLease, partSync]);
+  const claimSupplierEdit = useCallback(async () => {
+    if (!editSupplier || !editSupplier.id) return;
+    const r = await supplierLease.acquire(editSupplier.id);
+    if (!r.ok) { toast.error(`🔒 ${r.heldBy} is still editing this supplier.`); return; }
+    if (supplierSync.latest) setEditSupplier(supplierSync.latest);
+    supplierSync.markSynced();
+    setSupplierViewOnly(false);
+  }, [editSupplier, supplierLease, supplierSync]);
+
+  // Phase 1c — the lease / record-status strip shown at the top of the part &
+  // supplier popups (view-only OR editing). Built once here, passed to every render
+  // site so the wording can't drift.
+  const closePartModal = useCallback(() => { partLease.release(); setPartReviewOpen(false); setShowModal(false); setEditPart(null); }, [partLease]);
+  const closeSupplierModal = useCallback(() => { supplierLease.release(); setSupplierReviewOpen(false); setShowSupplierModal(false); setEditSupplier(null); }, [supplierLease]);
+  const partBanner = (
+    <>
+      {partViewOnly && partLease.status === 'held' && <EditLeaseBanner status="held" heldByEmail={partLease.heldByEmail} className="mb-2" />}
+      {partViewOnly && partLease.status !== 'held' && <EditAvailableBar onEdit={claimPartEdit} className="mb-2" />}
+      {partViewOnly
+        ? <RecordUpdatedNotice status={partSync.status} onAcknowledge={() => { if (partSync.latest) setEditPart(partSync.latest); partSync.markSynced(); }} className="mb-2" />
+        : <RecordConflictBanner status={partSync.status} onReview={() => setPartReviewOpen(true)} onClose={closePartModal} className="mb-2" />}
+    </>
+  );
+  const supplierBanner = (
+    <>
+      {supplierViewOnly && supplierLease.status === 'held' && <EditLeaseBanner status="held" heldByEmail={supplierLease.heldByEmail} className="mb-2" />}
+      {supplierViewOnly && supplierLease.status !== 'held' && <EditAvailableBar onEdit={claimSupplierEdit} className="mb-2" />}
+      {supplierViewOnly
+        ? <RecordUpdatedNotice status={supplierSync.status} onAcknowledge={() => { if (supplierSync.latest) setEditSupplier(supplierSync.latest); supplierSync.markSynced(); }} className="mb-2" />
+        : <RecordConflictBanner status={supplierSync.status} onReview={() => setSupplierReviewOpen(true)} onClose={closeSupplierModal} className="mb-2" />}
+    </>
+  );
+  const partReviewDialog = (partReviewOpen && editPart && editPart.id && partSync.latest) ? (
+    <ConflictReviewDialog
+      mode="review"
+      title="This part was changed by another user"
+      fields={PART_CONFLICT_FIELDS}
+      opened={editPart}
+      latest={partSync.latest}
+      onUseLatest={(latest) => { setPartReviewOpen(false); partSync.markSynced(revOf(latest)); setEditPart({ ...latest }); }}
+      onClose={() => setPartReviewOpen(false)}
+    />
+  ) : null;
+  const supplierReviewDialog = (supplierReviewOpen && editSupplier && editSupplier.id && supplierSync.latest) ? (
+    <ConflictReviewDialog
+      mode="review"
+      title="This supplier was changed by another user"
+      fields={SUPPLIER_CONFLICT_FIELDS}
+      opened={editSupplier}
+      latest={supplierSync.latest}
+      onUseLatest={(latest) => { setSupplierReviewOpen(false); supplierSync.markSynced(revOf(latest)); setEditSupplier({ ...latest }); }}
+      onClose={() => setSupplierReviewOpen(false)}
+    />
+  ) : null;
+
+  // 1.3 Unified inventory state filter — Active | Low Stock | Out of Stock | Archived | All.
+  // Active means "not archived" (Issue 6.4) — Low/Out are their own dedicated filters
+  // for the stock-level distinction; each filter shows only its own set.
+  const [invFilter, setInvFilter] = useState('active');
+  // Back-compat derived flags used by various UI bits and the archived-metadata display.
+  const lowStockOnly = invFilter === 'low';
+  const outOfStockOnly = invFilter === 'out';
+  const showArchived = invFilter === 'archived' || invFilter === 'all';
+  // #3 supplier→inventory jump: the part id to highlight + scroll to after a jump.
+  const [highlightPartId, setHighlightPartId] = useState(null);
+  // Universal Navigation Rule (View Part): the ONE way any entry point — the Suppliers
+  // module's eye icon, the `open=inventory:<key>` deep-link (below), any future one —
+  // opens a specific part. Lands on Inventory → Parts (never the generic Dashboard
+  // sub-view: previously NEITHER path ever set invSubView, so "View Part" silently
+  // landed on the Inventory Dashboard and left the user to find the part again — the
+  // exact bug this fixes), widens invFilter only if the part's OWN archived state would
+  // otherwise hide its row from the table underneath, then opens the SAME PartModal
+  // every other "view/edit a part" action in this app already uses (Edit button,
+  // Reorder Center, Archive, Command Palette, Analytics, Alerts) — the canonical detail
+  // experience, not a second/duplicate one. highlightPartId keeps the row identifiable
+  // once the modal closes, so returning to the table isn't disorienting.
+  const openPartDetail = useCallback((part) => {
+    if (!part) return;
+    setActiveTab('inventory');
+    setInvSubView('parts');
+    setInvFilter((prev) => {
+      if (part.archived) return (prev === 'archived' || prev === 'all') ? prev : 'archived';
+      return (prev === 'active' || prev === 'all') ? prev : 'active';
+    });
+    setHighlightPartId(part.id);
+    setEditPart(part);
+    setShowModal(true);
+  }, [setActiveTab]);
+  // Deep-link: "View Part Details" opened this tab — open the referenced part directly.
+  // Only PEEK at the pending key while inventory hasn't loaded yet (an empty array on
+  // first paint would otherwise look identical to "part not found" and both fire a
+  // false "Part no longer exists" AND consume the key before it could ever be resolved
+  // once real data arrives) — the key is only actually consumed (removed) once there's
+  // real inventory to search it against, on whichever render that turns out to be.
+  useEffect(() => {
+    let q = null;
+    try { q = localStorage.getItem('maruti_inventory_highlight'); } catch {}
+    if (!q || !inventory.length) return;
+    try { localStorage.removeItem('maruti_inventory_highlight'); } catch {}
+    const ql = q.trim().toLowerCase();
+    const hit = inventory.find((p) => (p.sku || '').toLowerCase() === ql) || inventory.find((p) => (p.name || '').toLowerCase() === ql);
+    if (hit) {
+      openPartDetail(hit);
+    } else {
+      // Stale/deleted part, or a typo'd key — never a blank Parts page with no
+      // explanation (the brief's own "Part no longer exists" requirement).
+      toast.error('Part no longer exists.');
+      setInvSubView('parts');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inventory.length]);
+  const [dupPrompt, setDupPrompt] = useState(null); // Task 3: {existing, proceed}
+  const [adjustTarget, setAdjustTarget] = useState(null); // Task 8: stock adjust modal
+  const [ledgerTarget, setLedgerTarget] = useState(null); // Section 14: movement history
+  const [reorderDialog, setReorderDialog] = useState(null); // real reorder workflow dialog
+  const [stockAdjustments, setStockAdjustments] = useState([]); // Task 8: ledger
+
+  // NOTE: this effect MUST live below every store it reads. It previously sat above
+  // `const [stockAdjustments, ...]` and threw "Cannot access 'stockAdjustments' before
+  // initialization" — a temporal-dead-zone error. `const` declarations are hoisted but
+  // not initialised, so referencing one earlier in the same scope is a runtime crash,
+  // even though the name resolves fine to a static analyser.
+  // Exposed for verification: run `window.__txnCounts()` in the console before and
+  // after a Save & Collect. Every store the app reads from, in one place, so a claim
+  // like "nothing updated" can be checked against the actual data rather than the UI.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.__txnCounts = () => {
+      const counts = {
+        Invoices: invoices.length,
+        Sales: sales.filter((r) => (r.revenueType || r.category) === 'Parts' || (r.revenueType || r.category) === 'Outside Purchase').length,
+        Services: sales.filter((r) => (r.revenueType || r.category) === 'Labour' || (r.revenueType || r.category) === 'Service').length,
+        SalesLedgerTotal: sales.length,
+        StockOut: sales.filter((r) => !!r.partId && (r.revenueType || r.category || 'Parts') === 'Parts').length + stockAdjustments.length,
+        InventoryParts: inventory.length,
+        InventoryTotalUnits: inventory.reduce((a, p) => a + (Number(p.stock) || 0), 0),
+        Customers: customers.length,
+        Vehicles: customers.reduce((a, c) => a + (c.vehicles || []).length, 0),
+        AuditLog: auditLog.length,
+        Revenue: sales.reduce((a, r) => a + (Number(r.revenue) || 0), 0),
+        Profit: sales.reduce((a, r) => a + (Number(r.profit) || 0), 0),
+      };
+      console.table(counts);
+      return counts;
+    };
+  }, [invoices, sales, inventory, customers, auditLog, stockAdjustments]);
+
+  const [reorderRequests, setReorderRequests] = useState([]); // PO / reorder status
+  const [purchaseOrders, setPurchaseOrders] = useState([]); // Purchase Order lifecycle (pending→approved→received→cancelled)
+  // CAPACITY CLEANUP — STALE DASHBOARD FIX. A capacity delete/archive writes directly
+  // through persistenceStore (services/capacityService.js), bypassing every one of this
+  // file's own onPersist/setX flows entirely — so without this, the table/KPIs for the
+  // cleaned-up module would keep showing the just-deleted rows until a full reload
+  // (exactly the "stale dashboard values" failure the capacity brief calls out by name).
+  // Re-reads the affected collection straight from the same store the cleanup just
+  // wrote to and republishes it into the state every view here already reads from, so
+  // counts/tables/KPIs correct themselves the moment the wizard's "Done" is clicked.
+  const CAPACITY_STATE_SETTERS = {
+    jobCards: setJobCards, invoices: setInvoicesRaw, restocks: setRestocks,
+    stockAdjustments: setStockAdjustments, purchaseOrders: setPurchaseOrders, sales: setSales,
+    auditLog: setAuditLog,
+  };
+  const refreshCapacityCollection = useCallback(async (moduleKey) => {
+    const setter = CAPACITY_STATE_SETTERS[moduleKey];
+    const collectionName = CAPACITY_MODULES[moduleKey]?.collection;
+    if (!setter || !collectionName) return;
+    try {
+      const rows = await createStore(demoMode).list(collectionName);
+      setter(rows);
+    } catch (e) {
+      console.error(`[capacity] failed to refresh "${moduleKey}" after cleanup:`, e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoMode]);
+  // Settings QA fix: Settings -> Notifications' 4 toggles (Low Stock Alerts/
+  // Critical Stock Alerts/Service Due Reminder/Outstanding Payment Reminder) saved
+  // correctly (biz.remLowStock/remCritical/remService/remPayment) but nothing ever
+  // read them — every alert category always showed regardless of the toggle state.
+  // Re-derives on the same maruti-settings event lib/i18n.js's LanguageProvider
+  // already reacts to, so a Settings save takes effect on the next alert recompute
+  // without needing a reload — same one-source-of-truth pattern, not a new one.
+  const [notifPrefs, setNotifPrefs] = useState(() => { try { return JSON.parse(localStorage.getItem(demoMode ? 'maruti_settings_demo' : 'maruti_settings') || '{}'); } catch { return {}; } });
+  useEffect(() => {
+    const reload = () => { try { setNotifPrefs(JSON.parse(localStorage.getItem(demoMode ? 'maruti_settings_demo' : 'maruti_settings') || '{}')); } catch {} };
+    reload();
+    window.addEventListener('maruti-settings', reload);
+    window.addEventListener('storage', reload);
+    return () => { window.removeEventListener('maruti-settings', reload); window.removeEventListener('storage', reload); };
+  }, [demoMode]);
+  // Alert state + derived counts — placed AFTER reorderRequests so it isn't
+  // referenced before initialization (fixes the TDZ ReferenceError).
+  const allAlerts = useMemo(() => {
+    const raw = computeAlerts(inventory, reorderRequests, connError, { customers, invoices, jobCards, purchaseOrders, suppliers });
+    // Category -> id-prefix mapping follows computeAlerts()'s own existing id
+    // convention (services/analyticsService.js) — 'low-' Low stock, 'out-'/'neg-'
+    // Out of stock/Negative stock (the two genuinely stock-critical alert kinds;
+    // System sync issues and Billing/Customer criticals are governed elsewhere,
+    // not by "Critical STOCK Alerts"), 'svc-' Service due, 'due-' Outstanding
+    // payment.
+    return raw.filter((a) => {
+      if (notifPrefs.remLowStock === false && a.id.startsWith('low-')) return false;
+      if (notifPrefs.remCritical === false && (a.id.startsWith('out-') || a.id.startsWith('neg-'))) return false;
+      if (notifPrefs.remService === false && a.id.startsWith('svc-')) return false;
+      if (notifPrefs.remPayment === false && a.id.startsWith('due-')) return false;
+      return true;
+    });
+  }, [inventory, reorderRequests, connError, customers, invoices, jobCards, purchaseOrders, suppliers, notifPrefs]);
+  const unreadAlertCount = useMemo(
+    () => allAlerts.filter((a) => !readAlerts.has(a.id) && !archivedAlerts.has(a.id)).length,
+    [allAlerts, readAlerts, archivedAlerts]
+  );
+  const persistAlertEntries = (key, entries) => { try { localStorage.setItem(key, JSON.stringify(entries)); } catch {} };
+  const markAlertRead = useCallback((id, read = true) => {
+    setReadAlertEntries((entries) => {
+      const next = read
+        ? (entries.some((e) => e.id === id) ? entries : [...entries, { id, at: new Date().toISOString() }])
+        : entries.filter((e) => e.id !== id);
+      persistAlertEntries(ALERT_READ_KEY, next);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ALERT_READ_KEY]);
+  const markAllAlertsRead = useCallback(() => {
+    setReadAlertEntries((entries) => {
+      const existing = new Set(entries.map((e) => e.id));
+      const now = new Date().toISOString();
+      const next = [...entries, ...allAlerts.filter((a) => !existing.has(a.id)).map((a) => ({ id: a.id, at: now }))];
+      persistAlertEntries(ALERT_READ_KEY, next);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allAlerts, ALERT_READ_KEY]);
+  const archiveAlert = useCallback((id) => {
+    if (demoMode && !demoAdmin) { protectedDemoToast(); return; }
+    setArchivedAlertEntries((entries) => {
+      if (entries.some((e) => e.id === id)) return entries;
+      const next = [...entries, { id, at: new Date().toISOString() }];
+      persistAlertEntries(ALERT_ARCHIVED_KEY, next);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoMode, demoAdmin, ALERT_ARCHIVED_KEY]);
+  // Universal capacity rollout (Alerts) — see services/localCapacityService.js's header
+  // for why this is a separate, lighter engine than services/capacityService.js (there is
+  // no Firestore "alerts" collection; these two localStorage id-sets ARE the whole
+  // dataset). An entry is eligible for cleanup once its alert id no longer appears in the
+  // CURRENT live computeAlerts() output — i.e. the underlying issue is resolved and this
+  // id can never be looked up again either way, protected/active alerts are never touched
+  // regardless of how old the entry is.
+  const liveAlertIds = useMemo(() => new Set(allAlerts.map((a) => a.id)), [allAlerts]);
+  const alertCapacityEntries = useMemo(() => {
+    const byId = new Map();
+    readAlertEntries.forEach((e) => byId.set(e.id, e));
+    archivedAlertEntries.forEach((e) => { if (!byId.has(e.id)) byId.set(e.id, e); });
+    return [...byId.values()].map((e) => ({
+      id: e.id,
+      at: e.at ? new Date(e.at) : null,
+      eligible: !liveAlertIds.has(e.id),
+    }));
+  }, [readAlertEntries, archivedAlertEntries, liveAlertIds]);
+  const alertCapacityStatus = useMemo(() => getLocalCapacityStatus(alertCapacityEntries.length), [alertCapacityEntries.length]);
+  const pruneAlertEntries = useCallback(async (eligible) => {
+    const ids = new Set(eligible.map((e) => e.id));
+    const nextRead = readAlertEntries.filter((e) => !ids.has(e.id));
+    const nextArchived = archivedAlertEntries.filter((e) => !ids.has(e.id));
+    setReadAlertEntries(nextRead);
+    setArchivedAlertEntries(nextArchived);
+    persistAlertEntries(ALERT_READ_KEY, nextRead);
+    persistAlertEntries(ALERT_ARCHIVED_KEY, nextArchived);
+    // pushAudit (not writeAudit) — this must work identically in demo mode, and
+    // writeAudit always writes straight to production Firestore with no demo branch
+    // at all (see its definition). pushAudit is the dual-mode helper the rest of the
+    // app already uses for exactly this reason.
+    pushAudit({ action: 'capacity_delete', entity: 'Alerts', detail: `${ids.size} stale alert-tracking entr${ids.size === 1 ? 'y' : 'ies'} removed via capacity cleanup` });
+    return { count: ids.size };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readAlertEntries, archivedAlertEntries, pushAudit, ALERT_READ_KEY, ALERT_ARCHIVED_KEY]);
+  const [showFilterSheet, setShowFilterSheet] = useState(false); // CHANGE-05: mobile filters
+  // Lock background scroll while the mobile filter sheet is open (it's inline JSX,
+  // not a component, so it can't use the hook directly).
+  useEffect(() => { if (!showFilterSheet) return undefined; const t = lockBody(); return () => unlockBody(t); }, [showFilterSheet]);
+  const [sortConfig, setSortConfig] = useState({ key: null, dir: 'asc' });
+
+  // Issue 3: checkout / bargain-lock
+  const [checkoutPart, setCheckoutPart] = useState(null);
+  const [restockTarget, setRestockTarget] = useState(null); // ADD-02
+  const [quickPick, setQuickPick] = useState(null); // 'sell' | 'receive' — Quick Action part picker
+  // Issue 7.2 — set when the user picks a "Pending Delivery" (a real PO) from
+  // Receive Stock's entry point; consumed once by InventoryPurchaseOrders to
+  // auto-open that PO's own receive form instead of the ad-hoc RestockModal.
+  const [pendingReceivePOId, setPendingReceivePOId] = useState(null);
+  // Issue 7.12 — shipment-level receive (one supplier/invoice/date, many parts).
+  const [showBulkReceive, setShowBulkReceive] = useState(false);
+  // Issue 7.13 — bulk stock adjustment (each selected part keeps its own reason).
+  const [showBulkAdjust, setShowBulkAdjust] = useState(false);
+  // 1.3 — bulk "Create Purchase Order" from a Parts selection (Dashboard Reorder Center
+  // drill-down review): grouped by supplier, one real PO per group.
+  const [showBulkReorder, setShowBulkReorder] = useState(false);
+  // Issue 7.14 — set when a Dashboard KPI (Today's Stock In/Out) navigates into
+  // the Stock tab; consumed once by InventoryStock to pre-apply that filter.
+  const [pendingStockFilter, setPendingStockFilter] = useState(null);
+  // 1.3 — same one-shot deep-link pattern as pendingReceivePOId/pendingStockFilter above,
+  // for Dashboard Insights/Reorder Center actions that need to land on a specific status
+  // filter inside Purchase Orders / Billing / Job Cards instead of their default view.
+  const [pendingPOStatusFilter, setPendingPOStatusFilter] = useState(null);
+  const [pendingBillingStatusFilter, setPendingBillingStatusFilter] = useState(null);
+  const [pendingJobKpiFilter, setPendingJobKpiFilter] = useState(null);
+  const [showImport, setShowImport] = useState(false); // ADD-01
+  // UNIVERSAL ISSUE U3 (overflow-menu unification): Escape/outside-click/scroll-
+  // reposition for the Actions ▼ menu are now owned by the shared ActionMenu (which
+  // composes DropdownPanel — the same primitive already used by every other dropdown
+  // in the app) — the hand-rolled mousedown/touchstart/keydown listener trio that used
+  // to live here is gone. This also fixes a real bug, not just a style unification:
+  // this menu previously rendered as a plain, non-portaled `absolute` div inside
+  // <main>'s own stacking context, exposed to the same ancestor-clipping/z-index trap
+  // already portal-fixed elsewhere in this app (DropdownPanel itself, several modals —
+  // see e.g. CustomerWizard's fix in CustomersModule.jsx for the identical mechanism).
+  // DropdownPanel's portal-to-body sidesteps that entirely.
+  //
+  // Critical Fix #1 (still needed, no ActionMenu equivalent): close the menu whenever
+  // the tab changes or any modal/drawer/palette opens, so it can never linger over
+  // another surface.
+  useEffect(() => { setActionsOpen(false); }, [activeTab, showModal, showImport, showSupplierModal, restoreConfirm, cmdkOpen, sidebarMobileOpen]);
+  // PHASE 28 (PH28-02) — keep blockingModalRef in step with the tab-independent modals
+  // so the hashchange handler (registered once, high above) can read it. Runs every
+  // render; a ref write is cheap and never triggers one.
+  useEffect(() => {
+    blockingModalRef.current = !!(showModal || showSupplierModal || checkoutPart || restockTarget || adjustTarget);
+  });
+  // FIX 2: WhatsApp purchase-order router
+  const [reorderTarget, setReorderTarget] = useState(null); // { part, supplierName, contacts, block }
+  // Feature 5: out-of-stock alternative suggester
+  const [alternativePart, setAlternativePart] = useState(null);
+
+  function toggleSort(key) {
+    setSortConfig((prev) =>
+      prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }
+    );
+  }
+
+  // ---- Demo Mode: load the in-memory sample dataset instead of Firestore.
+  // Runs once; populates every collection's state from the generated demo data
+  // so all tabs, charts and reports look fully realistic — with zero database
+  // reads and complete isolation from real production data. ----
+  const applyDemoData = useCallback((scope = 'all', opts = {}) => {
+    const { fresh = false } = opts;
+    const d = getDemoData();
+    // Demo changes (archive/restore/delete/stock/edits) are in-memory. Persist
+    // them to sessionStorage keyed by the demo's stable ids so a refresh keeps
+    // the user's work instead of regenerating the pristine seed. A "Reset demo"
+    // passes { fresh:true } to deliberately wipe the snapshot.
+    if (fresh) { try { [STORAGE.DEMO_INVENTORY, STORAGE.DEMO_SUPPLIERS, STORAGE.DEMO_SALES, STORAGE.DEMO_RESTOCKS, STORAGE.DEMO_ADJUSTMENTS, STORAGE.DEMO_PURCHASE_ORDERS, STORAGE.DEMO_AUDIT].forEach((k) => sessionStorage.removeItem(k)); sessionStorage.removeItem(STORAGE.DEMO_GARAGE_SEED); localStorage.removeItem(STORAGE.DEMO_CUSTOMERS); localStorage.removeItem(STORAGE.DEMO_JOB_CARDS); localStorage.removeItem(STORAGE.DEMO_INVOICES); localStorage.removeItem(STORAGE.DEMO_SCHEMA); } catch (e) { console.error('[DEMO] Reset could not clear stored demo data.', e); } }
+    const readSaved = (key) => {
+      if (fresh) return null;
+      try { const s = sessionStorage.getItem(key); const a = s ? JSON.parse(s) : null; return Array.isArray(a) && a.length ? a : null; } catch { return null; }
+    };
+    if (scope === 'all' || scope === 'inventory') setInventory(readSaved(STORAGE.DEMO_INVENTORY) || d.parts);
+    if (scope === 'all' || scope === 'suppliers') setSuppliers(readSaved(STORAGE.DEMO_SUPPLIERS) || d.suppliers);
+    if (scope === 'all' || scope === 'sales') { setSales(readSaved(STORAGE.DEMO_SALES) || d.sales); setRollups(d.salesRollups); }
+    if (scope === 'all') { setRestocks(readSaved(STORAGE.DEMO_RESTOCKS) || d.restocks); setStockAdjustments(readSaved(STORAGE.DEMO_ADJUSTMENTS) || d.stockAdjustments); setReorderRequests(d.reorderRequests); setPurchaseOrders(readSaved(STORAGE.DEMO_PURCHASE_ORDERS) || d.purchaseOrders || []); setCustomCategories(d.categories); setCustomVehicles(d.vehicles); }
+    if (scope === 'all' || scope === 'alerts') setReorderRequests(d.reorderRequests);
+    if (scope === 'all' || scope === 'audit') setAuditLog(readSaved(STORAGE.DEMO_AUDIT) || d.auditLog);
+    setLoading(false); setSuppliersLoading(false); setLastSync(new Date()); setListenerErrors({});
+  }, []);
+  // SEED ONCE, NEVER AGAIN.
+  //
+  // ARCHITECTURAL BUG THIS FIXES — "invoice paid, but Sales/Services show an OLDER
+  // invoice and not the new one":
+  //
+  // applyDemoData('all') calls setSales(readSaved(...) || seed), i.e. it REPLACES the
+  // whole sales array with whatever was in sessionStorage. This effect listed
+  // `applyDemoData` in its deps, so any change to that callback's identity re-ran the
+  // seeding — and if that happened after the transaction engine had just pushed new
+  // ledger rows via setSales(), those rows were silently overwritten by the stale
+  // snapshot. The invoice stayed Paid in the invoice store (different store, unaffected),
+  // so Billing showed INV-0010 while Sales/Services still showed only INV-0009.
+  //
+  // That is a RACE, which is why it looked intermittent: whether a transaction survived
+  // depended on whether a re-seed happened to fire after it.
+  //
+  // The demo store is hydrated exactly ONCE per session. After that, the transaction
+  // engine is the only thing allowed to mutate it — exactly as in production, where
+  // Firestore is hydrated once and then mutated by writes.
+  const demoSeeded = useRef(false);
+  useEffect(() => {
+    if (!demoMode) { demoSeeded.current = false; return; }
+    if (demoSeeded.current) return;      // already hydrated — do NOT clobber live data
+    demoSeeded.current = true;
+
+    applyDemoData('all');
+  }, [demoMode, applyDemoData]);
+
+  // Auto-save demo inventory/suppliers on every change so a refresh restores them.
+  // imageString is stripped before saving (it's large base64 and is re-derived
+  // from the part name in demo mode), keeping the payload well under quota.
+  useEffect(() => {
+    if (!demoMode || loading) return;
+    try { sessionStorage.setItem(STORAGE.DEMO_INVENTORY, JSON.stringify(inventory.map(({ imageString, ...rest }) => rest))); } catch {}
+  }, [inventory, demoMode, loading]);
+  useEffect(() => { if (!demoMode || loading) return; try { sessionStorage.setItem(STORAGE.DEMO_SALES, JSON.stringify(sales)); } catch {} }, [sales, demoMode, loading]);
+  useEffect(() => { if (!demoMode || loading) return; try { sessionStorage.setItem(STORAGE.DEMO_AUDIT, JSON.stringify(auditLog)); } catch {} }, [auditLog, demoMode, loading]);
+  useEffect(() => { if (!demoMode || loading) return; try { sessionStorage.setItem(STORAGE.DEMO_RESTOCKS, JSON.stringify(restocks)); } catch {} }, [restocks, demoMode, loading]);
+  useEffect(() => { if (!demoMode || loading) return; try { sessionStorage.setItem(STORAGE.DEMO_ADJUSTMENTS, JSON.stringify(stockAdjustments)); } catch {} }, [stockAdjustments, demoMode, loading]);
+  useEffect(() => { if (!demoMode || loading) return; try { sessionStorage.setItem(STORAGE.DEMO_PURCHASE_ORDERS, JSON.stringify(purchaseOrders)); } catch {} }, [purchaseOrders, demoMode, loading]);
+  useEffect(() => {
+    if (!demoMode || suppliersLoading) return;
+    try { sessionStorage.setItem(STORAGE.DEMO_SUPPLIERS, JSON.stringify(suppliers)); } catch {}
+  }, [suppliers, demoMode, suppliersLoading]);
+
+  // Demo Management actions (Demo Admin only) — restore the pristine seeded
+  // dataset or a single collection. In-memory, so this is instant and per-session.
+  //
+  // Settings QA fix: "Reset Demo Alerts" (and "Restore Original Demo Dataset")
+  // called applyDemoData(scope, {fresh:true}), which only re-seeds reorderRequests
+  // — the data alerts are COMPUTED from. It never touched readAlertEntries/
+  // archivedAlertEntries, so anything already marked read/acknowledged stayed read/
+  // acknowledged after a "reset" — the button's own name/description ("restore the
+  // original seeded demo dataset") promised a fresh Alert Center this didn't
+  // deliver. Now genuinely resettable at all, since read/archived state is
+  // demo-isolated (ALERT_READ_KEY/ALERT_ARCHIVED_KEY, see their definition above).
+  function resetDemoScope(scope, label) {
+    applyDemoData(scope, { fresh: true });
+    if (scope === 'all' || scope === 'alerts') {
+      setReadAlertEntries([]);
+      setArchivedAlertEntries([]);
+      try { localStorage.removeItem(ALERT_READ_KEY); localStorage.removeItem(ALERT_ARCHIVED_KEY); } catch {}
+    }
+    toast.success(`${label} reset to original demo data`);
+  }
+
+  // ---- Firestore live subscription (offline-first) ----
+  useEffect(() => {
+    if (demoMode) return;
+    // BOUNDED — see the note on the customers listener. 10k parts x 500 users is 5M
+    // reads per load cycle if left unbounded.
+    const q = query(collection(db, COLLECTIONS.PARTS), orderBy('createdAt', 'desc'), limit(LIMITS.PARTS_LIVE));
+    const unsub = onSnapshot(
+      q,
+      { includeMetadataChanges: true },
+      (snap) => {
+        // Phase 6b (PH6-01) — this used to apply EVERY snapshot unconditionally,
+        // while the jobCards/customers/invoices listeners below all gate on
+        // `!hasPendingWrites`. During an outage that started mid-invoice-save, that
+        // asymmetry let a SECOND tab/device visibly show the stock decrement before
+        // the invoice itself appeared anywhere — a real record that looked settled
+        // when it wasn't yet. Gating this listener the same way the others already
+        // are closes that window: it does NOT remove or delay the optimistic local
+        // update every stock-mutating handler already applies via its own direct
+        // `setInventory(...)` call (Quick Sell, adjust, restock, reserve, the
+        // invoice cascade's applyStockDelta) — those still update THIS device
+        // instantly, same as before. It only stops a STILL-UNCONFIRMED echo (this
+        // device's own pending write, or another device's in-flight one via
+        // multi-tab persistence) from being presented as settled. `setLoading` is
+        // deliberately NOT gated — a cached-but-unconfirmed first snapshot is still
+        // real data to show, not an empty state.
+        if (!snap.metadata.hasPendingWrites) {
+          setInventory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        }
+        setPendingWrites(snap.metadata.hasPendingWrites); // ADD-08 — tracked every snapshot regardless
+        if (!snap.metadata.hasPendingWrites && !snap.metadata.fromCache) { setLastSync(new Date()); clearListenerError('parts'); }
+        setLoading(false);
+      },
+      (err) => {
+        // Issue 1/6: surface a real, explained connection error instead of a
+        // silent perpetual "Sync Pending". C-3: routed through the shared handler
+        // (was the only listener that did this itself; now every listener does).
+        handleListenerError('parts', err);
+        setLoading(false);
+      }
+    );
+    return unsub;
+  }, [syncNonce]);
+
+  // H-8: was defined but never wired to any control — the Connection Error status pill
+  // was purely decorative, with no way to recover except a full page reload. `retryingRef`
+  // + a fixed cooldown stop a fast double-click (or an impatient user mashing the button)
+  // from firing multiple overlapping reconnect attempts / stacking "Reconnecting…" toasts —
+  // the shared `id` alone already collapses stacked toasts into one, this also skips the
+  // redundant syncNonce bumps entirely.
+  const retryingRef = useRef(false);
+  const retrySync = useCallback(() => {
+    if (retryingRef.current) return;
+    retryingRef.current = true;
+    setListenerErrors({});
+    listenerErrorToastShown.current = false;
+    setSyncNonce((n) => n + 1);
+    toast.loading('Reconnecting…', { id: 'retry-sync', duration: 1500 });
+    setTimeout(() => { retryingRef.current = false; }, 1500);
+  }, []);
+
+  // ---- One-time migration: lift any legacy per-device localStorage data
+  // (customers / job cards / invoices) into Firestore so existing single-device
+  // installs don't lose data when the app moves to a shared multi-device backend.
+  // Runs once per browser; guarded by a flag and skipped entirely in demo mode.
+  useEffect(() => {
+    if (demoMode) return;
+    if (loading) return; // wait until the first parts snapshot confirms Firestore is reachable
+    let done = false;
+    try { done = localStorage.getItem('maruti_fs_migrated_v1') === '1'; } catch {}
+    if (done) return;
+    (async () => {
+      try {
+        const readLocal = (k) => { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch { return []; } };
+        const locCustomers = readLocal('maruti_customers_prod');
+        const locJobs = readLocal('maruti_jobcards_prod');
+        const locInvoices = readLocal('maruti_invoices_prod');
+        if (!locCustomers.length && !locJobs.length && !locInvoices.length) { localStorage.setItem('maruti_fs_migrated_v1', '1'); return; }
+        // only migrate into an empty collection (never overwrite live cloud data)
+        const [cSnap, jSnap, iSnap] = await Promise.all([
+          getDocs(query(collection(db, COLLECTIONS.CUSTOMERS), limit(1))),
+          getDocs(query(collection(db, COLLECTIONS.JOB_CARDS), limit(1))),
+          getDocs(query(collection(db, COLLECTIONS.INVOICES), limit(1))),
+        ]);
+        // 🔴 THIS MIGRATION USED TO LIE.
+        //
+        // `setDoc(...)` is ASYNC and was never awaited, so the surrounding try/catch
+        // caught nothing — a rejected write surfaced later as an unhandled rejection.
+        // `migrated++` then counted ATTEMPTS, not successes, so the app cheerfully
+        // toasted "Synced 300 records to the cloud" even if every single write failed.
+        // Worse, `maruti_fs_migrated_v1` was set unconditionally, so the migration NEVER
+        // RETRIED — a workshop's entire customer and invoice history stayed stranded on
+        // one browser, with the owner believing it was safely in the cloud.
+        //
+        // Now: await every write, count only what actually lands, and only mark the
+        // migration done if nothing failed. Anything else is a data-loss trap.
+        const writes = [];
+        if (cSnap.empty && locCustomers.length) {
+          locCustomers.forEach((c) => writes.push(
+            setDoc(doc(db, COLLECTIONS.CUSTOMERS, String(c.id)), { ...c, createdAt: c.createdAt || Date.now(), updatedAt: serverTimestamp() }, { merge: true })
+          ));
+        }
+        if (jSnap.empty && locJobs.length) {
+          locJobs.forEach((j) => writes.push(
+            setDoc(doc(db, COLLECTIONS.JOB_CARDS, String(j.jobNo)), { ...j, createdAt: j.createdAt || Date.now(), updatedAt: serverTimestamp() }, { merge: true })
+          ));
+        }
+        if (iSnap.empty && locInvoices.length) {
+          locInvoices.forEach((iv) => writes.push(
+            setDoc(doc(db, COLLECTIONS.INVOICES, String(iv.id)), { ...iv, createdAt: iv.createdAt || Date.now(), updatedAt: serverTimestamp() }, { merge: true })
+          ));
+        }
+
+        if (!writes.length) { localStorage.setItem('maruti_fs_migrated_v1', '1'); return; }
+
+        const results = await Promise.allSettled(writes);
+        const migrated = results.filter((r) => r.status === 'fulfilled').length;
+        const failed = results.length - migrated;
+
+        if (failed === 0) {
+          localStorage.setItem('maruti_fs_migrated_v1', '1');   // only mark done if ALL landed
+          toast.success(`Synced ${migrated} local record${migrated === 1 ? '' : 's'} to the cloud`, { duration: 4000 });
+        } else {
+          // Do NOT set the flag — we must retry on the next load rather than strand data.
+          console.error(`[migration] ${failed} of ${results.length} records failed to sync.`,
+            results.filter((r) => r.status === 'rejected').map((r) => r.reason));
+          toast.error(`${failed} record${failed === 1 ? '' : 's'} could not be synced to the cloud. They are still saved on this device and will retry automatically.`, { duration: 8000 });
+        }
+      } catch (e) { console.error('Local→Firestore migration skipped:', e); }
+    })();
+  }, [demoMode, loading]);
+
+  // ---- Ledger / tracking live subscriptions ----
+  // Six structurally-identical bounded windows: gate on production, subscribe to
+  // an ordered/capped query, map {id,...data} into state, route any error to the
+  // shared listener-error surface. Refactor Phase 6 folded the demo-gate + mount-
+  // once lifecycle into useLiveCollection; the query, the cap, the mapping and
+  // the error key stay here.
+  //   • Sales ledger — powers the Monthly Profit Trend (capped for large histories)
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.SALES), orderBy('createdAt', 'desc'), limit(LIMITS.SALES_LIVE)),
+    (snap) => { setSales(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('sales'); },
+    (err) => handleListenerError('sales', err),
+  ));
+  //   • FIX-07: monthly rollups — one tiny doc per month
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, 'salesRollups'), orderBy('month', 'desc'), limit(60)),
+    (snap) => { setRollups(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('salesRollups'); },
+    (err) => handleListenerError('salesRollups', err),
+  ));
+  //   • ADD-02: restock ledger — Restock Cost analytics
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.RESTOCKS), orderBy('createdAt', 'desc'), limit(LIMITS.RESTOCKS_LIVE)),
+    (snap) => { setRestocks(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('restocks'); },
+    (err) => handleListenerError('restocks', err),
+  ));
+  //   • Task 8: stock adjustment ledger — non-sale reductions
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.STOCK_ADJUSTMENTS), orderBy('createdAt', 'desc'), limit(LIMITS.STOCK_ADJUSTMENTS_LIVE)),
+    (snap) => { setStockAdjustments(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('stockAdjustments'); },
+    (err) => handleListenerError('stockAdjustments', err),
+  ));
+  //   • Reorder requests — purchase tracking; status transitions
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.REORDER_REQUESTS), orderBy('createdAt', 'desc'), limit(200)),
+    (snap) => { setReorderRequests(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('reorderRequests'); },
+    (err) => handleListenerError('reorderRequests', err),
+  ));
+  //   • Purchase Orders — lifecycle: pending → approved → received → cancelled
+  useLiveCollection(!demoMode, () => onSnapshot(
+    query(collection(db, COLLECTIONS.PURCHASE_ORDERS), orderBy('createdAt', 'desc'), limit(300)),
+    (snap) => { setPurchaseOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('purchaseOrders'); },
+    (err) => handleListenerError('purchaseOrders', err),
+  ));
+
+  // ---- Recovery Vault meta (drives the status card; syncs across devices) ----
+  const [recoveryMeta, setRecoveryMeta] = useState(null);
+  useEffect(() => {
+    if (demoMode) return;
+    const unsub = onSnapshot(
+      doc(db, 'recoveryMeta', 'current'),
+      (snap) => {
+        const data = snap.exists() ? snap.data() : null;
+        setRecoveryMeta(data);
+        clearListenerError('recoveryMeta');
+        // Client-side expiry: if the vault is past its 7 days, purge it now.
+        // (Free plan has no server cron, so expiry is enforced on next open.)
+        if (data && data.expiresAt && Date.now() > data.expiresAt) {
+          purgeVault(data.snapshotId);
+        }
+      },
+      (err) => handleListenerError('recoveryMeta', err)
+    );
+    return unsub;
+  }, []);
+
+  // ---- Task 1: custom categories & vehicles (user-extendable option lists) ----
+  // Small option-list collections — no ordering/cap (see the note on Phase 25's
+  // bounded-listener scope). Same demo-gate + mount-once lifecycle via Phase 6's
+  // useLiveCollection.
+  useLiveCollection(!demoMode, () => onSnapshot(
+    collection(db, COLLECTIONS.CATEGORIES),
+    (snap) => { setCustomCategories(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('categories'); },
+    (err) => handleListenerError('categories', err),
+  ));
+  useLiveCollection(!demoMode, () => onSnapshot(
+    collection(db, COLLECTIONS.VEHICLES),
+    (snap) => { setCustomVehicles(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('customVehicles'); },
+    (err) => handleListenerError('customVehicles', err),
+  ));
+
+  // ---- ADD-06: audit log subscription (admin-only viewer) ----
+  useEffect(() => {
+    if (demoMode) return;
+    if (!isAdmin) { setAuditLog([]); return; }
+    // Universal Search review: this hardcoded 100 had drifted from LIMITS.AUDIT_LIVE
+    // (already 500 in constants/index.js) — meaning the Audit Log's search box could
+    // only ever see its 100 most-recent entries, silently blind to anything older with
+    // no indication to the user that history existed but wasn't searched.
+    const q = query(collection(db, COLLECTIONS.AUDIT_LOG), orderBy('createdAt', 'desc'), limit(LIMITS.AUDIT_LIVE));
+    const unsub = onSnapshot(
+      q,
+      (snap) => { setAuditLog(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); clearListenerError('auditLog'); },
+      (err) => handleListenerError('auditLog', err)
+    );
+    return unsub;
+  }, [isAdmin]);
+
+  // ---- Suppliers live subscription (new `suppliers` collection) ----
+  useEffect(() => {
+    if (demoMode) return;
+    // BOUNDED — see the note on the customers listener.
+    const q = query(collection(db, COLLECTIONS.SUPPLIERS), orderBy('name', 'asc'), limit(LIMITS.SUPPLIERS_LIVE));
+    const unsub = onSnapshot(
+      q,
+      { includeMetadataChanges: true },
+      (snap) => {
+        setSuppliers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setSuppliersLoading(false);
+        clearListenerError('suppliers');
+      },
+      (err) => {
+        handleListenerError('suppliers', err);
+        setSuppliersLoading(false);
+      }
+    );
+    return unsub;
+  }, []);
+  // Mutation-safety/audit-coverage pass — this was the one remaining stock-mutation
+  // path (the inline +/− stepper AND typing a higher number directly, both route
+  // through here) with NO audit entry and NO restock-ledger entry at all, in either
+  // branch — confirmed live: stock changed correctly but nothing showed in the Audit
+  // Log or Stock In. `prevStock`/`partSnapshot` are captured inside the setInventory
+  // updater (reading the live `prev`, not the outer closure) for the same reason the
+  // existing rollback logic below already does it that way — this callback is memoized
+  // on `[demoMode]` only, so `inventory` in the surrounding closure can be stale.
+  // Only an actual INCREASE (delta > 0) is logged: commitTyped() above already blocks
+  // typing a lower number (that must go through Sell), so any delta reaching here
+  // that isn't positive is a no-op, not a real restock.
+  const commitStock = useCallback(async (partId, newStock) => {
+    // Hardening: never let a NaN, float, or negative reach state or Firestore.
+    // H-5A: sanitizeStock from inventoryService (pure) replaces the inline coercion.
+    const safeStock = sanitizeStock(newStock);
+    let prevStock = null;
+    let partSnapshot = null;
+    setInventory((prev) => prev.map((p) => {
+      if (p.id === partId) { prevStock = p.stock; partSnapshot = p; return { ...p, stock: safeStock }; }
+      return p;
+    }));
+    const delta = prevStock != null ? safeStock - prevStock : 0;
+    if (demoMode) {
+      if (delta > 0 && partSnapshot) {
+        const now = new Date();
+        const stamp = { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toDate: () => now, toMillis: () => now.getTime() };
+        setRestocks((prev) => [buildRestockRecord({
+          id: 'demo-rs-' + now.getTime() + '-' + partId, partId, name: partSnapshot.name, sku: partSnapshot.sku,
+          qty: delta, unitCost: partSnapshot.purchasePrice || 0, notes: 'Quick restock',
+          byEmail: 'demo@balajiautoos.com', createdAt: stamp,
+        }), ...prev]);
+        writeAudit('quick_restock', { partId, name: partSnapshot.name || '' }, { qty: delta, stockBefore: prevStock, stockAfter: safeStock });
+      }
+      return; // demo: local state only, no Firestore
+    }
+    try {
+      if (delta > 0 && partSnapshot) {
+        // Phase 5b (PH5-05) — deterministic ledger doc id (part + the stock level
+        // this nudge targets). A browser refresh + retyping the same target value
+        // re-writes the SAME `restocks` row instead of adding a second one; the
+        // stock field itself is already an absolute set, so it stays correct.
+        //
+        // PHASE 8B (global fire-and-forget audit) — the stock set and the restock
+        // ledger row used to be two independent writes, the second a bare
+        // `.catch(console.error)`: stock could change while the ledger row
+        // silently never landed. Both now commit inside one transaction — the
+        // idempotency read (has this qrId already been logged?) happens first,
+        // then both writes, so a retry after a lost ack neither double-logs the
+        // restock nor can leave the ledger missing for a stock change that stuck.
+        const qrId = `qr_${partId}_${safeStock}`;
+        await withTimeout(runTransaction(db, async (tx) => {
+          const restockRef = doc(db, COLLECTIONS.RESTOCKS, qrId);
+          const snap = await tx.get(restockRef);
+          tx.update(doc(db, COLLECTIONS.PARTS, partId), { stock: safeStock, updatedAt: serverTimestamp() });
+          if (!snap.exists()) {
+            tx.set(restockRef, {
+              opId: qrId, partId, name: partSnapshot.name || '', sku: partSnapshot.sku || '',
+              qty: delta, quantity: delta, unitCost: partSnapshot.purchasePrice || 0, total: delta * (partSnapshot.purchasePrice || 0),
+              supplier: '', supplierName: '', reference: '', notes: 'Quick restock',
+              by: user?.uid || null, byEmail: user?.email || null, createdAt: serverTimestamp(),
+            });
+          }
+        }), TX_TIMEOUT_MS, 'This stock update');
+        writeAudit('quick_restock', { partId, name: partSnapshot.name || '' }, { qty: delta, stockBefore: prevStock, stockAfter: safeStock });
+      } else {
+        await updateDoc(doc(db, COLLECTIONS.PARTS, partId), {
+          stock: safeStock,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (err) {
+      console.error('Stock sync failed:', err);
+      // PH26-01 (offline / reconnect integrity) — the only path that reaches here is
+      // a stock INCREASE, which runs the `runTransaction` above (a decrease goes
+      // through Sell; an equal value never calls this). Firestore transactions are
+      // NOT persisted offline — the SDK is explicit: "Unlike transactions, write
+      // batches are persisted offline" — so an offline failure here (code
+      // 'unavailable') definitely did NOT commit and nothing will replay. The
+      // earlier code kept the optimistic value on 'unavailable' assuming an
+      // IndexedDB-queued write would replay: true for a plain updateDoc, never for
+      // a transaction — so an offline restock silently reverted on reconnect (or
+      // was lost if the tab closed first) with no error. Roll the optimistic value
+      // back and say so, exactly as adjustStockLine / receivePO already do.
+      if (prevStock != null) {
+        setInventory((prev) => prev.map((p) => (p.id === partId ? { ...p, stock: prevStock } : p)));
+        toast.error(
+          isTxTimeout(err)
+            ? timeoutMessage('This stock update')
+            : (err?.code === 'unavailable' || /offline|network/i.test(err?.message || ''))
+            ? 'You’re offline — this restock wasn’t saved. Try again once your connection is back.'
+            : 'Could not update stock — the change was reverted. Check your connection / Firestore access.',
+        );
+      }
+    }
+  }, [demoMode]);
+
+  // ---- Logout (now routed through a confirmation modal) ----
+  async function confirmLogout() {
+    setShowLogoutConfirm(false);
+    if (demoMode) { try { exitDemo && exitDemo(); } catch { router.push('/login'); } return; }
+    try {
+      await signOut(auth);
+      // SECURITY: signOut() only clears the Firebase token. The offline-first caches
+      // (customers, invoices, job cards) stay in localStorage — so on a shared workshop
+      // counter PC the NEXT person to open the app would see the previous user's
+      // customer list and invoices rendered from cache before auth resolves.
+      // Clear every cached business record on the way out. Preferences (theme, sidebar)
+      // are deliberately kept: they are not customer data.
+      clearBusinessCaches();
+      router.push('/login');
+    } catch (err) {
+      console.error('Logout failed:', err);
+      toast.error('Could not log out. Please try again.');
+    }
+  }
+
+  // ---- Idle session timeout (Settings QA fix) ----
+  // Settings -> Security -> Session Timeout saved a value (15/30/60 minutes, or
+  // "Never") but nothing ever enforced it — selecting "15 minutes" never actually
+  // logged an idle user out. prefs lives in SettingsView's own local state, which
+  // unmounts the moment the user leaves Settings, so enforcement can't live there —
+  // it has to be independent of which page is open. Reads the same
+  // localStorage[STORAGE.PREFS] SettingsView already writes, re-derived on the same
+  // 'maruti-prefs' event updatePrefs() already dispatches (same one-source-of-truth
+  // pattern as notifPrefs/allAlerts above), rather than a second persistence path.
+  const [sessionTimeoutMin, setSessionTimeoutMin] = useState(() => {
+    try { return Number(JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}').sessionTimeout) || 0; } catch { return 0; }
+  });
+  useEffect(() => {
+    const reload = () => { try { setSessionTimeoutMin(Number(JSON.parse(localStorage.getItem(STORAGE.PREFS) || '{}').sessionTimeout) || 0); } catch {} };
+    window.addEventListener('maruti-prefs', reload);
+    window.addEventListener('storage', reload);
+    return () => { window.removeEventListener('maruti-prefs', reload); window.removeEventListener('storage', reload); };
+  }, []);
+  useEffect(() => {
+    if (!sessionTimeoutMin || sessionTimeoutMin <= 0) return; // 0 = "Never" — disabled
+    const timeoutMs = sessionTimeoutMin * 60 * 1000;
+    let timer;
+    const doIdleLogout = () => {
+      toast.error(`Signed out after ${sessionTimeoutMin} minute${sessionTimeoutMin === 1 ? '' : 's'} of inactivity.`, { duration: 6000 });
+      confirmLogout();
+    };
+    const reset = () => { clearTimeout(timer); timer = setTimeout(doIdleLogout, timeoutMs); };
+    const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart'];
+    ACTIVITY_EVENTS.forEach((evt) => window.addEventListener(evt, reset, { passive: true }));
+    reset();
+    return () => { clearTimeout(timer); ACTIVITY_EVENTS.forEach((evt) => window.removeEventListener(evt, reset)); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionTimeoutMin]);
+
+  // ---- Persist a supplier's master details edited from inside the Part modal ----
+  // (Preserves altNames/notes — only touches name + phone numbers — then cascades
+  // the new name/number to every linked part, keeping each part's preferred number
+  // if it still exists.)
+  //
+  // PHASE 8B (global fire-and-forget audit) — classified DERIVED/DENORMALIZED, not
+  // authoritative: each part's `suppliers[]` entry is a display-convenience COPY of
+  // the supplier's own name/phone; the supplier document is the source of truth. A
+  // full transaction across every linked part (which can be many) would be
+  // disproportionate to what is a cosmetic-sync risk, not a financial/stock one —
+  // per the Phase 8B brief's own guidance not to force independent documents into
+  // one oversized transaction. What DID need fixing: the primary supplier write and
+  // the cascade were never awaited at all, so "Supplier updated" fired unconditionally
+  // even if the supplier's OWN document failed to save. Now the primary write is
+  // awaited and gates the toast; the cascade is awaited via allSettled and any
+  // failures are reported by count instead of being silently absorbed — a stale
+  // part-level display is recoverable (it self-corrects the next time that part or
+  // supplier is edited), unlike a failed primary write, which is not.
+  //
+  // STALE-SNAPSHOT AUDIT — this writes the SAME fields (name/phone) the full
+  // Supplier edit wizard also owns, unlike the customer/part "secondary merge"
+  // writers this pattern is normally compared to (those touch fields the wizard
+  // never carries at all). The wizard's own guardedSet blind-merges its ENTIRE
+  // `payload`, including a stale name/phone snapshot from whenever it was opened
+  // — so without this, a wizard open across this quick edit would silently
+  // revert it on save, and `_rev` would not catch it, because this write never
+  // used to bump `_rev` (a plain `updateDoc`, correctly non-guarded for the
+  // fields it does NOT share with the wizard). `_rev: increment(1)` makes this
+  // write participate in the same revision protocol the wizard already checks,
+  // so that save is now correctly rejected as stale instead of clobbering —
+  // reusing Phase 1a's existing mechanism, not adding a new one.
+  async function persistSupplierEdit(id, { name, phoneNumbers }) {
+    const cleanName = (name || '').trim();
+    const seen = new Set();
+    const phones = (phoneNumbers || [])
+      .map((c) => ({ number: tenDigits(c.number), label: (c.label || 'Primary').trim() || 'Primary' }))
+      .filter((c) => c.number && !seen.has(c.number) && seen.add(c.number));
+    const primaryPhone = normalizePhone(phones[0]?.number || '');
+
+    try {
+      await updateDoc(doc(db, COLLECTIONS.SUPPLIERS, id), {
+        name: cleanName,
+        phoneNumbers: phones,
+        primaryPhone,
+        phones: phones.map((c) => c.number),
+        phone: primaryPhone,
+        _rev: increment(1),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      console.error('Supplier edit failed:', e);
+      toast.error('Could not save supplier changes. Check your connection and try again.');
+      return;
+    }
+
+    const valid = phones.map((c) => c.number);
+    const cascadeJobs = [];
+    inventory.forEach((p) => {
+      const list = getPartSuppliers(p);
+      let changed = false;
+      const updated = list.map((ps) => {
+        if (ps.id !== id) return ps;
+        const keep = ps.phone && valid.includes(ps.phone) ? ps.phone : primaryPhone;
+        if (ps.name !== cleanName || ps.phone !== keep) {
+          changed = true;
+          return { ...ps, name: cleanName, phone: keep };
+        }
+        return ps;
+      });
+      if (changed) {
+        const f = updated[0] || { name: '', phone: '' };
+        cascadeJobs.push(updateDoc(doc(db, COLLECTIONS.PARTS, p.id), {
+          suppliers: updated,
+          supplier: f.name,
+          supplierPhone: f.phone,
+          updatedAt: serverTimestamp(),
+        }));
+      }
+    });
+    if (cascadeJobs.length) {
+      const results = await Promise.allSettled(cascadeJobs);
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length) {
+        console.error(`Cascade after supplier edit: ${failed.length} of ${cascadeJobs.length} linked part(s) failed to refresh.`, failed.map((f) => f.reason));
+        toast.success(`Supplier updated (${failed.length} of ${cascadeJobs.length} linked parts may still show the old details — they'll refresh next edit)`);
+        return;
+      }
+    }
+    toast.success('Supplier updated');
+  }
+
+  // Immediately persist a brand-new supplier (typed in the Add-Part supplier picker) so the
+  // live suppliers subscription surfaces it at once — no part-save or refresh needed. In
+  // demo mode Firestore is read-only, so the picker's row-level selection is the mechanism.
+  function createSupplierNow(name) {
+    const cleanName = (name || '').trim();
+    if (!cleanName) return;
+    if (demoMode) return; // demo: row selection already reflects it; no Firestore write
+    const exists = suppliers.some((s) => safeLower(s.name) === safeLower(cleanName));
+    if (exists) return;
+    // Phase 4b (PH4-06) — deterministic doc id derived from the name. A retry of
+    // this fire-and-forget quick-create re-writes the SAME doc (merge) instead of
+    // creating a second supplier, even before the live subscription has surfaced
+    // the first write into `suppliers`.
+    const quickId = `sup_qc_${safeLower(cleanName).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || Date.now().toString(36)}`;
+    setDoc(doc(db, COLLECTIONS.SUPPLIERS, quickId), {
+      name: cleanName, phoneNumbers: [], primaryPhone: '', phones: [], phone: '',
+      createdAt: serverTimestamp(),
+    }, { merge: true }).catch((e) => console.error('Supplier create sync will retry:', e));
+  }
+
+  // ---- Supplier save (multi-phone / alt-names) + cascade to linked parts ----
+  // Mutation-safety pass — same gap as Part Save above: the demo-mode branch returned
+  // before the `setSupplierSaving` guard further down was ever reached, so two rapid
+  // clicks both created a full duplicate supplier. Same wrapper-lock architecture.
+  const supplierSaveLockRef = useRef(false);
+  async function handleSupplierSave(formData) {
+    if (supplierSaveLockRef.current) return;
+    supplierSaveLockRef.current = true;
+    try {
+      return await handleSupplierSaveInner(formData);
+    } finally {
+      supplierSaveLockRef.current = false;
+    }
+  }
+  async function handleSupplierSaveInner(formData) {
+    if (!formData.name?.trim()) return;
+    if (demoMode) {
+      const now = new Date();
+      const stamp = { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toDate: () => now, toMillis: () => now.getTime() };
+      const built = {
+        ...formData,
+        id: formData.id || ('demo-sup-' + now.getTime()),
+        name: formData.name.trim(),
+        phone: (formData.phoneNumbers && formData.phoneNumbers[0]?.number) || formData.phone || '',
+        createdAt: formData.createdAt || stamp,
+      };
+      setSuppliers((prev) => (formData.id ? prev.map((s) => (s.id === formData.id ? { ...s, ...built } : s)) : [built, ...prev]));
+      setShowSupplierModal(false); setEditSupplier(null);
+      toast.success(formData.id ? 'Supplier updated (demo)' : 'Supplier added (demo)');
+      writeAudit(formData.id ? 'update_supplier' : 'create_supplier', { supplierId: built.id, name: built.name });
+      return;
+    }
+    setSupplierSaving(true);
+
+    // FIX 3 (serialization guard): drop any contact cards with no number.
+    const cleanContacts = (formData.phoneNumbers || [])
+      .map((c) => ({ number: tenDigits(c.number), label: (c.label || 'Primary').trim() || 'Primary' }))
+      .filter((c) => c.number.trim() !== '');
+    // De-dupe by number, keeping first label.
+    const seen = new Set();
+    const phoneNumbers = cleanContacts.filter((c) => (seen.has(c.number) ? false : seen.add(c.number)));
+    const cleanAltNames = [...new Set((formData.altNames || []).map((n) => (n || '').trim()).filter(Boolean))];
+    const primaryName = formData.name.trim();
+    const primaryPhone = normalizePhone(phoneNumbers[0]?.number || '');
+
+    const payload = {
+      name: primaryName,
+      altNames: cleanAltNames,
+      phoneNumbers, // FIX 3: structured labeled contacts
+      primaryPhone, // FIX 4: canonical match key
+      phones: phoneNumbers.map((c) => c.number), // legacy mirror
+      phone: primaryPhone, // legacy mirror
+      notes: formData.notes || '',
+      // Part 5: business / tax / payment / bank fields (GST optional)
+      type: formData.type || '', contactPerson: formData.contactPerson || '', ownerName: formData.ownerName || '',
+      email: formData.email || '', website: formData.website || '', whatsapp: formData.whatsapp || '',
+      gst: (formData.gst || '').trim().toUpperCase(), pan: (formData.pan || '').toUpperCase(), businessReg: formData.businessReg || '',
+      address: formData.address || '', area: formData.area || '', city: formData.city || '', district: formData.district || '',
+      state: formData.state || '', pincode: formData.pincode || '',
+      paymentMode: formData.paymentMode || 'Cash', creditDays: formData.creditDays || '', openingBalance: formData.openingBalance || '', outstanding: formData.outstanding || '',
+      bankName: formData.bankName || '', accountHolder: formData.accountHolder || '', accountNumber: formData.accountNumber || '', ifsc: formData.ifsc || '', upi: formData.upi || '',
+      preferred: !!formData.preferred, status: formData.status || 'Active', logo: formData.logo || '', documents: formData.documents || [],
+      updatedAt: serverTimestamp(),
+      // NOTE: partsSupplied is intentionally NOT stored — it is computed live.
+    };
+
+    let concRejected = false;
+    warnIfOffline('this supplier'); // Phase 6b (PH6-02) — non-blocking heads-up only
+    try {
+      if (formData.id) {
+        // Universal Notification Architecture review — this write used to be
+        // fire-and-forget (its own .catch only logged to console), so "Supplier
+        // updated" toasted unconditionally regardless of whether Firestore actually
+        // accepted it, and the outer catch below was dead code for a real write
+        // failure. Awaiting the PRIMARY save means the toast reflects its real
+        // outcome. The fan-out cascade to linked parts below stays background/
+        // best-effort — it's a secondary sync (this supplier's own record is what
+        // the toast is about), not something the user should wait on.
+        // Phase 1a — revision-guarded: reject a stale overwrite / a resurrection
+        // of a supplier another user deleted.
+        await store.saveGuarded(COLLECTIONS.SUPPLIERS, { ...payload, id: formData.id }, revOf(formData), { label: 'This supplier' });
+        writeAudit('update_supplier', { supplierId: formData.id, name: primaryName });
+
+        // Issue 2 (cascade): push the new name/phone to every part linked to
+        // this supplier (by id, or — for legacy parts — by any old name).
+        const old = suppliers.find((s) => s.id === formData.id);
+        const oldNames = old ? getSupplierNames(old).map(safeLower) : [];
+        const validNumbers = phoneNumbers.map((c) => c.number);
+        inventory.forEach((p) => {
+          const list = getPartSuppliers(p);
+          let changed = false;
+          const updated = list.map((ps) => {
+            const linked =
+              (ps.id && ps.id === formData.id) ||
+              (!ps.id && oldNames.includes(safeLower(ps.name)));
+            if (!linked) return ps;
+            // Keep the part's chosen preferred number if it still exists on the
+            // supplier; otherwise fall back to the new primary number.
+            const keepPhone = ps.phone && validNumbers.includes(ps.phone) ? ps.phone : primaryPhone;
+            const label =
+              phoneNumbers.find((c) => c.number === keepPhone)?.label || ps.preferredLabel || 'Primary';
+            if (ps.name !== primaryName || ps.phone !== keepPhone || ps.id !== formData.id) {
+              changed = true;
+              return { id: formData.id, name: primaryName, phone: keepPhone, preferredLabel: label };
+            }
+            return ps;
+          });
+          if (changed) {
+            const first = updated[0] || { name: '', phone: '' };
+            updateDoc(doc(db, COLLECTIONS.PARTS, p.id), {
+              suppliers: updated,
+              supplier: first.name,
+              supplierPhone: first.phone,
+              updatedAt: serverTimestamp(),
+            }).catch((e) => console.error('Cascade update failed:', e));
+          }
+        });
+      } else {
+        // Phase 4b (PH4-06) — `formData.createOpId` is a stable client id for one
+        // "Add Supplier" intent; setDoc to that exact doc so a retry after an
+        // ambiguous failure re-writes it instead of creating a second supplier.
+        const newId = formData.createOpId || `sup_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        await setDoc(doc(db, COLLECTIONS.SUPPLIERS, newId), { ...payload, createdAt: serverTimestamp() }, { merge: true });
+        writeAudit('create_supplier', { supplierId: newId, name: primaryName });
+        clearOpId('create-supplier'); // Phase 5b — new supplier is confirmed; the next "Add Supplier" is a new intent
+      }
+      toast.success(formData.id ? 'Supplier updated — synced to linked parts' : 'Supplier added');
+    } catch (err) {
+      if (isConcurrencyError(err)) { concRejected = true; concToast(err, 'supplier'); }
+      else {
+        console.error('Supplier save failed:', err);
+        toast.error(isTxTimeout(err)
+          ? timeoutMessage('The supplier')
+          : 'Couldn’t confirm the supplier saved. It may already exist — check Suppliers, or press Save again (a repeat is safe).');
+      }
+    } finally {
+      setSupplierSaving(false);
+      // Phase 1b — release the lease only on a real successful save; a stale/deleted
+      // rejection keeps the editor (and the lease) so the user can recover their work.
+      if (!concRejected) { supplierLease.release(); setShowSupplierModal(false); setEditSupplier(null); }
+    }
+  }
+
+  function handleSupplierDelete(id) {
+    const supplier = suppliers.find((s) => s.id === id);
+    const name = supplier?.name || 'this supplier';
+    const linked0 = supplier; // (keep ref)
+    if (demoMode) {
+      if (!demoAdmin && !demoPerms.deleteSuppliers) { protectedDemoToast(true); return; }
+      setSuppliers((prev) => prev.filter((s) => s.id !== id)); writeAudit('delete_supplier', { supplierId: id, name }, {}); notify.deleted('Supplier deleted (demo)'); return;
+    }
+    // FIX-06: how many parts reference this supplier? Warn before orphaning links.
+    const linked = inventory.filter((p) => getPartSuppliers(p).some((ps) => ps.id === id));
+    askConfirm({
+      title: 'Delete supplier?',
+      message:
+        linked.length > 0
+          ? `${name} is linked to ${linked.length} part${linked.length > 1 ? 's' : ''}. Deleting removes it from your directory and unlinks it from those parts (their saved name & number stay). This does not delete any parts.`
+          : `Delete ${name} from your directory? This cannot be undone.`,
+      confirmLabel: 'Delete supplier',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          // Unlink from every part first so no dangling supplierId remains.
+          await Promise.all(
+            linked.map((p) => {
+              const remaining = getPartSuppliers(p).filter((ps) => ps.id !== id);
+              const first = remaining[0] || { name: '', phone: '' };
+              return updateDoc(doc(db, COLLECTIONS.PARTS, p.id), {
+                suppliers: remaining,
+                supplier: first.name,
+                supplierPhone: first.phone,
+                updatedAt: serverTimestamp(),
+              });
+            })
+          );
+          await deleteDoc(doc(db, COLLECTIONS.SUPPLIERS, id));
+          writeAudit('delete_supplier', { supplierId: id, name }, { unlinkedParts: linked.length });
+          notify.deleted(linked.length ? `Supplier deleted · unlinked from ${linked.length} part(s)` : 'Supplier deleted');
+        } catch (err) {
+          console.error('Supplier delete failed:', err);
+          toast.error('Could not delete supplier.');
+        }
+      },
+    });
+  }
+
+  // Archive a supplier: hides it from the directory but — unlike delete —
+  // leaves every linked part untouched. Mirrors the part archive flow
+  // (archivedAt / archivedBy metadata, demo-gated, audited in production).
+  // Mutation-safety pass — same gap as Part Archive/Restore: no lock, so a double-click
+  // fires writeAudit twice for one action. Keyed by supplier id, lock released in
+  // `finally` once the underlying write (demo or Firestore) actually settles — not on
+  // a timer.
+  const supplierArchiveLock = useRef(new Set());
+  async function handleSupplierArchive(id, willArchive = true) {
+    if (supplierArchiveLock.current.has(id)) return;
+    supplierArchiveLock.current.add(id);
+    try {
+      await handleSupplierArchiveInner(id, willArchive);
+    } finally {
+      supplierArchiveLock.current.delete(id);
+    }
+  }
+  // E2E workflow QA fix: this only ever set archived:true — there was no restore path
+  // at all, at either layer (this handler had no unarchive branch, AND SupplierDirectory
+  // had no 'Archived' filter tab to even find an archived supplier again). Customers/
+  // Vehicles/Parts all support archive+restore; Suppliers silently didn't, so clicking
+  // "Archive Supplier" was a one-way, unrecoverable action from inside the app.
+  // Reproduced live: archived a test supplier, confirmed it vanished from every status
+  // filter including "All", with no way back short of direct database access.
+  async function handleSupplierArchiveInner(id, willArchive = true) {
+    const supplier = suppliers.find((s) => s.id === id);
+    const name = supplier?.name || 'this supplier';
+    const actor = demoAdmin ? 'demo-admin@balajiautoos.com' : (user?.email || 'unknown');
+    if (demoMode) {
+      if (!demoAdmin) { protectedDemoToast(); return; }
+      const stamp = { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 };
+      setSuppliers((prev) => prev.map((s) => (s.id === id
+        ? (willArchive ? { ...s, archived: true, archivedAt: stamp, archivedBy: actor } : { ...s, archived: false, archivedAt: null, archivedBy: null })
+        : s)));
+      writeAudit(willArchive ? 'archive_supplier' : 'restore_supplier', { supplierId: id, name });
+      toast.success(willArchive ? 'Supplier archived (demo)' : 'Supplier restored (demo)');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, COLLECTIONS.SUPPLIERS, id), willArchive
+        ? { archived: true, archivedAt: serverTimestamp(), archivedBy: actor, updatedAt: serverTimestamp() }
+        : { archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp() });
+      writeAudit(willArchive ? 'archive_supplier' : 'restore_supplier', { supplierId: id, name });
+      toast.success(willArchive ? 'Supplier archived' : 'Supplier restored');
+    } catch (err) {
+      console.error('Supplier archive failed:', err);
+      toast.error(willArchive ? 'Could not archive supplier.' : 'Could not restore supplier.');
+    }
+  }
+
+  const supplierRestoreLock = useRef(new Set());
+  async function handleSupplierRestore(id) {
+    if (supplierRestoreLock.current.has(id)) return;
+    supplierRestoreLock.current.add(id);
+    try {
+      await handleSupplierRestoreInner(id);
+    } finally {
+      supplierRestoreLock.current.delete(id);
+    }
+  }
+  async function handleSupplierRestoreInner(id) {
+    const supplier = suppliers.find((s) => s.id === id);
+    const name = supplier?.name || 'this supplier';
+    if (demoMode) {
+      if (!demoAdmin) { protectedDemoToast(); return; }
+      setSuppliers((prev) => prev.map((s) => (s.id === id ? { ...s, archived: false } : s)));
+      writeAudit('restore_supplier', { supplierId: id, name });
+      toast.success('Supplier restored (demo)');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, COLLECTIONS.SUPPLIERS, id), { archived: false, updatedAt: serverTimestamp() });
+      writeAudit('restore_supplier', { supplierId: id, name });
+      toast.success('Supplier restored');
+    } catch (err) {
+      console.error('Supplier restore failed:', err);
+      toast.error('Could not restore supplier.');
+    }
+  }
+
+  // ---- Export inventory to a real .xlsx workbook (SheetJS) ----
+  // Issue 14: Full Backup — read EVERY document from every collection (not the
+  // capped live subscriptions) and download one JSON file. This is the owner's
+  // safety net against browser/device/Firebase problems. Restore = Import Backup.
+  async function exportFullBackup() {
+    const t = toast.loading('Building full backup…');
+    try {
+      // Every business + derived collection — keep in sync with RECOVERY_COLLECTIONS
+      // below (both must list every collection "Reset All Data" / a full backup owns).
+      const COLLECTIONS = ['parts', 'suppliers', 'categories', 'vehicles', 'customers', 'invoices', 'jobCards', 'purchaseOrders', 'sales', 'salesRollups', 'restocks', 'stockAdjustments', 'auditLog', 'reorderRequests'];
+      const dump = { app: 'sri-baba-balaji-maruti-care', appName: getShopName(), schema: 1, exportedAt: new Date().toISOString(), exportedBy: user?.email || null, collections: {} };
+      let total = 0;
+      for (const name of COLLECTIONS) {
+        const snap = await getDocs(collection(db, name));
+        dump.collections[name] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+        total += snap.size;
+      }
+      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `maruti-care-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      try { const ts = Date.now(); localStorage.setItem('maruti_last_backup', String(ts)); setLastBackup(ts); } catch {}
+      toast.success(`Backup saved — ${total} records across ${COLLECTIONS.length} collections.`, { id: t });
+    } catch (err) {
+      console.error('Backup failed:', err);
+      toast.error('Backup failed — check your connection / database access.', { id: t });
+    }
+  }
+
+  // Issue 14: Restore from a backup JSON. Writes documents back by their original
+  // IDs (merge), so re-importing is idempotent and won't duplicate. Existing live
+  // docs with the same ID are overwritten with the backup's version.
+  //
+  // Settings QA fix: sales/restocks/stockAdjustments/auditLog are append-only
+  // ledgers — firestore.rules sets `allow update: if false` on all four, by
+  // design, so historical records can't be tampered with. A merge-set on a doc
+  // ID that already exists is evaluated as an "update" regardless of the merge
+  // flag, so restoring a backup that (as every real backup will) contains
+  // already-existing ledger rows used to throw permission-denied on the very
+  // first ledger batch and abort the ENTIRE restore — silently losing every
+  // catalog/operational collection that would otherwise have restored fine.
+  // Each collection's batches now commit independently: a collection this
+  // account can't write back (existing ledger rows) is skipped and reported,
+  // instead of taking every other collection down with it.
+  async function importFullBackup(file) {
+    const t = toast.loading('Restoring backup…');
+    try {
+      const text = await file.text();
+      const dump = JSON.parse(text);
+      if (!dump || !dump.collections) throw new Error('Not a valid backup file.');
+      let total = 0;
+      const skipped = [];
+      for (const [name, docs] of Object.entries(dump.collections)) {
+        if (!Array.isArray(docs)) continue;
+        try {
+          // Batch in chunks of 450 (Firestore limit is 500 writes/batch).
+          for (let i = 0; i < docs.length; i += 450) {
+            const batch = writeBatch(db);
+            docs.slice(i, i + 450).forEach((rec) => {
+              if (rec && rec.id) batch.set(doc(db, name, rec.id), rec.data || {}, { merge: true });
+            });
+            await batch.commit();
+          }
+          total += docs.length;
+        } catch (collErr) {
+          console.error(`Restore: skipped collection "${name}":`, collErr);
+          skipped.push(name);
+        }
+      }
+      if (skipped.length && total) {
+        toast.success(`Restored ${total} records. Skipped ${skipped.length} read-only collection${skipped.length === 1 ? '' : 's'} (${skipped.join(', ')}) — already up to date.`, { id: t, duration: 7000 });
+      } else if (skipped.length) {
+        toast.error(`Restore failed — no permission to write: ${skipped.join(', ')}.`, { id: t });
+      } else {
+        toast.success(`Restored ${total} records. Your data is back.`, { id: t });
+      }
+    } catch (err) {
+      console.error('Restore failed:', err);
+      toast.error(`Restore failed — ${err.message || 'invalid file.'}`, { id: t });
+    }
+  }
+
+  // ===========================================================================
+  // DATA SAFETY & RECOVERY — wipe the whole shop into a 7-day cloud vault, then
+  // restore with one click. Admin-only. Snapshot lives in Firestore so it works
+  // across devices and survives refresh/logout.
+  // ===========================================================================
+  // Every APPLICATION BUSINESS + DERIVED collection. Reset snapshots each into the
+  // Recovery Vault, writes the meta, then deletes the live docs — restore/purge loop
+  // over the same list. Must stay in sync with COLLECTIONS in constants/index.js.
+  // PRESERVED (deliberately absent): counters (rules forbid delete — losing it
+  // restarts serials at 1), appSettings/roles (config), recoveryVault/recoveryMeta
+  // (the vault itself), editLocks (transient self-expiring leases), pendingSales
+  // (transient, per-creator-scoped by rules — self-reconciled, not owner-visible data).
+  const RECOVERY_COLLECTIONS = ['parts', 'suppliers', 'categories', 'vehicles', 'customers', 'invoices', 'jobCards', 'purchaseOrders', 'sales', 'salesRollups', 'restocks', 'stockAdjustments', 'auditLog', 'reorderRequests'];
+  const RECOVERY_DAYS = 7;
+
+  // Snapshot every live record into recoveryVault (one vault doc per record),
+  // write the meta, THEN delete the live data. Order matters: never delete
+  // before the snapshot is safely written.
+  async function resetAllData() {
+    if (demoMode) { protectedDemoToast(); return false; } // never touch production from demo; demo resets use Demo Management
+    if (!isAdmin) { toast.error('Only an admin can reset the system.'); return false; }
+    const t = toast.loading('Creating recovery snapshot…');
+    try {
+      const snapshotId = `snap_${Date.now()}`;
+      const createdAt = Date.now();
+      const expiresAt = createdAt + RECOVERY_DAYS * 86400000;
+      const counts = {};
+      let total = 0;
+
+      // 1) Copy all live docs into recoveryVault (chunked, ≤450 writes/batch).
+      for (const name of RECOVERY_COLLECTIONS) {
+        const snap = await getDocs(collection(db, name));
+        counts[name] = snap.size;
+        total += snap.size;
+        const docsArr = snap.docs;
+        for (let i = 0; i < docsArr.length; i += 450) {
+          const batch = writeBatch(db);
+          docsArr.slice(i, i + 450).forEach((d) => {
+            batch.set(doc(db, 'recoveryVault', `${snapshotId}__${name}__${d.id}`), {
+              snapshotId, coll: name, docId: d.id, data: d.data(),
+            });
+          });
+          await batch.commit();
+        }
+      }
+
+      // 2) Write the meta record (this is what the UI watches).
+      await setDoc(doc(db, 'recoveryMeta', 'current'), {
+        snapshotId, createdAt, expiresAt, counts, total,
+        byEmail: user?.email || null,
+        bizSettings: (() => { try { return {
+          name: localStorage.getItem('maruti_biz_name') || '', contact: localStorage.getItem('maruti_biz_contact') || '',
+          gst: localStorage.getItem('maruti_biz_gst') || '', address: localStorage.getItem('maruti_biz_address') || '',
+          lowStock: localStorage.getItem('maruti_low_stock_default') || '', fastMover: localStorage.getItem('maruti_fast_mover_min') || '',
+          deadDays: localStorage.getItem('maruti_dead_stock_days') || '', reorderMult: localStorage.getItem('maruti_reorder_mult') || '',
+        }; } catch { return {}; } })(),
+      });
+
+      toast.loading('Snapshot saved. Wiping live data…', { id: t });
+
+      // 3) Now delete all live docs (snapshot is safe, so this is recoverable).
+      for (const name of RECOVERY_COLLECTIONS) {
+        const snap = await getDocs(collection(db, name));
+        const docsArr = snap.docs;
+        for (let i = 0; i < docsArr.length; i += 450) {
+          const batch = writeBatch(db);
+          docsArr.slice(i, i + 450).forEach((d) => batch.delete(doc(db, name, d.id)));
+          await batch.commit();
+        }
+      }
+
+      toast.success(`System reset. ${total} records saved to the 7-day Recovery Vault.`, { id: t, duration: 6000 });
+      return true;
+    } catch (err) {
+      console.error('resetAllData failed:', err);
+      toast.error(`Reset failed — ${err.message || 'check connection/rules'}. Nothing was deleted if the snapshot didn't finish.`, { id: t, duration: 8000 });
+      return false;
+    }
+  }
+
+  // Restore every record from the current vault back to its original collection
+  // and id, then clear the vault.
+  async function restoreFromVault() {
+    if (!isAdmin) { toast.error('Only an admin can restore.'); return false; }
+    const t = toast.loading('Restoring your data…');
+    try {
+      const metaSnap = await getDoc(doc(db, 'recoveryMeta', 'current'));
+      if (!metaSnap.exists()) { toast.error('No recovery snapshot found.', { id: t }); return false; }
+      const meta = metaSnap.data();
+      if (Date.now() > (meta.expiresAt || 0)) { toast.error('Recovery period has expired.', { id: t }); return false; }
+
+      const vaultSnap = await getDocs(query(collection(db, 'recoveryVault'), orderBy('coll')));
+      const mine = vaultSnap.docs.filter((d) => d.data().snapshotId === meta.snapshotId);
+      let total = 0;
+      for (let i = 0; i < mine.length; i += 450) {
+        const batch = writeBatch(db);
+        mine.slice(i, i + 450).forEach((d) => {
+          const v = d.data();
+          if (v.coll && v.docId) { batch.set(doc(db, v.coll, v.docId), v.data || {}); total++; }
+        });
+        await batch.commit();
+      }
+
+      // Restore business settings to this device.
+      try {
+        const b = meta.bizSettings || {};
+        const map = { maruti_biz_name: b.name, maruti_biz_contact: b.contact, maruti_biz_gst: b.gst, maruti_biz_address: b.address, maruti_low_stock_default: b.lowStock, maruti_fast_mover_min: b.fastMover, maruti_dead_stock_days: b.deadDays, maruti_reorder_mult: b.reorderMult };
+        Object.entries(map).forEach(([k, val]) => { if (val) localStorage.setItem(k, val); });
+      } catch {}
+
+      // Clear the vault now that everything is back.
+      await purgeVault(meta.snapshotId);
+      toast.success(`Restored ${total} records. Your shop is back exactly as it was.`, { id: t, duration: 6000 });
+      return true;
+    } catch (err) {
+      console.error('restoreFromVault failed:', err);
+      toast.error(`Restore failed — ${err.message || 'check connection/rules'}.`, { id: t, duration: 8000 });
+      return false;
+    }
+  }
+
+  // Delete the vault contents + meta (used after restore, and on expiry).
+  async function purgeVault(snapshotId) {
+    try {
+      const vaultSnap = await getDocs(collection(db, 'recoveryVault'));
+      const mine = snapshotId ? vaultSnap.docs.filter((d) => d.data().snapshotId === snapshotId) : vaultSnap.docs;
+      for (let i = 0; i < mine.length; i += 450) {
+        const batch = writeBatch(db);
+        mine.slice(i, i + 450).forEach((d) => batch.delete(doc(db, 'recoveryVault', d.id)));
+        await batch.commit();
+      }
+      await deleteDoc(doc(db, 'recoveryMeta', 'current')).catch(() => {});
+    } catch (e) { console.error('purgeVault failed:', e); }
+  }
+
+  // ---- Staff (non-admin) management with per-person permissions ----
+  async function addStaffEmail(rawEmail) {
+    if (demoMode || !isAdmin) { notify.permissionDenied('Not available in demo.'); return false; }
+    const email = (rawEmail || '').trim().toLowerCase();
+    if (!isValidEmail(email)) { toast.error(EMAIL_ERROR); return false; }
+    if (bootstrapAdmins.map((e) => e.toLowerCase()).includes(email) || dbAdmins.includes(email)) { toast.error('That email is already an admin.'); return false; }
+    if (staffPerms[email]) { toast.error('That staff member already exists.'); return false; }
+    const t = toast.loading('Adding staff…');
+    try {
+      await setDoc(doc(db, 'appSettings', 'roles'), { staff: { ...staffPerms, [email]: { costPrices: false, deletes: false, exports: false } }, updatedAt: serverTimestamp(), updatedBy: user?.email || '' }, { merge: true });
+      toast.success(`${email} added as staff. They log in with the password you set in Firebase.`, { id: t, duration: 6000 });
+      return true;
+    } catch (e) { console.error('addStaffEmail failed:', e); toast.error('Could not add staff. Check Firestore rules are published.', { id: t }); return false; }
+  }
+  async function removeStaffEmail(rawEmail) {
+    if (demoMode || !isAdmin) { notify.permissionDenied('Not available in demo.'); return; }
+    const email = (rawEmail || '').trim().toLowerCase();
+    const t = toast.loading('Removing staff…');
+    try {
+      // BUG-REMOVE-STAFF-NOOP fix — `staff` is a MAP field, and setDoc(..., {merge:
+      // true}) recursively merges map fields rather than replacing them. Writing
+      // { staff: next } with `next` missing the deleted email only ADDS/UPDATES the
+      // keys `next` still has; a key simply absent from the written object is never
+      // removed from the stored document. The write succeeded and showed a success
+      // toast every time, but the "removed" staffer silently kept every permission
+      // they had — found live, by removing a QA staffer and reloading. admins
+      // (removeAdminEmail, above) doesn't have this bug because it's an ARRAY field,
+      // and merge replaces arrays wholesale rather than deep-merging their elements.
+      //
+      // First attempt used updateDoc with a dot-path string, `{'staff.' + email:
+      // deleteField()}` — that shipped with the same bug still live: Firestore's
+      // dot-notation field paths split on EVERY `.` in the string, and an email
+      // address contains one (e.g. "gmail.com"), so the path actually targeted a
+      // bogus 3-level-deep field (staff -> "name@gmail" -> "com") instead of the
+      // single `staff.<email>` map key — leaving the real key untouched. Caught by
+      // re-querying Firestore directly (bypassing the app's own listener/cache) and
+      // seeing the "removed" staffer still in the raw document. updateDoc (unlike
+      // setDoc's merge:true) replaces a top-level field's value wholesale rather than
+      // deep-merging it, so passing the already-filtered `next` map as a plain
+      // (non-dotted) `staff` field needs no path-escaping and has no ambiguity about
+      // what the email string means.
+      const next = { ...staffPerms }; delete next[email];
+      await updateDoc(doc(db, 'appSettings', 'roles'), { staff: next, updatedAt: serverTimestamp(), updatedBy: user?.email || '' });
+      toast.success(`${email} removed. They can still log in but with no special access.`, { id: t });
+    } catch (e) { console.error('removeStaffEmail failed:', e); toast.error('Could not remove staff. Check Firestore rules.', { id: t }); }
+  }
+  // Admin Settings — high-impact permissions review: SettingsView now stages staff
+  // permission toggles as a local draft and calls this once per changed key on Save
+  // (see saveStaffPermsDraft there), instead of firing on every click as before. The
+  // write itself, its demo/isAdmin guard, and its Firestore shape are UNCHANGED — only
+  // WHEN it's called changed. The return value (added here, previously unused by any
+  // caller) lets that batched Save know whether every individual write actually
+  // succeeded, without duplicating this function's own error toast.
+  async function setStaffPermission(rawEmail, key, value) {
+    if (demoMode || !isAdmin) { notify.permissionDenied('Not available in demo.'); return false; }
+    const email = (rawEmail || '').trim().toLowerCase();
+    try {
+      const current = staffPerms[email] || { costPrices: false, deletes: false, exports: false };
+      await setDoc(doc(db, 'appSettings', 'roles'), { staff: { ...staffPerms, [email]: { ...current, [key]: value } }, updatedAt: serverTimestamp(), updatedBy: user?.email || '' }, { merge: true });
+      return true;
+    } catch (e) { console.error('setStaffPermission failed:', e); toast.error('Could not update permission. Check Firestore rules.'); return false; }
+  }
+
+  // ---- Staff & Access: manage admin emails (stored in appSettings/roles) ----
+  // Owner stays admin via BOOTSTRAP_ADMINS in AuthContext regardless of this list.
+  async function addAdminEmail(rawEmail) {
+    if (demoMode || !isAdmin) { notify.permissionDenied('Not available in demo.'); return false; }
+    const email = (rawEmail || '').trim().toLowerCase();
+    if (!isValidEmail(email)) { toast.error(EMAIL_ERROR); return false; }
+    if (bootstrapAdmins.map((e) => e.toLowerCase()).includes(email) || dbAdmins.includes(email)) { toast.error('That email is already an admin.'); return false; }
+    const t = toast.loading('Granting admin…');
+    try {
+      const next = Array.from(new Set([...dbAdmins, email]));
+      await setDoc(doc(db, 'appSettings', 'roles'), { admins: next, updatedAt: serverTimestamp(), updatedBy: user?.email || '' }, { merge: true });
+      toast.success(`${email} is now an admin. They must log out and back in.`, { id: t, duration: 5000 });
+      return true;
+    } catch (e) {
+      console.error('addAdminEmail failed:', e);
+      toast.error('Could not update admins. Make sure the latest Firestore rules are published.', { id: t });
+      return false;
+    }
+  }
+  async function removeAdminEmail(rawEmail) {
+    if (demoMode || !isAdmin) { notify.permissionDenied('Not available in demo.'); return; }
+    const email = (rawEmail || '').trim().toLowerCase();
+    if (bootstrapAdmins.map((e) => e.toLowerCase()).includes(email)) { toast.error('The owner account can’t be removed.'); return; }
+    const t = toast.loading('Revoking admin…');
+    try {
+      const next = dbAdmins.filter((e) => e !== email);
+      await setDoc(doc(db, 'appSettings', 'roles'), { admins: next, updatedAt: serverTimestamp(), updatedBy: user?.email || '' }, { merge: true });
+      toast.success(`${email} is no longer an admin.`, { id: t });
+    } catch (e) {
+      console.error('removeAdminEmail failed:', e);
+      toast.error('Could not update admins. Check Firestore rules.', { id: t });
+    }
+  }
+
+  // Spec fix: Export Audit Logs is its OWN handler — audit data only, no
+  // navigation, no tab switch. Pulls the FULL auditLog (not the capped view).
+  async function exportAuditLogs() {
+    if (demoMode) { toast('Audit-log export isn\u2019t available in the demo sandbox \u2014 sign in with a real account to export.', { icon: '\uD83D\uDD12' }); return; }
+    const t = toast.loading('Exporting audit logs…');
+    try {
+      const XLSX = await import('xlsx');
+      const snap = await getDocs(query(collection(db, COLLECTIONS.AUDIT_LOG), orderBy('createdAt', 'desc')));
+      if (snap.empty) { toast.error('No audit entries to export yet.', { id: t }); return; }
+      const LABELS = {
+        delete_part: 'Deleted part', delete_supplier: 'Deleted supplier', price_change: 'Price change',
+        below_floor_sale: 'Below-floor sale', stock_adjustment: 'Stock adjustment',
+        archive_part: 'Archived part', restore_part: 'Restored part',
+      };
+      const rows = snap.docs.map((d) => {
+        const e = d.data();
+        const det = e.details || {};
+        const ts = tsToDate(e.createdAt);
+        const isSupplier = e.action === 'delete_supplier' || !!e.supplierId;
+        let prev = '', next = '', qty = '';
+        if (e.action === 'stock_adjustment') {
+          prev = det.stockBefore ?? '';
+          next = det.stockAfter ?? '';
+          const dlt = (det.stockAfter != null && det.stockBefore != null) ? (det.stockAfter - det.stockBefore) : (det.qty || 0);
+          qty = `${dlt < 0 ? '-' : '+'}${Math.abs(dlt)}`;
+        } else if (e.action === 'price_change') {
+          const ch = Object.entries(det).filter(([, v]) => v && typeof v === 'object' && 'from' in v);
+          prev = ch.map(([k, v]) => `${k}: ₹${v.from}`).join('; ');
+          next = ch.map(([k, v]) => `${k}: ₹${v.to}`).join('; ');
+        }
+        return {
+          'Event Type': LABELS[e.action] || e.action,
+          'User': e.performedByEmail || 'unknown',
+          'Timestamp': ts ? ts.toLocaleString('en-IN') : '',
+          'Part Name': isSupplier ? '' : (e.name || ''),
+          'Supplier Name': isSupplier ? (e.name || '') : '',
+          'Previous Value': prev,
+          'New Value': next,
+          'Quantity': qty,
+          'Notes': det.notes || '',
+          'Reason': det.reason || '',
+        };
+      });
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [{ wch: 16 }, { wch: 26 }, { wch: 20 }, { wch: 20 }, { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 10 }, { wch: 24 }, { wch: 16 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Audit Log');
+      XLSX.writeFile(wb, `Maruti_Care_AuditLog_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      notify.exported(`Exported ${rows.length} audit entries.`, { id: t });
+    } catch (err) {
+      console.error('Audit export failed:', err);
+      toast.error('Audit export failed — check your connection / access.', { id: t });
+    }
+  }
+
+  async function exportInventoryExcel(subset) {
+    if (demoMode && !demoAdmin && !demoPerms.exportExcel) { protectedDemoToast(true); return; }
+    const items = Array.isArray(subset) && subset.length ? subset : inventory;
+    if (items.length === 0) {
+      toast.error('Nothing to export yet.');
+      return;
+    }
+    try {
+      // Lazy-load SheetJS only when needed so it never weighs down initial load.
+      const XLSX = await import('xlsx');
+
+      // Map state into clean, business-friendly rows for the worksheet.
+      const rows = items.map((p) => {
+        const sups = getPartSuppliers(p);
+        return {
+          'Part Name': p.name || '',
+          'SKU': p.sku || '',
+          'Category': p.category || '',
+          'All Categories': asList(p.categories).join('; '),
+          'Vehicle': p.vehicle || '',
+          'Compatible Cars': flattenVehicles(p.compatibleCars).join('; '),
+          'Shelf / Bin': p.locationBin || '',
+          'Stock': p.stock ?? 0,
+          'Min Stock': p.minStock ?? 5,
+          'Units Sold': p.salesCount ?? 0,
+          'Status':
+            (p.stock ?? 0) === 0 ? 'Out of Stock' : (p.stock ?? 0) <= (p.minStock ?? 5) ? 'Low' : 'OK',
+          'Purchase Price (₹)': p.purchasePrice ?? 0,
+          'Selling Price (₹)': p.sellingPrice ?? 0,
+          'Min Selling Price (₹)': p.minSellingPrice ?? 0,
+          'Stock Value (₹)': (p.stock || 0) * (p.sellingPrice || 0),
+          'Potential Profit (₹)': (p.stock || 0) * ((p.sellingPrice || 0) - (p.purchasePrice || 0)),
+          'Suppliers': sups.map((s) => s.name).filter(Boolean).join('; '),
+          'Supplier Phones': sups.map((s) => s.phone).filter(Boolean).join('; '),
+          'Has Photo': p.imageString ? 'Yes' : 'No', // UPDATE-08: never export the Base64 blob
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      // Set sensible column widths for a polished sheet.
+      worksheet['!cols'] = [
+        { wch: 26 }, { wch: 14 }, { wch: 20 }, { wch: 24 }, { wch: 20 }, { wch: 22 },
+        { wch: 16 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
+        { wch: 16 }, { wch: 15 }, { wch: 18 }, { wch: 15 }, { wch: 18 },
+        { wch: 28 }, { wch: 24 }, { wch: 10 },
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventory');
+
+      const stamp = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      XLSX.writeFile(workbook, `Maruti_Care_Inventory_${stamp}.xlsx`);
+      recordIO('export', items.length);
+      notify.exported(`Exported ${items.length} part${items.length > 1 ? 's' : ''} to Excel`);
+    } catch (err) {
+      console.error('Excel export failed:', err);
+      toast.error('Could not export to Excel.');
+    }
+  }
+
+  // ---- Part save: resolve multi-suppliers, bargain floor, offline-first ----
+  // Mutation-safety pass — Part Save had NO synchronous in-flight guard at all: the
+  // form's own submit button is `type="submit" form="part-form"`, so two rapid clicks
+  // (or a fast double-click before React re-rendered `disabled={saving}`) both reached
+  // this function, and in demo mode especially — which returns before the `setSaving`
+  // guard further down is ever reached — both created a full duplicate part (confirmed
+  // live: two identical records, same id, from two `.click()` calls). Same wrapper-lock
+  // architecture as adjustStockLine/receiveStockLine/createPO below: the lock is
+  // checked and set SYNCHRONOUSLY, before any async work, and released in `finally` so
+  // a failed save (or a paused "duplicate part?" prompt awaiting the user's choice)
+  // never leaves the form permanently stuck.
+  const partSaveLockRef = useRef(false);
+  async function handleSave(formData) {
+    if (partSaveLockRef.current) return;
+    partSaveLockRef.current = true;
+    try {
+      return await handleSaveInner(formData);
+    } finally {
+      partSaveLockRef.current = false;
+    }
+  }
+  async function handleSaveInner(formData) {
+    if (!formData.name?.trim()) return;
+    if (demoMode) {
+      const now = new Date();
+      const stamp = { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toDate: () => now, toMillis: () => now.getTime() };
+      const sup = (formData.suppliers || []).map((r, i) => ({ id: r.id || ('demo-sup-new-' + now.getTime() + '-' + i), name: (r.name || '').trim(), phone: r.phone || '' })).filter((s) => s.name);
+      const built = {
+        ...formData,
+        id: formData.id || ('demo-part-' + now.getTime()),
+        name: formData.name.trim(),
+        // PH21-01 — same finite-guarded clamps as the production payload below
+        // (nonNegInt/nonNegNum), so demo and prod normalise a pasted extreme value identically.
+        stock: sanitizeStock(formData.stock),
+        minStock: nonNegInt(formData.minStock) || 5,
+        purchasePrice: nonNegNum(formData.purchasePrice),
+        sellingPrice: nonNegNum(formData.sellingPrice),
+        minSellingPrice: nonNegNum(formData.minSellingPrice),
+        salesCount: formData.salesCount || 0,
+        suppliers: sup,
+        archived: !!formData.archived,
+        category: (formData.categories && formData.categories[0]) || formData.category || '',
+        imageString: formData.imageString || imageForPartName(formData.name || ''),
+        createdAt: formData.createdAt || stamp,
+        updatedAt: stamp,
+      };
+      // Register any brand-new suppliers into the demo directory too.
+      setSuppliers((prev) => { const ids = new Set(prev.map((s) => s.id)); const add = sup.filter((s) => !ids.has(s.id) && String(s.id).startsWith('demo-sup-new')); return add.length ? [...prev, ...add.map((s) => ({ id: s.id, name: s.name, phone: s.phone }))] : prev; });
+      // PHASE 12 (PH12-01) — same fix as the production payload above: `built`
+      // carries whatever stock/salesCount the form loaded WHEN THE EDITOR
+      // OPENED, which a Quick Sell/adjustment/restock made while it stayed
+      // open would already have moved past. Re-pinning both to the part's
+      // CURRENT live value for an edit (never for a create, where `built`'s
+      // own values ARE the legitimate opening stock) keeps this consistent
+      // with production instead of silently reverting a real movement.
+      setInventory((prev) => (formData.id ? prev.map((p) => (p.id === formData.id ? { ...p, ...built, stock: p.stock, salesCount: p.salesCount } : p)) : [built, ...prev]));
+      setShowModal(false); setEditPart(null); setSaving(false);
+      smartSaveToast(built.name, { isEdit: !!formData.id, hasSupplier: sup.length > 0 });
+      writeAudit(formData.id ? 'update_part' : 'create_part', { partId: built.id, name: built.name });
+      return;
+    }
+
+    // Task 3: warn on a likely-duplicate when CREATING a part (skip on edit and
+    // when the user already chose "Create Anyway"). Match on normalized name,
+    // then tighten with SKU or an overlapping vehicle when available.
+    if (!formData.id && !formData._dupAck) {
+      const nameKey = safeLower(formData.name);
+      const skuKey = safeLower((formData.sku || '').trim());
+      const vehset = new Set(asList(formData.compatibleCars).map(safeLower));
+      const dup = inventory.find((p) => {
+        if (p.archived) return false;
+        if (safeLower(p.name) !== nameKey) return false;
+        if (skuKey && safeLower(p.sku) && safeLower(p.sku) !== skuKey) return false; // different SKU → not a dup
+        return true;
+      }) || (skuKey && inventory.find((p) => !p.archived && safeLower(p.sku) === skuKey));
+      if (dup) {
+        setDupPrompt({ existing: dup, form: formData });
+        return; // wait for user's choice
+      }
+    }
+
+    setSaving(true);
+
+    // Issue 2 + hardening: clean & DEDUPE supplier rows (a user can accidentally
+    // add the same supplier twice). Key by id, else by lowercased name.
+    const seenRowKeys = new Set();
+    const cleanRows = (formData.suppliers || [])
+      .map((r) => ({
+        id: r.id || '',
+        name: (r.name || '').trim(),
+        phone: tenDigits(r.phone),
+        preferredLabel: r.preferredLabel || 'Primary',
+        isPreferred: !!r.isPreferred,
+        phoneNumbers: Array.isArray(r.phoneNumbers) ? r.phoneNumbers : [],
+      }))
+      .filter((r) => {
+        if (!r.name) return false;
+        const key = r.id || safeLower(r.name);
+        if (seenRowKeys.has(key)) return false;
+        seenRowKeys.add(key);
+        return true;
+      });
+
+    // Resolve each row to a directory supplier — link existing (by id/name), or
+    // create a new record with a locally-generated id (works offline). A cache
+    // guarantees we never create two docs for the same new name in one save.
+    const createdByName = new Map();
+    const resolved = cleanRows.map((r) => {
+      if (r.id) return { id: r.id, name: r.name, phone: r.phone, preferredLabel: r.preferredLabel };
+      const match = suppliers.find((s) =>
+        getSupplierNames(s).some((n) => safeLower(n) === safeLower(r.name))
+      );
+      if (match) {
+        return {
+          id: match.id,
+          name: r.name,
+          phone: r.phone || getSupplierPhones(match)[0] || '',
+          preferredLabel: r.preferredLabel,
+        };
+      }
+      const cachedId = createdByName.get(safeLower(r.name));
+      if (cachedId) return { id: cachedId, name: r.name, phone: r.phone, preferredLabel: r.preferredLabel };
+
+      const ref = doc(collection(db, COLLECTIONS.SUPPLIERS));
+      // #1: build the full contact list (primary + alternates) from the row.
+      const seenN = new Set();
+      let contactList = (r.phoneNumbers || [])
+        .map((c) => ({ number: tenDigits(c.number), label: (c.label || 'Primary').trim() || 'Primary' }))
+        .filter((c) => c.number && !seenN.has(c.number) && seenN.add(c.number));
+      if (contactList.length === 0 && r.phone) contactList = [{ number: r.phone, label: 'Primary' }];
+      const primaryNum = r.phone && contactList.some((c) => c.number === r.phone) ? r.phone : contactList[0]?.number || '';
+      setDoc(ref, {
+        name: r.name,
+        altNames: [],
+        phoneNumbers: contactList,
+        primaryPhone: normalizePhone(primaryNum),
+        phones: contactList.map((c) => c.number),
+        phone: normalizePhone(primaryNum),
+        notes: 'Auto-added from inventory',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }).catch((e) => console.error('Auto-add supplier failed:', e));
+      createdByName.set(safeLower(r.name), ref.id);
+      return { id: ref.id, name: r.name, phone: primaryNum || r.phone, preferredLabel: r.preferredLabel };
+    });
+
+    // #5: attach the per-part preferred flag and float the preferred supplier to
+    // the front so it becomes the default for reorders + legacy mirrors.
+    resolved.forEach((r, i) => { r.isPreferred = !!cleanRows[i]?.isPreferred; });
+    resolved.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0));
+
+    const first = resolved[0] || { name: '', phone: '' };
+
+    // Hardening: clamp every numeric to a sane, non-negative value (guards
+    // against pasted negatives, NaN, or stray exponent strings).
+    // H-5A: nonNegInt/nonNegNum now imported from services/inventoryService.js.
+
+    const categoriesArr = asList(formData.categories);
+    const vehModels = asList(formData.compatibleCars);
+    const vehGrouped = groupVehicles(vehModels, mergedVehicleTree); // #3 + Task 1: custom-aware
+    const vehicleDisplay =
+      vehModels.length === 0
+        ? ''
+        : vehModels.some((m) => /universal/i.test(m))
+        ? 'Universal / All Vehicles'
+        : vehGrouped.map((g) => g.brand).join(', ');
+    const payload = {
+      name: formData.name.trim(),
+      sku: (formData.sku || '').trim(),
+      brand: (formData.brand || '').trim(),
+      category: (categoriesArr[0] || formData.category || '').trim(), // #6: primary mirror
+      categories: categoriesArr, // #6: full multi-select
+      vehicle: vehicleDisplay, // derived headline for the table column
+      locationBin: (formData.locationBin || '').trim(), // Feature 1
+      // Task 2 "Additional Fields": these were being collected in the form and
+      // validated as if they mattered, but were never in this whitelist — so
+      // whatever the user typed (or left blank) here was silently discarded on
+      // every save. Fixed to actually persist; blank ones just write ''/'18',
+      // which also lets a deliberate CLEAR take effect on edit (updateDoc only
+      // touches keys present in the payload).
+      oemNo: (formData.oemNo || '').trim(),
+      partNo: (formData.partNo || '').trim(),
+      barcode: (formData.barcode || '').trim(),
+      hsn: (formData.hsn || '').trim(),
+      gst: (formData.gst || '18').trim(),
+      shelf: (formData.shelf || '').trim(),
+      rack: (formData.rack || '').trim(),
+      bin: (formData.bin || '').trim(),
+      warehouse: (formData.warehouse || '').trim(),
+      mrp: nonNegNum(formData.mrp),
+      compatibleCars: vehGrouped, // #3: grouped [{brand, models}]
+      // Optional per-vehicle fitment note (year/variant free text), keyed by model
+      // name. PartModal already pruned it to models still selected + non-blank.
+      vehicleNotes: (formData.vehicleNotes && typeof formData.vehicleNotes === 'object') ? formData.vehicleNotes : {},
+      // PHASE 12 (PH12-01) — `stock` (like `salesCount`, correctly never here)
+      // MUST NOT be in the shared edit/create payload: this same object is
+      // merge-written by an EDIT's guardedSet (_rev-guarded, but Sell/Restock/
+      // Adjustment/PO-receive/Invoice-realization NEVER bump a part's `_rev` —
+      // they're atomic stock-only transactions, not whole-document edits) — so
+      // an Edit Part save re-reads the value the form loaded WHEN IT OPENED
+      // and silently overwrites whatever stock ledgered operations moved to in
+      // the meantime, with no stockAdjustments/restocks/sales record explaining
+      // the jump. The comment 2 lines below this object ("stock & salesCount
+      // are not in `payload`") documents this as the intended invariant; `stock`
+      // had regressed back in. The CREATE branch below sets its own `stock`
+      // explicitly (that IS the part's legitimate opening value) and needs
+      // nothing here.
+      minStock: nonNegInt(formData.minStock) || 5,
+      purchasePrice: nonNegNum(formData.purchasePrice),
+      sellingPrice: nonNegNum(formData.sellingPrice),
+      minSellingPrice: nonNegNum(formData.minSellingPrice), // Issue 3: bargain floor
+      suppliers: resolved, // {id,name,phone,preferredLabel,isPreferred}
+      supplier: first.name, // legacy mirror (preferred/primary)
+      supplierPhone: first.phone, // legacy mirror (preferred/primary)
+      imageString: formData.imageString || '',
+      // Part Photos gallery (up to 8) — only the cover mirror was being saved;
+      // every secondary photo the user uploaded was silently dropped.
+      images: Array.isArray(formData.images) ? formData.images.slice(0, 8) : [],
+      updatedAt: serverTimestamp(),
+    };
+
+    let concRejected = false;
+    warnIfOffline('this part'); // Phase 6b (PH6-02) — non-blocking heads-up only
+    try {
+      const copiedFrom = duplicateOriginRef.current || null; // Section 2: DB link
+      // Phase 1a — editing an existing part goes through the revision-guarded
+      // transaction (re-read, verify it still exists, verify `_rev` hasn't moved
+      // under this editor, merge, bump `_rev`). stock & salesCount are not in
+      // `payload` so Sell/Receive's atomic counters are still never overwritten.
+      let newPartId = null;
+      if (formData.id) {
+        await store.saveGuarded(COLLECTIONS.PARTS, { ...payload, id: formData.id }, revOf(formData), { label: 'This part' });
+      } else {
+        // Phase 4b (PH4-06 class) — write the new part to a client-stable doc id so a
+        // retry after an ambiguous failure re-writes the SAME doc, never a duplicate.
+        newPartId = formData.createOpId || `part_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        await setDoc(doc(db, COLLECTIONS.PARTS, newPartId), { ...payload, stock: nonNegInt(formData.stock), salesCount: 0, copiedFrom, archived: !!copiedFrom, createdAt: serverTimestamp() }, { merge: true });
+      }
+      duplicateOriginRef.current = null;
+      const partId = formData.id || newPartId;
+
+      // ADD-06: record price changes (cost/margin edits are sensitive).
+      if (formData.id) {
+        const prev = inventory.find((p) => p.id === formData.id) || {};
+        const changes = {};
+        [['purchasePrice', 'Purchase'], ['sellingPrice', 'MRP'], ['minSellingPrice', 'Min Sell']].forEach(([k, label]) => {
+          if ((prev[k] || 0) !== (payload[k] || 0)) changes[label] = { from: prev[k] || 0, to: payload[k] || 0 };
+        });
+        if (Object.keys(changes).length) writeAudit('price_change', { partId: formData.id, name: payload.name }, changes);
+        writeAudit('update_part', { partId, name: payload.name });
+      } else {
+        writeAudit('create_part', { partId, name: payload.name });
+      }
+
+      if (!formData.id) clearOpId('create-part'); // Phase 5b — new part is server-confirmed; the next "Add Part" is a new intent
+      if (copiedFrom) toast.success('Copy saved to Archive — restore it to activate');
+      else smartSaveToast(formData.name, { isEdit: !!formData.id, hasSupplier: (formData.suppliers || []).some((r) => (r.name || '').trim()) });
+    } catch (err) {
+      if (isConcurrencyError(err)) { concRejected = true; concToast(err, 'part'); }
+      else {
+        console.error('Save failed:', err);
+        // Phase 6b — the EDIT branch used to claim a definite "Could not save",
+        // even though guardedSet's own ambiguous-failure case (lost ack, timeout)
+        // may well have committed. A retry is always safe either way — Phase 1a's
+        // `_rev` guard rejects a stale one instead of duplicating or corrupting —
+        // so say that, matching the accurate wording the CREATE branch already had.
+        toast.error(formData.id
+          ? (isTxTimeout(err)
+            ? timeoutMessage('This part')
+            : 'Couldn’t confirm the part saved. Reopen it to check before retrying — a stale retry is safely rejected, a lost one saves again.')
+          : 'Couldn’t confirm the part saved. It may already exist — check the parts list, or press Save again (a repeat is safe).');
+      }
+    } finally {
+      setSaving(false);
+      // Keep the editor open on a concurrency rejection so nothing typed is lost.
+      if (!concRejected) { partLease.release(); setShowModal(false); setEditPart(null); }
+    }
+  }
+
+  // ---- FIX 2: WhatsApp purchase-order generation & smart routing ----
+  function openWhatsAppPO(part, supplierName, number, qtyOverride) {
+    const text = encodeURIComponent(buildPurchaseOrder(part, supplierName, qtyOverride));
+    const url = `https://wa.me/${waNumber(number)}?text=${text}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  // ---- Reorder request lifecycle (Pending Supplier Actions) ----
+  // Status flow: Requested → Awaiting Delivery → Delivered. A part needing
+  // reorder with no active request is implicitly "Not Ordered" (it sits in the
+  // Reorder Center). Clicking Order logs a 'Requested' entry (one active per part).
+  const REORDER_FLOW = ['Requested', 'Awaiting Delivery', 'Delivered'];
+  function logReorderRequest(part, chosenSupplier) {
+    const existing = reorderRequests.find((r) => r.partId === part.id && r.status !== 'Delivered');
+    if (existing) { notify.info('A reorder is already active for this part.'); return; }
+    const sup = chosenSupplier || getPartSuppliers(part)[0];
+    const qty = Math.max((part.minStock || 5) * 2 - (part.stock || 0), part.minStock || 5);
+    if (demoMode) {
+      const now = new Date();
+      const stamp = { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toDate: () => now, toMillis: () => now.getTime() };
+      setReorderRequests((prev) => [{ id: 'demo-ro-' + now.getTime(), partId: part.id, partName: part.name || '', supplierId: sup?.id || null, supplierName: sup?.name || part.supplier || '—', qty, status: 'Requested', createdAt: stamp }, ...prev]);
+      toast.success(`Reorder logged: ${part.name}${sup?.name ? ' → ' + sup.name : ''} (demo)`);
+      return;
+    }
+    addDoc(collection(db, COLLECTIONS.REORDER_REQUESTS), {
+      partId: part.id,
+      partName: part.name || '',
+      supplierId: sup?.id || null,
+      supplierName: sup?.name || part.supplier || '—',
+      qty: Math.max((part.minStock || 5) * 2 - (part.stock || 0), part.minStock || 5),
+      status: 'Requested',
+      byEmail: user?.email || null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }).catch((e) => console.error('Reorder request failed:', e));
+  }
+  function advanceReorderStatus(req) {
+    const idx = REORDER_FLOW.indexOf(req.status);
+    const next = REORDER_FLOW[Math.min(idx + 1, REORDER_FLOW.length - 1)];
+    if (demoMode) { setReorderRequests((prev) => prev.map((r) => (r.id === req.id ? { ...r, status: next } : r))); toast.success(`${req.partName}: ${next} (demo)`); return; }
+    updateDoc(doc(db, COLLECTIONS.REORDER_REQUESTS, req.id), { status: next, updatedAt: serverTimestamp() })
+      .then(() => toast.success(`${req.partName}: ${next}`))
+      .catch((e) => { console.error(e); toast.error('Could not update status.'); });
+  }
+  function clearReorderRequest(req) {
+    if (demoMode) {
+      if (!demoAdmin) { protectedDemoToast(); return; }
+      setReorderRequests((prev) => prev.filter((r) => r.id !== req.id)); toast.success('Request cleared (demo)'); return;
+    }
+    deleteDoc(doc(db, COLLECTIONS.REORDER_REQUESTS, req.id)).catch((e) => console.error('Clear request failed:', e));
+  }
+
+  // ---- Real reorder workflow (dialog with supplier choice / WhatsApp / Create PO / manage existing) ----
+  // Issue 7.10 — this used to always take getPartSuppliers(part)[0] with no way to
+  // pick a different one, while a SEPARATE, disconnected dialog (retired: former
+  // requestReorder/reorderChoice) offered the supplier choice but never sent a
+  // WhatsApp message or created a PO. Merged into one flow: real supplier data from
+  // getPartSuppliers, selectable in-place when a part has more than one.
+  function openReorderDialog(part) {
+    const sups = getPartSuppliers(part);
+    const sup = sups[0];
+    const supRecord = suppliers.find((s) => sup?.id && s.id === sup.id) || null;
+    const phone = tenDigits(sup?.phone) || (supRecord ? tenDigits(getSupplierPhones(supRecord)[0]) : '') || '';
+    // Issue 7.11 — suggestedQty stays around as the labeled hint; `qty` is the
+    // actual editable value the user can override before sending/ordering.
+    const suggestedQty = Math.max((part.minStock || 5) * 2 - (part.stock || 0), part.minStock || 5);
+    const existing = reorderRequests.find((r) => r.partId === part.id && r.status !== 'Delivered') || null;
+    setReorderDialog({ part, suppliers: sups, supplierName: sup?.name || part.supplier || '', supplierId: sup?.id || null, phone, suggestedQty, qty: suggestedQty, existing });
+  }
+  function reorderViaWhatsApp(d) {
+    if (!d.existing) logReorderRequest(d.part, d.supplierId ? { id: d.supplierId, name: d.supplierName, phone: d.phone } : undefined);
+    if (d.phone) openWhatsAppPO(d.part, d.supplierName, d.phone, d.qty);
+    else toast.error('No contact number on file for this supplier.');
+    setReorderDialog(null);
+  }
+  async function reorderViaPO(d) {
+    const ok = await createPO({
+      supplierId: d.supplierId,
+      supplierName: d.supplierName,
+      items: [{ partId: d.part.id, name: d.part.name, sku: d.part.sku || '', qty: d.qty, unitCost: d.part.purchasePrice || 0 }],
+      notes: 'Auto-created from reorder',
+    });
+    setReorderDialog(null);
+    if (ok !== false) { setActiveTab('inventory'); setInvSubView('po'); }
+  }
+
+  // ---- Issue 3 + Feature 5: clicking "sell" routes by stock level ----
+  function handleSellClick(part) {
+    if ((part.stock || 0) <= 0) {
+      setAlternativePart(part); // Feature 5: suggest alternatives instead of erroring
+    } else {
+      setCheckoutPart(part);
+    }
+  }
+
+  // PHASE 8B (PH8-05) — the ONE atomic Quick Sell transaction (stock decrement +
+  // salesCount + the sales ledger row + the monthly rollup, keyed by the
+  // sale-op id), extracted so both the live "Confirm Sale" click below AND the
+  // pendingSales reconciliation effect (offline sales, applied once
+  // connectivity returns) run through the EXACT SAME atomic path — never a
+  // second, weaker one. All reads (op marker, part) happen before any write;
+  // a duplicate delivery sees `sales/{opId}` already present and applies
+  // nothing.
+  //
+  // Takes PLAIN SCALAR inputs (never a pre-built saleRecord/rollupPatch) and
+  // builds the record — including its increment()/serverTimestamp() sentinels —
+  // fresh, INSIDE this call. Firestore FieldValue sentinels only resolve
+  // correctly as the direct value of a field in the write that uses them; they
+  // cannot be persisted as plain nested data and "replayed" later, which is
+  // exactly why the pendingSales document below stores plain numbers only and
+  // this function rebuilds the real record from them at apply time.
+  async function runQuickSaleTx({
+    opId, partId, partName, want, pricePerUnit, unitCost, monthKey,
+    belowFloorOverride, minSellingPrice, brands, soldByUid, soldByEmail,
+  }) {
+    const revenue = want * pricePerUnit;
+    const cost = want * unitCost;
+    const saleRecord = {
+      opId, partId, name: partName || '', qty: want, unitPrice: pricePerUnit, unitCost, revenue, cost,
+      profit: revenue - cost, category: 'Parts', revenueType: 'Parts', brands: brands || [],
+      soldBy: soldByUid || null, soldByEmail: soldByEmail || null, belowFloor: !!belowFloorOverride,
+      floorPrice: minSellingPrice || 0, source: 'quick-sell', createdAt: serverTimestamp(),
+    };
+    const rollupPatch = {
+      month: monthKey, revenue: increment(revenue), cost: increment(cost), profit: increment(revenue - cost),
+      units: increment(want), orders: increment(1), updatedAt: serverTimestamp(),
+    };
+    return withTimeout(runTransaction(db, async (tx) => {
+      const saleRef = doc(db, COLLECTIONS.SALES, opId);
+      const partRef = doc(db, COLLECTIONS.PARTS, partId);
+      const saleSnap = await tx.get(saleRef);
+      const partSnap = await tx.get(partRef);
+      if (saleSnap.exists()) return { sold: Number(saleSnap.data().qty) || want, alreadyApplied: true };
+      if (!partSnap.exists()) throw new Error('This part no longer exists.');
+      const cur = partSnap.data().stock || 0;
+      if (want > cur) throw new Error(`Cannot sell ${want} — only ${cur} left in stock.`);
+      tx.set(saleRef, saleRecord);
+      tx.update(partRef, { stock: increment(-want), salesCount: increment(want), updatedAt: serverTimestamp() });
+      tx.set(doc(db, 'salesRollups', monthKey), rollupPatch, { merge: true });
+      return { sold: want, alreadyApplied: false };
+    }), TX_TIMEOUT_MS, 'This sale');
+  }
+
+  // PHASE 8B (PH8-05) — reconcile any Quick Sales that were queued as a durable
+  // pendingSales/{opId} intent (plain scalar fields only — see runQuickSaleTx's
+  // own comment on why) while genuinely offline (see the `else` branch in
+  // handleSellInner below), once the browser is back online. Applies each
+  // through the EXACT SAME runQuickSaleTx as a live sale, then removes the
+  // pending record — a definite business rejection (part gone / insufficient
+  // stock) discards it with an explanation; an ambiguous failure (still
+  // offline, a timeout) leaves it for the next reconnect to retry.
+  useEffect(() => {
+    if (demoMode || !online || !user?.uid) return undefined;
+    let cancelled = false;
+    (async () => {
+      let snap;
+      try {
+        snap = await getDocs(query(collection(db, 'pendingSales'), where('createdBy', '==', user.uid), limit(20)));
+      } catch (e) { return; }
+      if (cancelled || snap.empty) return;
+      // eslint-disable-next-line no-restricted-syntax
+      for (const d of snap.docs) {
+        if (cancelled) return;
+        const p = d.data();
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await runQuickSaleTx({
+            opId: p.opId, partId: p.partId, partName: p.partName, want: p.want,
+            pricePerUnit: p.pricePerUnit, unitCost: p.unitCost, monthKey: p.monthKey,
+            belowFloorOverride: p.belowFloorOverride, minSellingPrice: p.minSellingPrice,
+            brands: p.brands, soldByUid: p.soldByUid, soldByEmail: p.soldByEmail,
+          });
+          // eslint-disable-next-line no-await-in-loop
+          await deleteDoc(d.ref);
+          toast.success(`Offline sale of ${p.partName || 'a part'} synced.`);
+        } catch (err) {
+          const isDefiniteNoCommit = !err?.code && !!err?.message;
+          if (isDefiniteNoCommit) {
+            console.error('Pending offline sale could not be applied and was discarded:', err);
+            toast.error(`An offline sale of ${p.partName || 'a part'} could not be completed: ${err.message}`);
+            // eslint-disable-next-line no-await-in-loop
+            await deleteDoc(d.ref).catch(() => {});
+          } else {
+            console.error('Pending offline sale reconciliation failed, will retry on the next reconnect:', err);
+          }
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [online, demoMode, user?.uid]);
+
+  // Synchronous double-submission guard for checkout sales. A rapid double-click on
+  // "Confirm Sale" dispatches both click events before the first call's `await` gives
+  // React a chance to disable the button, so an async-only "saving" state arrives too
+  // late. Set synchronously before any await, cleared in `finally` so legitimate
+  // subsequent sales (and retries after a blocked/invalid sale) are never stuck.
+  const sellLockRef = useRef(false);
+
+  async function handleSell(qty, pricePerUnit, belowFloorOverride = false, saleOpId = null) {
+    if (sellLockRef.current) return;
+    sellLockRef.current = true;
+    try {
+      return await handleSellInner(qty, pricePerUnit, belowFloorOverride, saleOpId);
+    } finally {
+      sellLockRef.current = false;
+    }
+  }
+
+  // ---- Issue 3: complete a checkout sale (price already floor-validated) ----
+  async function handleSellInner(qty, pricePerUnit, belowFloorOverride = false, saleOpId = null) {
+    const part = checkoutPart;
+    if (!part) return;
+    if (demoMode) {
+      if (!demoAdmin && !demoPerms.changeStock) { protectedDemoToast(true); return; }
+      const want = Math.max(1, Math.floor(qty || 0));
+      if (want > (part.stock || 0)) { toast.error(`Cannot sell ${want} — only ${part.stock || 0} in stock.`); return; }
+      const sold = want;
+      const unitCost = part.purchasePrice || 0;
+      const now = new Date();
+      const stamp = { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toDate: () => now, toMillis: () => now.getTime() };
+      const revenue = sold * pricePerUnit;
+      const cost = sold * unitCost;
+      setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: Math.max(0, (p.stock || 0) - sold), salesCount: (p.salesCount || 0) + sold } : p)));
+      // Sales-search/analytics bug fix — this wrote the PART's own inventory category
+      // (e.g. "Brake Pad") into `category`, but SalesView's catOf() reads that same
+      // field as the coarse LEDGER type ("Parts"/"Service"/"Outside Purchase") — so
+      // every quick-checkout sale of a real part (any category other than the literal
+      // string "Parts") silently vanished from Sales cards, list AND search. Confirmed
+      // live: a real seeded sale record has category:"Parts", revenueType:"Parts" —
+      // matching that exact shape, not inventing a new field.
+      const demoOpId = saleOpId || 'demo-sale-' + now.getTime();
+      if (sales.some((s) => s.id === demoOpId || s.opId === demoOpId)) { if (saleOpId) clearOpId(`sell:${part.id}`); setCheckoutPart(null); toast.success(`${part.name} — this sale is already recorded (demo)`); return; }
+      setSales((prev) => [{ id: demoOpId, opId: demoOpId, partId: part.id, name: part.name, partName: part.name, sku: part.sku, category: 'Parts', revenueType: 'Parts', brands: [part.vehicle].filter(Boolean), qty: sold, quantity: sold, unitPrice: pricePerUnit, unitCost, costPrice: unitCost, revenue, total: revenue, totalPrice: revenue, cost, profit: revenue - cost, soldByEmail: 'demo@balajiautoos.com', createdAt: stamp }, ...prev]);
+      if (saleOpId) clearOpId(`sell:${part.id}`);
+      setCheckoutPart(null);
+      toast.success(`Sold ${sold} × ${part.name} (demo)`);
+      writeAudit('sell_part', { partId: part.id, name: part.name || '' }, { qty: sold, unitPrice: pricePerUnit, revenue });
+      return;
+    }
+    const want = Math.max(1, Math.floor(qty || 0));
+    const unitCost = part.purchasePrice || 0;
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    // Phase 4b (PH4-03) — the sale's ledger identity. Stable per "Confirm Sale"
+    // intent (CheckoutModal ref); falls back to a fresh id only if a caller doesn't
+    // supply one. The sales ledger row IS this doc, so a duplicate delivery can't
+    // create a second one.
+    const opId = saleOpId || `sale_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    const saleInputs = {
+      opId, partId: part.id, partName: part.name || '', pricePerUnit, unitCost, monthKey,
+      belowFloorOverride: !!belowFloorOverride, minSellingPrice: part.minSellingPrice || 0,
+      brands: brandsOf(part), soldByUid: user?.uid || null, soldByEmail: user?.email || null,
+    };
+
+    let sold = want;
+    let alreadyApplied = false;
+    if (online) {
+      // Phase 4b (PH4-03) — ONE atomic transaction for the WHOLE sale (see
+      // runQuickSaleTx above for the full contract).
+      try {
+        // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+        const result = await runQuickSaleTx({ ...saleInputs, want });
+        sold = result.sold;
+        alreadyApplied = result.alreadyApplied;
+      } catch (err) {
+        console.error('Sale transaction failed:', err);
+        const isDefiniteNoCommit = !err?.code && !!err?.message; // our own thrown business errors — the txn aborted, nothing wrote
+        const friendly = /has not been used|disabled/i.test(err?.message || '')
+          ? 'Sale not saved — the database (Firestore) is not enabled for this project. Enable it, then retry.'
+          : err?.code === 'permission-denied'
+          ? 'Sale not saved — permission denied by security rules.'
+          : isDefiniteNoCommit
+          ? err.message
+          : isTxTimeout(err)
+          ? timeoutMessage('The sale')
+          : 'Couldn’t confirm the sale saved. It may already be recorded — check Stock Out, or press Confirm Sale again (a repeat is safe).';
+        toast.error(friendly);
+        // Phase 5b — a definite non-commit (our thrown business error) or a hard
+        // permission denial means this operation id can be retired. An AMBIGUOUS
+        // failure keeps it, so a reload + retry recovers the same id and de-dups.
+        if (isDefiniteNoCommit || err?.code === 'permission-denied' || /has not been used|disabled/i.test(err?.message || '')) {
+          clearOpId(`sell:${part.id}`);
+        }
+        return;
+      }
+    } else {
+      // PHASE 8B (PH8-05) — genuinely offline: a Firestore transaction requires a
+      // live round trip and cannot run at all. This used to fan out into 3
+      // INDEPENDENT fire-and-forget writes (sale row, stock, rollup) with no
+      // atomicity across them. A single document write IS atomic by definition,
+      // online or offline — so persist ONE durable pending-sale intent instead,
+      // and let it be applied through the EXACT SAME runQuickSaleTx (never a
+      // second, weaker path) by the reconciliation effect above once
+      // connectivity returns. IndexedDB's own persistent local cache queues this
+      // one write and replays it if the tab is closed before it flushes, same
+      // durability envelope already accepted for every other durable-opId write
+      // in this app (Phase 5b/6b).
+      sold = Math.max(1, Math.min(want, part.stock || 0));
+      // Plain scalars ONLY — no increment()/serverTimestamp() sentinels nested in
+      // here (see runQuickSaleTx's comment on why); it rebuilds the real record
+      // fresh from these when this pending sale is actually applied.
+      setDoc(doc(db, 'pendingSales', opId), {
+        ...saleInputs,
+        want: sold,
+        createdBy: user?.uid || null,
+        createdByEmail: user?.email || null,
+        createdAt: serverTimestamp(),
+      }).catch((e) => console.error('Pending sale write will retry when the browser reconnects and replays the queued write:', e));
+    }
+
+    if (alreadyApplied) {
+      clearOpId(`sell:${part.id}`); // confirmed — the sale is on the server
+      setCheckoutPart(null);
+      toast.success(`${part.name} — this sale is already recorded`);
+      return;
+    }
+
+    const newStock = Math.max(0, (part.stock || 0) - sold);
+    const newSalesCount = (part.salesCount || 0) + sold;
+    setInventory((prev) =>
+      prev.map((p) => (p.id === part.id ? { ...p, stock: newStock, salesCount: newSalesCount } : p))
+    );
+
+    // Task 4: audit any below-floor override sale (who, floor vs actual).
+    if (belowFloorOverride) {
+      writeAudit(
+        'below_floor_sale',
+        { partId: part.id, name: part.name || '' },
+        { floor: part.minSellingPrice || 0, actual: pricePerUnit, qty: sold, override: true, opId }
+      );
+    } else {
+      writeAudit('sell_part', { partId: part.id, name: part.name || '' }, { qty: sold, unitPrice: pricePerUnit, revenue: sold * pricePerUnit, opId });
+    }
+
+    // Phase 5b — retire the op id only when the write was SERVER-CONFIRMED (the
+    // online transaction resolved). Offline the writes are still queued to
+    // `sales/{opId}`; keep the id so a reload + retry recovers it and re-targets
+    // the same doc instead of creating a second sale.
+    if (online) clearOpId(`sell:${part.id}`);
+    setCheckoutPart(null);
+    toast.success(`Sold ${sold} × ${part.name} — ${formatINR(sold * pricePerUnit)}${belowFloorOverride ? ' (below floor)' : ''}`);
+  }
+
+  // Task 8 + Issue 3: non-sale stock change. direction 'reduce' subtracts;
+  // 'correction' adds stock back (reversal). Always a new append-only record —
+  // historical entries are never edited.
+  // H-2 fix: reuses the same Promise.allSettled + await discipline already proven in the
+  // Local→Firestore migration (H-1's reference implementation) and in
+  // applyStockDelta/applyReserveDelta (C-2). Both Firestore writes below used to be
+  // fire-and-forget with only console.error on failure — the success toast and modal
+  // close fired unconditionally regardless of whether either write actually landed. Now
+  // both are genuinely awaited; the toast/close only happen once confirmed, and a
+  // specific error surfaces (not silence) if either write fails.
+  // Issue 7.13 — extracted from the old handleAdjustStock so bulk adjustment
+  // (multiple parts, each with its OWN reason — never a shared default) can call
+  // the exact same write per part instead of a second, parallel implementation.
+  // Returns { ok, delta, isCorrection, reason } so a bulk caller can summarize
+  // results without re-deriving the math.
+  // Synchronous double-submission guards for the mutation functions below. A rapid
+  // double-click dispatches both click events before the FIRST call's `await` (the
+  // capacity-guard check) has a chance to let React re-render a disabled button, so
+  // an async-only "saving" state (via setState) arrives too late — both calls are
+  // already past that point. Each Set is keyed by the row it applies to (part id /
+  // supplier id) so unrelated rows stay unblocked; the entry is added before any
+  // `await` and removed in `finally`, mirroring the existing poAdvancing/savingRef
+  // guards already used elsewhere in this file (JobCardModule.jsx, PO advance/receive).
+  const stockAdjustLock = useRef(new Set());
+  const stockReceiveLock = useRef(new Set());
+  const poCreateLock = useRef(false);
+
+  async function adjustStockLine({ part, qty, reason, notes, direction = 'reduce', correctsId = null, opId = null }) {
+    if (!part || qty <= 0) return { ok: false };
+    if (stockAdjustLock.current.has(part.id)) return { ok: false, duplicate: true };
+    stockAdjustLock.current.add(part.id);
+    try {
+      return await adjustStockLineInner({ part, qty, reason, notes, direction, correctsId, opId });
+    } finally {
+      stockAdjustLock.current.delete(part.id);
+    }
+  }
+  async function adjustStockLineInner({ part, qty, reason, notes, direction = 'reduce', correctsId = null, opId = null }) {
+    // CAPACITY GUARD — the ONE choke point every stock-adjustment path (single modal,
+    // bulk adjust) already funnels through, so gating here covers all of them instead
+    // of each call site separately. Checked before any state/Firestore write below.
+    { const { blocked } = await checkCapacityGuard('stockAdjustments', { demoMode }); if (blocked) return { ok: false, blocked: true }; }
+    if (demoMode && !demoAdmin && !demoPerms.changeStock) { protectedDemoToast(true); return { ok: false, permissionDenied: true }; }
+    // H-5A: before/after/delta/signedQty math now lives in inventoryService's
+    // computeStockAdjustment (pure) — same formula, single source of truth.
+    const { before, delta, after, signedQty, isCorrection } = computeStockAdjustment({ currentStock: part.stock, qty, direction });
+    // Phase 4b (PH4-04) — the adjustment's ledger identity. Stable per intent (the
+    // modal holds it); the `stockAdjustments/{adjId}` doc IS the marker.
+    const adjId = opId || `adj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    if (demoMode) {
+      if (stockAdjustments.some((a) => a.id === adjId || a.opId === adjId)) return { ok: true, delta, isCorrection, reason, alreadyApplied: true };
+      const now = new Date();
+      const stamp = { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toDate: () => now, toMillis: () => now.getTime() };
+      setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: after } : p)));
+      setStockAdjustments((prev) => [{ id: adjId, opId: adjId, partId: part.id, name: part.name, partName: part.name, sku: part.sku, qty: signedQty, quantity: signedQty, reason, notes: notes || '', correctsId: correctsId || null, byEmail: 'demo@balajiautoos.com', createdAt: stamp }, ...prev]);
+      writeAudit('stock_adjustment', { partId: part.id, name: part.name || '' }, { qty: signedQty, reason, stockBefore: before, stockAfter: after, notes: notes || '', opId: adjId });
+      return { ok: true, delta, isCorrection, reason };
+    }
+    // Phase 4b (PH4-04) — ONE atomic transaction: the adjustment ledger row +
+    // the stock increment, keyed by adjId. Reads (the op marker, the part) happen
+    // before any write. A duplicate delivery finds `stockAdjustments/{adjId}` and
+    // applies NOTHING.
+    let alreadyApplied = false;
+    warnIfOffline('this adjustment'); // Phase 6b (PH6-02) — non-blocking heads-up only
+    try {
+      // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+      const res = await withTimeout(runTransaction(db, async (tx) => {
+        const adjRef = doc(db, COLLECTIONS.STOCK_ADJUSTMENTS, adjId);
+        const partRef = doc(db, COLLECTIONS.PARTS, part.id);
+        const adjSnap = await tx.get(adjRef);
+        const partSnap = await tx.get(partRef);
+        if (adjSnap.exists()) return { alreadyApplied: true };
+        if (!partSnap.exists()) throw new Error('This part no longer exists.');
+        const serverBefore = partSnap.data().stock || 0;
+        tx.set(adjRef, {
+          opId: adjId, partId: part.id, name: part.name || '', sku: part.sku || '', partName: part.name || '',
+          qty: signedQty, reason, notes: notes || '',
+          stockBefore: serverBefore, stockAfter: serverBefore + signedQty,
+          correctsId: correctsId || null, by: user?.uid || null, byEmail: user?.email || null,
+          createdAt: serverTimestamp(),
+        });
+        tx.update(partRef, { stock: increment(signedQty), updatedAt: serverTimestamp() });
+        return { alreadyApplied: false };
+      }), TX_TIMEOUT_MS, 'This adjustment');
+      alreadyApplied = res.alreadyApplied;
+    } catch (err) {
+      console.error('[TXN] Stock adjustment failed:', err);
+      return { ok: false, definiteNoCommit: !err?.code && !!err?.message, timedOut: isTxTimeout(err) };
+    }
+    if (!alreadyApplied) {
+      setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: after } : p)));
+      writeAudit('stock_adjustment', { partId: part.id, name: part.name || '' }, { qty: signedQty, reason, stockBefore: before, stockAfter: after, notes: notes || '', opId: adjId });
+    }
+    return { ok: true, delta, isCorrection, reason, alreadyApplied };
+  }
+
+  async function handleAdjustStock({ qty, reason, notes, direction = 'reduce', correctsId = null, opId = null }) {
+    const part = adjustTarget;
+    if (!part || qty <= 0) return;
+    const result = await adjustStockLine({ part, qty, reason, notes, direction, correctsId, opId });
+    if (result.duplicate) return; // a save for this part is already in flight (rapid double-click) — keep the op id
+    if (result.blocked) { clearOpId(`adjust:${part.id}`); notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('stockAdjustments'); return; } // modal stays open, unsaved input preserved
+    if (result.permissionDenied) { clearOpId(`adjust:${part.id}`); return; } // protectedDemoToast already shown; modal stays open
+    if (!result.ok) {
+      if (result.definiteNoCommit) clearOpId(`adjust:${part.id}`); // Phase 5b — nothing wrote
+      toast.error(result.timedOut
+        ? timeoutMessage('The adjustment')
+        : 'Couldn’t confirm the adjustment saved. It may already be recorded — check Movement History, or press Record adjustment again (a repeat is safe).'); return; // modal stays open so the user can retry
+    }
+    clearOpId(`adjust:${part.id}`); // Phase 5b — server-confirmed (or alreadyApplied)
+    setAdjustTarget(null);
+    if (result.alreadyApplied) { toast.success(`${part.name} — this adjustment is already recorded`); return; }
+    toast.success(result.isCorrection ? `Correction +${result.delta} × ${part.name}${demoMode ? ' (demo)' : ''}` : `Adjusted −${result.delta} × ${part.name} (${result.reason})${demoMode ? ' (demo)' : ''}`);
+  }
+
+  // Issue 7.13 — Bulk Adjust Stock: each selected part keeps its OWN reason and
+  // quantity (never a shared default across the batch, per the audit-accuracy
+  // requirement) and gets its own independent stockAdjustments record via the
+  // exact same adjustStockLine write the single-part modal uses.
+  async function handleBulkAdjust(lines) {
+    const valid = (lines || []).filter((l) => l.part && l.qty > 0 && l.reason);
+    if (!valid.length) return;
+    // One guard check for the whole batch, not per line — bulk adjust volume is a
+    // handful of parts per submit, so "are we already at the hard limit" up front is
+    // the right amount of ceremony (matches the SupplierPOBuilder batch-create guard).
+    // Same reasoning applies to the demo changeStock permission below.
+    if (demoMode && !demoAdmin && !demoPerms.changeStock) { protectedDemoToast(true); return; }
+    const { blocked } = await checkCapacityGuard('stockAdjustments', { demoMode });
+    if (blocked) { notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('stockAdjustments'); return; }
+    const results = await Promise.all(valid.map((l) => adjustStockLine({ part: l.part, qty: l.qty, reason: l.reason, notes: l.notes || '', direction: 'reduce', opId: l.opId })));
+    const okCount = results.filter((r) => r.ok).length;
+    valid.forEach((l, i) => { if (results[i]?.ok) clearOpId(`bulk-adjust:${l.part.id}`); }); // Phase 5b — retire confirmed rows
+    setShowBulkAdjust(false);
+    clearSelection();
+    if (okCount === valid.length) toast.success(`Adjusted ${okCount} part${okCount === 1 ? '' : 's'}${demoMode ? ' (demo)' : ''}`);
+    else if (okCount > 0) toast.error(`${okCount} of ${valid.length} adjustments saved — check your connection and retry the rest.`);
+    else toast.error('Could not save the bulk adjustment. Check your connection and try again.');
+  }
+
+  // 1.3 — one PO per supplier group, through the same createPO write path POCreateForm
+  // uses (no parallel PO-creation logic living inside the bulk modal).
+  async function handleBulkReorder(groups) {
+    const valid = (groups || []).filter((g) => g.items?.length);
+    if (!valid.length) return;
+    // Sequential, not Promise.all — each PO must be able to see the ones already decided
+    // earlier in THIS batch (see createPO's extraKnownOrders param) so nextPONumber()
+    // doesn't hand out the same number to every group. State (setPurchaseOrders /
+    // Firestore's onSnapshot echo) won't have caught up between iterations, so the batch
+    // tracks its own running list instead of relying on it.
+    const createdSoFar = [];
+    let okCount = 0;
+    for (const g of valid) {
+      const result = await createPO({ supplierId: g.supplierId, supplierName: g.supplierName, items: g.items }, createdSoFar);
+      if (result) { okCount += 1; createdSoFar.push(result); }
+    }
+    setShowBulkReorder(false);
+    clearSelection();
+    if (okCount === valid.length) toast.success(`${okCount} purchase order${okCount === 1 ? '' : 's'} created${demoMode ? ' (demo)' : ''}`);
+    else if (okCount > 0) toast.error(`${okCount} of ${valid.length} purchase orders created — check your connection and retry the rest.`);
+    else toast.error('Could not create the purchase orders. Check your connection and try again.');
+  }
+
+  // ---- Category management (rename / delete) — keeps `category` and `categories` fields in sync ----
+  async function renameCategory(oldName, newName) {
+    const nn = (newName || '').trim();
+    if (!nn || nn === oldName) return;
+    const affected = inventory.filter((p) => catMatches(p, oldName));
+    if (affected.length === 0) { toast('No parts in that category.'); return; }
+    if (demoMode) {
+      setInventory((prev) => prev.map((p) => (catMatches(p, oldName) ? { ...p, ...remapCatFields(p, oldName, nn) } : p)));
+      writeAudit('category_rename', { from: oldName, to: nn }, { parts: affected.length });
+      toast.success(`Renamed to “${nn}” (demo)`);
+      return;
+    }
+    try {
+      await renameCategoryDocs(affected, oldName, nn);
+      writeAudit('category_rename', { from: oldName, to: nn }, { parts: affected.length });
+      toast.success(`Renamed “${oldName}” → “${nn}” across ${affected.length} part${affected.length > 1 ? 's' : ''}`);
+    } catch (e) { console.error(e); toast.error('Rename failed — nothing was changed.'); }
+  }
+  async function deleteCategory(name) {
+    const affected = inventory.filter((p) => catMatches(p, name));
+    if (demoMode) {
+      setInventory((prev) => prev.map((p) => (catMatches(p, name) ? { ...p, ...remapCatFields(p, name, 'Uncategorised') } : p)));
+      writeAudit('category_delete', { name }, { parts: affected.length });
+      notify.deleted(`Deleted “${name}” — ${affected.length} part${affected.length === 1 ? '' : 's'} → Uncategorised (demo)`);
+      return;
+    }
+    try {
+      await deleteCategoryDocs(affected, name);
+      writeAudit('category_delete', { name }, { parts: affected.length });
+      notify.deleted(`Deleted “${name}” — ${affected.length} part${affected.length === 1 ? '' : 's'} moved to Uncategorised`);
+    } catch (e) { console.error(e); toast.error('Delete failed.'); }
+  }
+
+  // ---- Purchase Order lifecycle (pending → approved → received → cancelled) ----
+  const poN = (x) => Number(x) || 0;
+  const demoStamp = () => { const now = new Date(); return { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toMillis: () => now.getTime(), toDate: () => now }; };
+  // `extraKnownOrders` — POs already decided-upon in the SAME batch but not yet reflected
+  // in `purchaseOrders` state (demo setState is async; production's Firestore listener has
+  // real network latency before it echoes back). Without this, nextPONumber() reads the
+  // same stale max-number for every PO created within one tick — exactly what
+  // handleBulkReorder below hits when it creates several POs back-to-back. Single-PO
+  // callers (reorderViaPO, POCreateForm) never had two writes in flight at once, so they
+  // never noticed; passing [] preserves their exact previous behaviour.
+  async function createPO(input, extraKnownOrders = []) {
+    if (poCreateLock.current) return false;
+    poCreateLock.current = true;
+    try {
+      return await createPOInner(input, extraKnownOrders);
+    } finally {
+      poCreateLock.current = false;
+    }
+  }
+  async function createPOInner(input, extraKnownOrders = []) {
+    const built = buildPO(input, extraKnownOrders.length ? [...purchaseOrders, ...extraKnownOrders] : purchaseOrders);
+    if (built.error) { toast.error(built.error); return false; }
+    const { base, total, clean } = built;
+    // Phase 4b (PH4-06) — `input.poId` is a stable client-generated id for one
+    // "Create PO" intent; a retry after an ambiguous failure re-writes the SAME
+    // document instead of creating a second PO.
+    const poId = input.poId || `po_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    // Phase 5b — only the single-PO form (POCreateForm) supplies input.poId and
+    // owns the durable `create-po` op id; the bulk-reorder path does not.
+    const clearPoCreateOp = () => { if (input.poId) clearOpId('create-po'); };
+    if (demoMode) {
+      if (purchaseOrders.some((p) => p.id === poId)) { clearPoCreateOp(); toast.success(`${base.poNumber}: already created (demo)`); return base; }
+      setPurchaseOrders((prev) => [{ id: poId, ...base, createdAt: demoStamp() }, ...prev]);
+      writeAudit('po_create', { poNumber: base.poNumber, supplier: base.supplierName }, { total, items: clean.length });
+      clearPoCreateOp();
+      toast.success(`${base.poNumber} created (demo)`); return base;
+    }
+    warnIfOffline('this PO'); // Phase 6b (PH6-02) — non-blocking heads-up only
+    try {
+      await poCreateDoc(base, user?.email, poId);
+      writeAudit('po_create', { poNumber: base.poNumber, supplier: base.supplierName }, { total, items: clean.length, poId });
+      clearPoCreateOp();
+      toast.success(`${base.poNumber} created`); return { ...base, id: poId };
+    } catch (e) { console.error(e); toast.error('Couldn’t confirm the purchase order saved. It may already exist — check Purchase Orders, or press Create PO again (a repeat is safe).'); return false; }
+  }
+  const poAdvancing = useRef(new Set());
+  // draft → pending → approved → sent only. Receiving (full or partial) is handled by
+  // receivePO below — it needs per-line quantities, not just a target status.
+  async function advancePO(po, targetStatus) {
+    const next = targetStatus || nextPOStatus(po.status);
+    if (!next || next === 'received') return;
+    if (poAdvancing.current.has(po.id)) return;
+    poAdvancing.current.add(po.id);
+    const tsField = next === 'approved' ? 'approvedAt' : `${next}At`;
+    try {
+      if (demoMode) {
+        const stamp = demoStamp();
+        setPurchaseOrders((prev) => prev.map((p) => {
+          if (p.id !== po.id) return p;
+          const upd = { ...p, status: next };
+          upd[tsField] = stamp;
+          return upd;
+        }));
+        writeAudit('po_status', { poNumber: po.poNumber }, { status: next });
+        toast.success(`${po.poNumber}: ${next} (demo)`);
+        return;
+      }
+      try {
+        await poAdvanceDoc(po, next, user?.email);
+        writeAudit('po_status', { poNumber: po.poNumber }, { status: next });
+        toast.success(`${po.poNumber}: ${next}`);
+      } catch (e) { console.error(e); toast.error('Status update failed.'); }
+    } finally {
+      poAdvancing.current.delete(po.id);
+    }
+  }
+  // Issue 7 (Purchase Order lifecycle review) — real partial receiving. `receivedLines`:
+  // [{ partId, receiveQty, unitCost, updateDefaultPrice }]. receiveQty is the delta being
+  // received THIS TIME (never re-applies a prior receipt's qty); updateDefaultPrice is only
+  // true once the caller (the Receive modal) has already shown the user a diff-confirmation,
+  // mirroring RestockModal's existing confirm-before-overwrite pattern — receiving a PO can
+  // no longer silently stomp a part's default purchase price.
+  async function receivePO(po, receivedLines, receiptId) {
+    if (!receivedLines || !receivedLines.length) return;
+    if (poAdvancing.current.has(po.id)) return;
+    // Phase 4b (PH4-02) — client-side fast path: if this receive intent was already
+    // applied (visible in state), don't even round-trip. The transaction repeats
+    // this check server-side authoritatively.
+    if (receiptId && Array.isArray(po.appliedReceiptIds) && po.appliedReceiptIds.includes(receiptId)) {
+      clearOpId(`receive:${po.id}`); // Phase 5b — confirmed already on the server
+      toast.success(`${po.poNumber}: already received`);
+      return;
+    }
+    // PHASE 17 — a cancelled PO is terminal; it can never be received against.
+    // The UI hides the Receive button, poReceiveDoc's transaction re-checks
+    // server-side (the authoritative guard), and this covers the demo path
+    // (no transaction) plus a client that still holds a pre-cancel snapshot.
+    if (po.status === 'cancelled') { toast.error('This purchase order was cancelled — it can’t be received against.'); clearOpId(`receive:${po.id}`); return; }
+    poAdvancing.current.add(po.id);
+    try {
+      const items = po.items || [];
+      const nextItems = items.map((it) => {
+        const line = receivedLines.find((r) => r.partId === it.partId);
+        const delta = line ? poN(line.receiveQty) : 0;
+        return delta > 0 ? { ...it, receivedQty: poN(it.receivedQty) + delta } : it;
+      });
+      const fullyReceived = nextItems.length > 0 && nextItems.every((it) => poN(it.receivedQty) >= poN(it.qty));
+      const anyReceived = nextItems.some((it) => poN(it.receivedQty) > 0);
+      const status = fullyReceived ? 'received' : anyReceived ? 'partial' : po.status;
+      if (demoMode) {
+        const stamp = demoStamp();
+        setPurchaseOrders((prev) => prev.map((p) => {
+          if (p.id !== po.id) return p;
+          const upd = { ...p, items: nextItems, status };
+          if (fullyReceived) upd.receivedAt = stamp;
+          if (receiptId) upd.appliedReceiptIds = [...(p.appliedReceiptIds || []), receiptId].slice(-60);
+          return upd;
+        }));
+        setInventory((prev) => prev.map((pt) => {
+          const line = receivedLines.find((r) => r.partId === pt.id);
+          if (!line || poN(line.receiveQty) <= 0) return pt;
+          const upd = { ...pt, stock: poN(pt.stock) + poN(line.receiveQty) };
+          if (line.updateDefaultPrice) upd.purchasePrice = poN(line.unitCost) || pt.purchasePrice;
+          return upd;
+        }));
+        const newRestocks = receivedLines.filter((l) => l.partId && poN(l.receiveQty) > 0).map((line, i) => {
+          const it = items.find((x) => x.partId === line.partId) || {};
+          return buildRestockRecord({
+            id: 'demo-rs-po-' + Date.now() + '-' + i, partId: line.partId, name: it.name, sku: it.sku,
+            qty: poN(line.receiveQty), unitCost: poN(line.unitCost), supplierId: po.supplierId || null, supplierName: po.supplierName, poNumber: po.poNumber, createdAt: stamp,
+          });
+        });
+        setRestocks((prev) => newRestocks.concat(prev));
+        writeAudit('po_receive', { poNumber: po.poNumber }, { status, lines: receivedLines.length });
+        clearOpId(`receive:${po.id}`);
+        toast.success(fullyReceived ? `${po.poNumber}: received (demo)` : `${po.poNumber}: partially received (demo)`);
+        return;
+      }
+      warnIfOffline('this receipt'); // Phase 6b (PH6-02) — non-blocking heads-up only
+      try {
+        // Phase 3b (CWF-02) — poReceiveDoc runs a transaction: it re-reads the PO,
+        // adds each delta to the SERVER's current receivedQty, and returns the
+        // authoritative post-receive state. Use THAT for the audit + toast, not the
+        // stale client-side computation above.
+        // Phase 4b (PH4-02) — `receiptId` is stable for this receive intent; the
+        // transaction records it on the PO and no-ops (alreadyApplied) on a retry.
+        // Phase 6b (PH6-03) — poReceiveDoc itself bounds the wait (see
+        // services/purchaseOrderService.js); this just needs to react to a timeout.
+        const res = await poReceiveDoc(po, receivedLines, user?.email, receiptId);
+        const serverStatus = res?.status || status;
+        if (!res?.alreadyApplied) {
+          writeAudit('po_receive', { poNumber: po.poNumber }, { status: serverStatus, lines: receivedLines.length });
+        }
+        clearOpId(`receive:${po.id}`); // Phase 5b — server-confirmed (or alreadyApplied); a later delivery is a new intent
+        toast.success(serverStatus === 'received' ? `${po.poNumber}: received` : `${po.poNumber}: partially received`);
+      } catch (e) {
+        console.error(e);
+        // Phase 5b / Phase 17 — po/deleted, po/over-receipt and po/cancelled are
+        // definite non-commits; the op id can be retired. An unknown/ambiguous
+        // error keeps it for a safe retry.
+        if (e?.code === 'po/over-receipt' || e?.code === 'po/deleted' || e?.code === 'po/cancelled') { clearOpId(`receive:${po.id}`); toast.error(e.message); }
+        else toast.error(isTxTimeout(e)
+          ? timeoutMessage('The receipt')
+          : 'Couldn’t confirm the receipt saved. It may already be recorded — check the PO, or press Confirm Receipt again (a repeat is safe).');
+        return false; // keep the receive form open (ReceivePOForm's onSubmit checks `ok !== false`)
+      }
+    } finally {
+      poAdvancing.current.delete(po.id);
+    }
+  }
+  async function cancelPO(po) {
+    // Issue 7 (Purchase Order lifecycle review) — now that partial receiving is real, a PO
+    // can have physical stock already received without being fully 'received' yet. Cancelling
+    // it must not be allowed to silently pretend that stock never arrived — same guard as the
+    // existing fully-received case, extended to any receipt at all. No rollback logic here;
+    // this only blocks, matching the existing guard's own shape.
+    const receivedAny = (po.items || []).some((it) => poN(it.receivedQty) > 0);
+    if (po.status === 'received' || receivedAny) { toast.error('A PO with received quantity can’t be cancelled.'); return; }
+    if (demoMode) { setPurchaseOrders((prev) => prev.map((p) => (p.id === po.id ? { ...p, status: 'cancelled', cancelledAt: demoStamp() } : p))); writeAudit('po_cancel', { poNumber: po.poNumber }, {}); toast.success(`${po.poNumber} cancelled (demo)`); return; }
+    try { await poCancelDoc(po.id); writeAudit('po_cancel', { poNumber: po.poNumber }, {}); toast.success(`${po.poNumber} cancelled`); }
+    catch (e) { console.error(e); toast.error('Cancel failed.'); }
+  }
+
+  // ADD-02: goods received → atomic stock increase + restock ledger + batch cost.
+  // Issue 7.12 — extracted from the old handleReceiveStock so BulkReceiveModal
+  // (multi-part shipment receiving) can call the exact same write logic per
+  // line instead of a second, parallel implementation that could drift from
+  // this one or skip part of the audit trail. Takes `part` explicitly instead
+  // of reading `restockTarget`, since a bulk receipt has no single target.
+  async function receiveStockLine({ part, qty, unitCost, supplierName, invoiceNumber, purchaseDate, notes, updateDefaultPrice, updateDefaultSupplier, opId = null }) {
+    if (!part) return;
+    if (stockReceiveLock.current.has(part.id)) return { ok: false, duplicate: true };
+    stockReceiveLock.current.add(part.id);
+    try {
+      return await receiveStockLineInner({ part, qty, unitCost, supplierName, invoiceNumber, purchaseDate, notes, updateDefaultPrice, updateDefaultSupplier, opId });
+    } finally {
+      stockReceiveLock.current.delete(part.id);
+    }
+  }
+  async function receiveStockLineInner({ part, qty, unitCost, supplierName, invoiceNumber, purchaseDate, notes, updateDefaultPrice, updateDefaultSupplier, opId = null }) {
+    // CAPACITY GUARD — the ONE choke point every restock path (single modal, bulk
+    // receive) already funnels through. Checked before any state/Firestore write below.
+    { const { blocked } = await checkCapacityGuard('restocks', { demoMode }); if (blocked) return { ok: false, blocked: true }; }
+    if (!part || qty <= 0) return;
+    if (demoMode && !demoAdmin && !demoPerms.changeStock) { protectedDemoToast(true); return { ok: false, permissionDenied: true }; }
+
+    // Resolve the chosen supplier against the real directory (if it's a known
+    // one) so a newly-preferred supplier link carries a usable id/phone, same
+    // as every other supplier-link write path in the app.
+    const chosenSupplier = supplierName ? suppliers.find((s) => safeLower(s.name) === safeLower(supplierName)) : null;
+    const chosenPhone = chosenSupplier?.phoneNumbers?.[0]?.number || chosenSupplier?.phone || '';
+
+    // Master-record patch — populated ONLY when the user explicitly confirmed
+    // it via the "update default" checkboxes. A receipt at a different price or
+    // from a different vendor is otherwise just that: a transaction, recorded
+    // in the restock ledger below without touching the part's own record.
+    const masterPatch = {};
+    if (updateDefaultPrice) masterPatch.purchasePrice = unitCost;
+    if (updateDefaultSupplier && supplierName) {
+      masterPatch.suppliers = withPreferredSupplier(part, chosenSupplier?.id || '', supplierName, chosenPhone);
+      masterPatch.supplier = supplierName; // legacy scalar mirror — same convention as handleSupplierDelete
+      masterPatch.supplierPhone = chosenPhone;
+    }
+
+    const purchaseDateObj = purchaseDate ? new Date(`${purchaseDate}T12:00:00`) : new Date();
+    // Phase 4b (PH4-05) — the receipt's ledger identity. Stable per intent (the
+    // modal holds it); the `restocks/{restockOpId}` doc IS the marker.
+    const restockOpId = opId || `rs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+    if (demoMode) {
+      if (restocks.some((r) => r.id === restockOpId || r.opId === restockOpId)) return { ok: true, alreadyApplied: true };
+      const now = new Date();
+      const stamp = { seconds: Math.floor(now.getTime() / 1000), nanoseconds: 0, toDate: () => now, toMillis: () => now.getTime() };
+      const purchaseStamp = { seconds: Math.floor(purchaseDateObj.getTime() / 1000), nanoseconds: 0, toDate: () => purchaseDateObj, toMillis: () => purchaseDateObj.getTime() };
+      setInventory((prev) => prev.map((p) => (p.id === part.id ? { ...p, stock: (p.stock || 0) + qty, ...masterPatch } : p)));
+      setRestocks((prev) => [buildRestockRecord({
+        id: restockOpId, opId: restockOpId, partId: part.id, name: part.name, sku: part.sku,
+        qty, unitCost, supplierName, supplierId: chosenSupplier?.id || '', reference: invoiceNumber, purchaseDate: purchaseStamp, notes,
+        byEmail: 'demo@balajiautoos.com', createdAt: stamp,
+      }), ...prev]);
+      writeAudit('receive_stock', { partId: part.id, name: part.name || '' }, { qty, unitCost, supplierName: supplierName || '', opId: restockOpId });
+      return { ok: true };
+    }
+    // Phase 4b (PH4-05) — ONE atomic transaction: the restock ledger row + the
+    // stock increment (+ the optional master-record patch), keyed by restockOpId.
+    // Reads (op marker, part) before any write. A duplicate delivery finds
+    // `restocks/{restockOpId}` and applies NOTHING.
+    let alreadyApplied = false;
+    warnIfOffline('this receipt'); // Phase 6b (PH6-02) — non-blocking heads-up only
+    try {
+      // Phase 6b (PH6-03) — bound the UI wait; does not cancel the transaction.
+      const res = await withTimeout(runTransaction(db, async (tx) => {
+        const rsRef = doc(db, COLLECTIONS.RESTOCKS, restockOpId);
+        const partRef = doc(db, COLLECTIONS.PARTS, part.id);
+        const rsSnap = await tx.get(rsRef);
+        const partSnap = await tx.get(partRef);
+        if (rsSnap.exists()) return { alreadyApplied: true };
+        if (!partSnap.exists()) throw new Error('This part no longer exists.');
+        tx.set(rsRef, {
+          opId: restockOpId, partId: part.id, name: part.name || '', sku: part.sku || '',
+          qty, unitCost, total: qty * unitCost,
+          supplier: supplierName || '', supplierName: supplierName || '', supplierId: chosenSupplier?.id || '',
+          reference: invoiceNumber || '', purchaseDate: purchaseDateObj, notes: notes || '',
+          by: user?.uid || null, byEmail: user?.email || null, createdAt: serverTimestamp(),
+        });
+        tx.update(partRef, { stock: increment(qty), lastRestockedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...masterPatch });
+        return { alreadyApplied: false };
+      }), TX_TIMEOUT_MS, 'This receipt');
+      alreadyApplied = res.alreadyApplied;
+    } catch (err) {
+      console.error('[TXN] Receive stock failed:', err);
+      // Phase 5b — a business error we threw ("part no longer exists") is a
+      // definite non-commit; anything else is ambiguous and keeps the op id.
+      return { ok: false, definiteNoCommit: !err?.code && !!err?.message, timedOut: isTxTimeout(err) };
+    }
+    if (alreadyApplied) return { ok: true, alreadyApplied: true };
+    if (updateDefaultPrice || updateDefaultSupplier) {
+      writeAudit('update_part_defaults_via_restock', { partId: part.id, name: part.name || '' }, {
+        ...(updateDefaultPrice ? { purchasePriceBefore: part.purchasePrice || 0, purchasePriceAfter: unitCost } : {}),
+        ...(updateDefaultSupplier ? { supplierBefore: (getPartSuppliers(part).find((s) => s.isPreferred) || {}).name || '', supplierAfter: supplierName } : {}),
+      });
+    }
+    writeAudit('receive_stock', { partId: part.id, name: part.name || '' }, { qty, unitCost, supplierName: supplierName || '', opId: restockOpId });
+    return { ok: true };
+  }
+
+  async function handleReceiveStock(payload) {
+    const part = restockTarget;
+    if (!part || payload.qty <= 0) return;
+    const result = await receiveStockLine({ part, ...payload });
+    if (result.duplicate) return; // a receipt for this part is already in flight (rapid double-click) — keep the op id
+    if (result.blocked) { clearOpId(`restock:${part.id}`); notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('restocks'); return; } // modal stays open, unsaved input preserved
+    if (result.permissionDenied) { clearOpId(`restock:${part.id}`); return; } // protectedDemoToast already shown; modal stays open
+    if (!result.ok) {
+      if (result.definiteNoCommit) clearOpId(`restock:${part.id}`); // Phase 5b — nothing wrote; a retry is a new intent
+      toast.error(result.timedOut
+        ? timeoutMessage('The receipt')
+        : 'Couldn’t confirm the receipt saved. It may already be recorded — check Stock In, or press Receive again (a repeat is safe).'); return; // modal stays open so the user can retry
+    }
+    clearOpId(`restock:${part.id}`); // Phase 5b — server-confirmed (or alreadyApplied); a later receipt is a new intent
+    setRestockTarget(null);
+    toast.success(result.alreadyApplied ? `${part.name} — this receipt is already recorded` : `Received ${payload.qty} × ${part.name}${demoMode ? ' (demo)' : ''}`);
+  }
+
+  // Issue 7.12 — Bulk Receive Stock: one supplier + invoice/reference + delivery
+  // date shared across every line, each line its own part/qty/unit cost. Loops
+  // the SAME receiveStockLine write used by the single-item RestockModal (no
+  // bypass of the restock ledger / audit trail) rather than a bulk-only write path.
+  async function handleBulkReceive({ supplierName, invoiceNumber, purchaseDate, lines }) {
+    const valid = (lines || []).filter((l) => l.part && l.qty > 0);
+    if (!valid.length) return;
+    // One guard check for the whole batch, not per line (receiveStockLine's own
+    // internal guard would otherwise fire once per line — correct but redundant, and
+    // gives a worse message than checking once up front). Same reasoning applies to
+    // the demo changeStock permission below.
+    if (demoMode && !demoAdmin && !demoPerms.changeStock) { protectedDemoToast(true); return; }
+    const { blocked } = await checkCapacityGuard('restocks', { demoMode });
+    if (blocked) { notify.warning('Record limit reached. Please free space before creating a new record.'); setCapacityCleanupModule('restocks'); return; }
+    const results = await Promise.all(valid.map((l) => receiveStockLine({
+      part: l.part, qty: l.qty, unitCost: l.unitCost || 0, supplierName, invoiceNumber, purchaseDate, notes: l.notes || '',
+      updateDefaultPrice: false, updateDefaultSupplier: false, opId: l.opId,
+    })));
+    const okCount = results.filter((r) => r.ok).length;
+    valid.forEach((l, i) => { if (results[i]?.ok) clearOpId(`bulk-restock:${l.part.id}`); }); // Phase 5b — retire confirmed rows
+    setShowBulkReceive(false);
+    if (okCount === valid.length) toast.success(`Received ${okCount} item${okCount === 1 ? '' : 's'} from ${supplierName || 'supplier'}${demoMode ? ' (demo)' : ''}`);
+    else if (okCount > 0) toast.error(`${okCount} of ${valid.length} items received — check your connection and retry the rest.`);
+    else toast.error('Could not save the bulk stock receipt. Check your connection and try again.');
+  }
+
+  // ADD-06: append an audit entry (who did what, with before/after where relevant).
+  //
+  // BUG-003 root cause: this used to ALWAYS call addDoc() straight to Firestore, with no
+  // demo-mode branch. The Audit Log panel renders the `auditLog` STATE array, which in demo
+  // mode is sourced from local/session storage (see pushAudit below), never from Firestore —
+  // so every writeAudit() call was invisible in demo mode regardless of whether the Firestore
+  // write itself succeeded. "Invoice Paid" was the one action already routed through
+  // pushAudit (dual-mode), which is why it was the only entry that ever appeared live. Fixed
+  // by giving writeAudit the same dual-mode write pushAudit already has, so every existing
+  // call site (stock adjustment, archive/restore/delete, price change, PO lifecycle, etc.)
+  // starts working in both modes with no change needed at any of those call sites.
+  function writeAudit(action, target = {}, details = {}) {
+    const entry = {
+      id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      action,
+      ...target,
+      details,
+      performedBy: user?.uid || null,
+      performedByEmail: demoMode ? 'demo@balajiautoos.com' : (user?.email || null),
+      createdAt: demoMode ? new Date().toISOString() : serverTimestamp(),
+    };
+    if (demoMode) {
+      setAuditLog((prev) => {
+        const next = [entry, ...(prev || [])].slice(0, 500);
+        try { sessionStorage.setItem(STORAGE.DEMO_AUDIT, JSON.stringify(next)); }
+        catch (e) { console.error('[TXN] FAILED to persist audit log.', e); }
+        return next;
+      });
+    } else {
+      addDoc(collection(db, COLLECTIONS.AUDIT_LOG), entry).catch((e) => console.error('Audit write skipped:', e));
+    }
+  }
+
+  function handleDelete(id) {
+    const part = inventory.find((p) => p.id === id);
+    if (demoMode) {
+      if (!demoAdmin && !demoPerms.deleteInventory) { protectedDemoToast(true); return; }
+      askConfirm({
+        title: 'Delete part? (demo)',
+        message: `Remove “${part?.name || 'this part'}” from the demo? Use Demo Management to restore the original dataset.`,
+        confirmLabel: 'Delete', danger: true,
+        onConfirm: () => { setInventory((prev) => prev.filter((p) => p.id !== id)); notify.deleted('Part deleted (demo)'); },
+      });
+      return;
+    }
+    askConfirm({
+      title: 'Delete part?',
+      message: `Permanently delete “${part?.name || 'this part'}”? This cannot be undone. Past sales and analytics history are kept.`,
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, COLLECTIONS.PARTS, id));
+          writeAudit('delete_part', { partId: id, name: part?.name || '' });
+          // If we deleted an ORIGINAL that has a copy, promote the copy: strip
+          // its "(copy)" tag AND clear the copiedFrom link (no orphan records).
+          if (part && !part.copiedFrom && !isCopyName(part.name)) {
+            const copy = inventory.find((p) => p.id !== id && (p.copiedFrom === id || (baseName(p.name) === baseName(part.name) && isCopyName(p.name))));
+            if (copy) {
+              await updateDoc(doc(db, COLLECTIONS.PARTS, copy.id), { name: stripCopySuffix(copy.name), copiedFrom: null, updatedAt: serverTimestamp() });
+              toast.success(`Copy promoted to “${stripCopySuffix(copy.name)}”`);
+            }
+          }
+          notify.deleted('Part deleted');
+        } catch (err) {
+          console.error('Delete failed:', err);
+          toast.error('Could not delete part.');
+        }
+      },
+    });
+  }
+
+  // Task 2: archive (soft-hide, restorable) vs permanent delete.
+  function handleDuplicate(part) {
+    // One copy per product, tracked by a DB relationship (copiedFrom), not by
+    // string matching. Block if this product already has an active copy, or if
+    // the part itself is a copy (no copy-of-copy).
+    if (part.copiedFrom || isCopyName(part.name)) {
+      toast.error('This is already a copy — edit it directly.');
+      return;
+    }
+    const existingCopy = inventory.some((p) => !p.archived && (p.copiedFrom === part.id || (baseName(p.name) === baseName(part.name) && isCopyName(p.name))));
+    if (existingCopy) {
+      toast.error('A copy already exists. Edit the existing copy instead.');
+      return;
+    }
+    const displayBase = stripCopySuffix(part.name) || 'Part';
+    duplicateOriginRef.current = part.id; // carried into handleSave (create branch)
+    const { id, createdAt, updatedAt, salesCount, archived, copiedFrom, ...rest } = part;
+    setEditPart({ ...rest, name: `${displayBase} (copy)`, sku: '', stock: 0 });
+    setShowModal(true);
+  }
+  // `silent` (Universal Notification Architecture review): the bulk archive/restore
+  // callers below need to know the real per-item outcome to report one aggregate
+  // "N archived, K failed" toast instead of the SAME per-item toast firing N times
+  // and getting deduped down to one that never says how many. Single-row callers
+  // (unchanged) don't pass it, so their own existing per-item toast is untouched.
+  // Mutation-safety pass — Archive/Restore flip a flag (idempotent for the DATA: two
+  // rapid clicks still leave `archived` at the same true/false), but each call fires
+  // its own writeAudit with no lock — confirmed live: one double-click on the row menu
+  // produced TWO 'archive_part' audit entries for one action. Keyed by part id (like
+  // stockAdjustLock/stockReceiveLock above) so archiving two different parts back to
+  // back is never blocked by an unrelated in-flight archive.
+  const partArchiveLock = useRef(new Set());
+  async function handleArchive(id, opts = {}) {
+    if (partArchiveLock.current.has(id)) return { ok: false, duplicate: true };
+    partArchiveLock.current.add(id);
+    try {
+      return await handleArchiveInner(id, opts);
+    } finally {
+      partArchiveLock.current.delete(id);
+    }
+  }
+  async function handleArchiveInner(id, { silent = false } = {}) {
+    const part = inventory.find((p) => p.id === id);
+    const actor = demoAdmin ? 'demo-admin@balajiautoos.com' : (user?.email || 'unknown');
+    if (demoMode) {
+      // Demo users may archive (reversible, in-memory only). Permanent delete and
+      // dataset reset remain demo-admin-only.
+      const actorName = demoAdmin ? 'demo-admin' : 'demo-user';
+      const stamp = { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 };
+      setInventory((prev) => prev.map((p) => (p.id === id ? { ...p, archived: true, archivedAt: stamp, archivedBy: actorName } : p)));
+      writeAudit('archive_part', { partId: id, name: part?.name || '' });
+      if (!silent) toast.success('Part archived (demo)');
+      return { ok: true };
+    }
+    try {
+      await updateDoc(doc(db, COLLECTIONS.PARTS, id), { archived: true, archivedAt: serverTimestamp(), archivedBy: actor, updatedAt: serverTimestamp() });
+      writeAudit('archive_part', { partId: id, name: part?.name || '' });
+      // If the archived part is an ORIGINAL with an active copy, promote the
+      // copy to the base name so staff aren't left with an orphan "(copy)".
+      if (part && !part.copiedFrom && !isCopyName(part.name)) {
+        const copy = inventory.find((p) => p.id !== id && !p.archived && (p.copiedFrom === id || (baseName(p.name) === baseName(part.name) && isCopyName(p.name))));
+        if (copy) {
+          await updateDoc(doc(db, COLLECTIONS.PARTS, copy.id), { name: stripCopySuffix(copy.name), copiedFrom: null, updatedAt: serverTimestamp() }).catch(() => {});
+        }
+      }
+      if (!silent) toast.success('Part archived');
+      return { ok: true };
+    } catch (err) {
+      console.error('Archive failed:', err);
+      if (!silent) toast.error('Could not archive part.');
+      return { ok: false };
+    }
+  }
+  // Archive → Restore safety review (Issue 6): an archived part's SKU/barcode/OEM
+  // number can silently collide with an ACTIVE part created/edited while it sat in the
+  // archive — restoring it unconditionally would then leave two active parts sharing
+  // the same unique identifier, corrupting search-by-identifier and reorder logic.
+  // Checked against active (non-archived), OTHER parts only — a part never conflicts
+  // with its own archived copy.
+  function findRestoreConflict(part) {
+    if (!part) return null;
+    const active = inventory.filter((p) => p.id !== part.id && !p.archived);
+    const norm = (v) => String(v || '').trim().toLowerCase();
+    const fields = [['sku', 'SKU'], ['barcode', 'barcode'], ['oemNo', 'OEM number']];
+    for (const [key, label] of fields) {
+      const v = norm(part[key]);
+      if (!v) continue;
+      const clash = active.find((p) => norm(p[key]) === v);
+      if (clash) return { field: label, with: clash.name || clash.sku || 'another active part' };
+    }
+    return null;
+  }
+
+  const partRestoreLock = useRef(new Set());
+  async function handleRestore(id, opts = {}) {
+    if (partRestoreLock.current.has(id)) return { ok: false, duplicate: true };
+    partRestoreLock.current.add(id);
+    try {
+      return await handleRestoreInner(id, opts);
+    } finally {
+      partRestoreLock.current.delete(id);
+    }
+  }
+  async function handleRestoreInner(id, { silent = false } = {}) {
+    const part = inventory.find((p) => p.id === id);
+    const conflict = findRestoreConflict(part);
+    if (conflict) {
+      if (!silent) toast.error(`Can't restore — this part's ${conflict.field} is already used by "${conflict.with}". Resolve the conflict first.`, { duration: 6000 });
+      return { ok: false, reason: 'conflict', conflict };
+    }
+    if (demoMode) {
+      // Demo USER may restore archived demo items — it only affects the in-memory
+      // demo dataset (resets on reload / via Demo Management). Archive and delete
+      // stay demo-admin-only.
+      setInventory((prev) => prev.map((p) => (p.id === id ? { ...p, archived: false } : p)));
+      writeAudit('restore_part', { partId: id, name: part?.name || '' });
+      if (!silent) toast.success('Part restored (demo)');
+      return { ok: true };
+    }
+    try {
+      await updateDoc(doc(db, COLLECTIONS.PARTS, id), { archived: false, updatedAt: serverTimestamp() });
+      writeAudit('restore_part', { partId: id, name: part?.name || '' });
+      if (!silent) toast.success('Part restored');
+      return { ok: true };
+    } catch (err) {
+      console.error('Restore failed:', err);
+      if (!silent) toast.error('Could not restore part.');
+      return { ok: false };
+    }
+  }
+
+  // Issue 6 — the ONE confirm-then-restore entry point, shared by every single-part
+  // Restore trigger (Archive page row button, Parts table row's "More actions" menu).
+  // Confirming inline before restoring means a mis-click can never silently flip a
+  // part back into active inventory — Cancel/Escape/outside-click/close all leave the
+  // part archived, since handleRestore() below only runs after the promise resolves true.
+  const [restoringPartId, setRestoringPartId] = useState(null);
+  async function confirmAndRestore(part) {
+    if (!part || restoringPartId) return; // one restore in flight at a time — no double-click races
+    const confirmed = await confirmDialog({
+      title: 'Restore this part to active inventory?',
+      message: `"${part.name || 'This part'}"${part.sku ? ` (${part.sku})` : ''} will move from Archived back to the active Parts inventory.`,
+      confirmText: 'Restore',
+    });
+    if (!confirmed) return;
+    setRestoringPartId(part.id);
+    try {
+      await handleRestore(part.id);
+    } finally {
+      setRestoringPartId(null);
+    }
+  }
+
+  // Refactor Phase 14 — startVoiceSearch moved verbatim to hooks/useVoiceSearch
+  // (see the useVoiceSearch(setSearch) call near the top of this component).
+
+  // ---- Requirement 1: bulletproof case-insensitive, null-safe search ----
+  const categoryOptionsForFilter = useMemo(
+    () => ['All', ...new Set(inventory.map((p) => p.category).filter(Boolean))],
+    [inventory]
+  );
+
+  // Copy-workflow: which originals already have a copy (active OR archived-draft).
+  // A copy existing anywhere blocks making another, and keeps the button disabled.
+  const basesWithCopy = useMemo(() => {
+    const s = new Set();
+    inventory.forEach((p) => { if (isCopyName(p.name)) s.add(baseName(p.name)); });
+    return s;
+  }, [inventory]);
+  const copyOriginIds = useMemo(() => {
+    const s = new Set();
+    inventory.forEach((p) => { if (p.copiedFrom) s.add(p.copiedFrom); });
+    return s;
+  }, [inventory]);
+  const partIsCopy = (p) => !!p.copiedFrom || isCopyName(p.name);
+  const partHasCopy = (p) => copyOriginIds.has(p.id) || basesWithCopy.has(baseName(p.name));
+
+  // IMPORTANT: type-ahead suggestions grouped into Parts / Categories / Vehicles.
+
+
+  // ---- Task 1: merged option trees (predefined + user-added) ----
+  const mergedCategoryTree = useMemo(() => {
+    const existing = new Set();
+    CATEGORY_TREE.forEach((n) => n.children.forEach((c) => existing.add(safeLower(c))));
+    const extras = [];
+    customCategories.forEach((c) => {
+      const nm = (c.name || '').trim();
+      if (nm && !existing.has(safeLower(nm))) { existing.add(safeLower(nm)); extras.push(nm); }
+    });
+    extras.sort((a, b) => a.localeCompare(b));
+    return extras.length ? [...CATEGORY_TREE, { label: 'Others', children: extras }] : CATEGORY_TREE;
+  }, [customCategories]);
+
+  const mergedVehicleTree = useMemo(() => {
+    const tree = VEHICLE_TREE.map((n) => ({ label: n.label, children: [...n.children] }));
+    const brandIdx = new Map(tree.map((n, i) => [safeLower(n.label), i]));
+    customVehicles.forEach((v) => {
+      const brand = (v.brand || '').trim();
+      const model = (v.model || '').trim();
+      if (!brand || !model) return;
+      const key = safeLower(brand);
+      if (brandIdx.has(key)) {
+        const node = tree[brandIdx.get(key)];
+        if (!node.children.some((c) => safeLower(c) === safeLower(model))) node.children.push(model);
+      } else {
+        tree.push({ label: brand, children: [model] });
+        brandIdx.set(key, tree.length - 1);
+      }
+    });
+    return tree;
+  }, [customVehicles]);
+
+  const addCategoryOption = useCallback((name) => {
+    const nm = (name || '').trim();
+    if (!nm) return;
+    const lower = safeLower(nm);
+    const sing = singularize(nm);
+    const inTree = CATEGORY_TREE.some((n) => n.children.some((c) => safeLower(c) === lower || singularize(c) === sing));
+    const inCustom = customCategories.some((c) => safeLower(c.name) === lower || singularize(c.name) === sing);
+    if (inTree || inCustom) return; // already exists (incl. singular/plural) — TreeSelect selects it
+    if (demoMode) { setCustomCategories((prev) => [...prev, { id: 'demo-cat-' + Date.now(), name: nm }]); return; }
+    addDoc(collection(db, COLLECTIONS.CATEGORIES), { name: nm, nameLower: lower, createdAt: serverTimestamp() })
+      .catch((e) => console.error('Add category failed:', e));
+  }, [customCategories, demoMode]);
+
+  const addVehicleOption = useCallback((brand, model) => {
+    const b = (brand || '').trim();
+    const m = (model || '').trim();
+    if (!b || !m) return;
+    const dup =
+      customVehicles.some((v) => safeLower(v.brand) === safeLower(b) && safeLower(v.model) === safeLower(m)) ||
+      VEHICLE_TREE.some((n) => safeLower(n.label) === safeLower(b) && n.children.some((c) => safeLower(c) === safeLower(m)));
+    if (dup) return;
+    if (demoMode) { setCustomVehicles((prev) => [...prev, { id: 'demo-veh-' + Date.now(), brand: b, model: m }]); return; }
+    addDoc(collection(db, COLLECTIONS.VEHICLES), { brand: b, model: m, brandLower: safeLower(b), modelLower: safeLower(m), createdAt: serverTimestamp() })
+      .catch((e) => console.error('Add vehicle failed:', e));
+  }, [customVehicles, demoMode]);
+
+  // Feature 4: vocabulary of car-model words seen across vehicle/compatibleCars,
+  // so we can tell when the mechanic is searching by car (e.g. "Swift 2018").
+  const carVocab = useMemo(() => {
+    const set = new Set();
+    inventory.forEach((p) => {
+      tokenize(p.vehicle).forEach((t) => set.add(t));
+      flattenVehicles(p.compatibleCars).forEach((m) => tokenize(m).forEach((t) => set.add(t)));
+    });
+    DEFAULT_VEHICLES.forEach((v) => tokenize(v).forEach((t) => set.add(t)));
+    ['universal', 'all', 'vehicles', 'vehicle'].forEach((w) => set.delete(w));
+    return set;
+  }, [inventory]);
+
+  // Parts that have at least one recorded sale — powers Fast Movers / Dead Stock filters.
+  const soldPartIds = useMemo(() => {
+    const s = new Set();
+    sales.forEach((sale) => { if (sale.partId) s.add(sale.partId); });
+    return s;
+  }, [sales]);
+
+  // ISSUE 2/8 — the inventory search used to call partMatchesTokens() per part, which
+  // rebuilt that part's haystack every time: an array, a join, and normalizeText()'s two
+  // regex passes — for EVERY part on EVERY keystroke. Measured at 2,000 parts: 6.6ms per
+  // character, before React even starts rendering. Build it once per data change (12ms,
+  // paid only when the inventory actually changes); a keystroke is then 0.34ms.
+  // GLOBAL SEARCH ACCURACY: Part Number (sku) is kept OUT of the tokenized/synonym-expanded
+  // haystack and matched separately by EXACT normalized value only — a complete part
+  // number like "ABC123" can never also surface "ABC1230"/"ABC1234" just because they
+  // share that prefix/substring. Name/category/vehicle/compatibleCars/location keep their
+  // existing tokenized, synonym-expanded partial matching entirely unchanged.
+  const partHaystacks = useMemo(() => {
+    const m = new Map();
+    inventory.forEach((part) => {
+      m.set(part.id, {
+        hay: normalizeText(
+          [part.name, part.category, categoriesStr(part), part.vehicle, compatStr(part), part.locationBin]
+            .filter(Boolean).join(' '),
+        ),
+        sku: normId(part.sku),
+        // Parts review (Issue 6.8) — OEM Number, Barcode and Manufacturer Part No.
+        // weren't searchable at all before (only name/category/vehicle/location
+        // fuzzy-matched, and only SKU had an identifier match). These are workshop
+        // identifiers exactly like SKU — a mechanic reads one off a box or an old
+        // part, not a fuzzy description — so they get the SAME exact-match
+        // treatment as SKU (GLOBAL SEARCH ACCURACY convention), not dumped into the
+        // fuzzy haystack where a partial digit run could false-match unrelated parts.
+        oemNo: normId(part.oemNo),
+        barcode: normId(part.barcode),
+        partNo: normId(part.partNo),
+      });
+    });
+    return m;
+  }, [inventory]);
+
+  const filtered = useMemo(() => {
+    // FIX 1: tokenize the query; match each token (or slang synonym) against
+    // name/category/vehicle/compatibleCars/location.
+    const tokens = tokenize(debouncedSearch);
+    // expandToken() was being called inside the per-part loop — once per part, per token.
+    // The expansion depends only on the QUERY, so it is computed once here instead.
+    const tokenCandidates = tokens.map((t) => expandToken(t));
+    // Feature 4: if any token is a known car word, also surface Universal parts.
+    const isCarQuery = tokens.some((t) => carVocab.has(t));
+    const rawQuery = normId(debouncedSearch);
+    const result = inventory.filter((part) => {
+      const entry = partHaystacks.get(part.id) || { hay: '', sku: '', oemNo: '', barcode: '', partNo: '' };
+      const hay = entry.hay;
+      const exactId = !!rawQuery && (
+        (!!entry.sku && entry.sku === rawQuery)
+        || (!!entry.oemNo && entry.oemNo === rawQuery)
+        || (!!entry.barcode && entry.barcode === rawQuery)
+        || (!!entry.partNo && entry.partNo === rawQuery)
+      );
+      // GLOBAL SEARCH ACCURACY: a mechanic types the fragment they can actually read off a
+      // box ("002"), not the full "BRA-RE-002" — a fragment search on SKU/OEM/barcode/Part
+      // No. previously fell through to the tokenized haystack, which doesn't contain these
+      // fields at all (deliberately — see the comment above partHaystacks), so it matched
+      // NOTHING and produced "No matching part found" even though the part visibly exists.
+      // Guarded to 2+ characters so a single digit doesn't become "every SKU with any
+      // digit in it." Ranked below an exact hit — see rankOf below.
+      const idFragment = !exactId && rawQuery.length >= 2 && (
+        (!!entry.sku && entry.sku.includes(rawQuery))
+        || (!!entry.oemNo && entry.oemNo.includes(rawQuery))
+        || (!!entry.barcode && entry.barcode.includes(rawQuery))
+        || (!!entry.partNo && entry.partNo.includes(rawQuery))
+      );
+      const matchesSearch = exactId || idFragment
+        || (!tokenCandidates.length || tokenCandidates.every((cands) => cands.some((c) => hay.includes(c))))
+        || (isCarQuery && partIsUniversal(part));
+      const matchesCategory = categoryFilter === 'All' || part.category === categoryFilter;
+      // 1.3 strict state filter — each state shows ONLY its dataset.
+      const stk = part.stock || 0;
+      const minS = part.minStock || 5;
+      const isArch = part.archived === true;
+      let matchesState;
+      switch (invFilter) {
+        case 'low': matchesState = !isArch && stk > 0 && stk <= minS; break;
+        case 'out': matchesState = !isArch && stk === 0; break;
+        // Union of low+out — the same population as the Dashboard's Reorder Center list
+        // and its "N reorder items" count, so drilling in from there shows the exact set
+        // promised, not just the low-but-not-zero subset.
+        case 'reorder': matchesState = !isArch && stk <= minS; break;
+        case 'dead': matchesState = !isArch && stk > 0 && !soldPartIds.has(part.id); break;
+        case 'fast': matchesState = !isArch && soldPartIds.has(part.id); break;
+        case 'archived': matchesState = isArch; break;
+        case 'all': matchesState = true; break;
+        // Parts review (Issue 6.4) — 'active' silently required stk > minStock, so
+        // the DEFAULT view of the Parts table excluded every active low-stock and
+        // out-of-stock part — exactly the parts a workshop most needs to see, hidden
+        // by the filter whose whole name promises "not archived." Low/Out already
+        // have their own dedicated filter options above for that distinction; Active
+        // now means what it says — not archived — matching the 'all'/'archived'
+        // pair's own "not archived" vs "archived" semantics. (This also made the old
+        // 'instock' case byte-for-byte identical to the fixed 'active' and it was
+        // never reachable from any UI control that sets invFilter — removed.)
+        case 'active':
+        default: matchesState = !isArch; break;
+      }
+      return matchesSearch && matchesCategory && matchesState;
+    });
+
+    // Optional column sort — always the tie-breaker below when a query is active; the
+    // ONLY ordering when it isn't.
+    const columnSort = sortConfig.key ? (a, b) => {
+      const dir = sortConfig.dir === 'asc' ? 1 : -1;
+      const numeric = ['stock', 'sellingPrice'];
+      const av = a[sortConfig.key];
+      const bv = b[sortConfig.key];
+      if (numeric.includes(sortConfig.key)) return ((av || 0) - (bv || 0)) * dir;
+      return safeLower(av).localeCompare(safeLower(bv)) * dir;
+    } : null;
+
+    // GLOBAL SEARCH ACCURACY — RANKING. The filter above already gives an exact SKU/OEM/
+    // barcode/Part No. hit a shortcut PAST the token/synonym match, but until now that hit
+    // was never actually surfaced ahead of anything: with no explicit column sort, results
+    // stayed in raw inventory array order, so an exact identifier match could sit anywhere
+    // in the list relative to a fuzzy token/synonym match — the one search on this whole
+    // app's busiest list (Inventory → Parts) with no relevance ranking at all. Ranks
+    // (highest first): 3 = exact SKU/OEM/barcode/Part No.  2 = SKU/OEM/barcode/Part No.
+    // CONTAINS the query (a genuine identifier fragment)  1 = matched only via the
+    // tokenized/synonym/universal-vehicle path. Column sort remains the tie-breaker so
+    // choosing "Sort by Stock" while searching still orders same-relevance rows by stock,
+    // exactly as before. No query: behavior is untouched (column sort, or array order).
+    if (rawQuery) {
+      const rankOf = (part) => {
+        const entry = partHaystacks.get(part.id);
+        if (!entry) return 0;
+        if (entry.sku === rawQuery || entry.oemNo === rawQuery || entry.barcode === rawQuery || entry.partNo === rawQuery) return 3;
+        if ((entry.sku && entry.sku.includes(rawQuery)) || (entry.oemNo && entry.oemNo.includes(rawQuery))
+          || (entry.barcode && entry.barcode.includes(rawQuery)) || (entry.partNo && entry.partNo.includes(rawQuery))) return 2;
+        return 1;
+      };
+      result.sort((a, b) => rankOf(b) - rankOf(a) || (columnSort ? columnSort(a, b) : 0));
+    } else if (columnSort) {
+      result.sort(columnSort);
+    }
+    return result;
+  }, [inventory, debouncedSearch, categoryFilter, invFilter, sortConfig, carVocab, soldPartIds, partHaystacks]);
+
+  // ---- Inventory pagination (scales to thousands of parts; only the current
+  // page is rendered). Rows-per-page selectable; resets to page 1 on filter. ----
+  const [invPerPage, setInvPerPage] = useState(25);
+  const [invPage, setInvPage] = useState(1);
+  useEffect(() => { setInvPage(1); clearSelection(); }, [debouncedSearch, categoryFilter, invFilter, invPerPage, clearSelection]);
+
+  // #3: after a supplier→inventory jump, scroll the highlighted row into view and
+  // fade the highlight after a moment. Runs once the filtered rows have rendered.
+  useEffect(() => {
+    if (!highlightPartId) return;
+    const t = setTimeout(() => {
+      if (typeof document === 'undefined') return;
+      // Desktop table row and mobile card carry different ids; only one is
+      // visible at a given breakpoint. Scroll whichever is actually rendered.
+      const el = document.getElementById(`inv-row-${highlightPartId}`) || document.getElementById(`inv-rowm-${highlightPartId}`);
+      const visible = [document.getElementById(`inv-row-${highlightPartId}`), document.getElementById(`inv-rowm-${highlightPartId}`)]
+        .find((n) => n && n.offsetParent !== null) || el;
+      if (visible) visible.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+    const clear = setTimeout(() => setHighlightPartId(null), 2600);
+    return () => { clearTimeout(t); clearTimeout(clear); };
+  }, [highlightPartId, debouncedSearch]);
+  const invTotalPages = Math.max(1, Math.ceil(filtered.length / invPerPage));
+  useEffect(() => { if (invPage > invTotalPages) setInvPage(invTotalPages); }, [invPage, invTotalPages]);
+  const pagedInventory = useMemo(
+    () => filtered.slice((invPage - 1) * invPerPage, invPage * invPerPage),
+    [filtered, invPage, invPerPage]
+  );
+
+  const stats = useMemo(
+    () => {
+      // Issue 3: the summary cards reflect the CURRENTLY FILTERED dataset (the
+      // active state filter + search + category), so switching Active / Low /
+      // Out / Archived / All immediately updates every metric to match what's
+      // visible — instead of always showing whole-collection totals.
+      const set = filtered;
+      return {
+        total: set.length,
+        lowStock: set.filter((p) => p.stock > 0 && p.stock <= (p.minStock || 5)).length,
+        outOfStock: set.filter((p) => p.stock === 0).length,
+        totalValue: set.reduce((s, p) => s + (p.stock || 0) * (p.sellingPrice || 0), 0),
+        potentialProfit: set.reduce(
+          (s, p) => s + (p.stock || 0) * ((p.sellingPrice || 0) - (p.purchasePrice || 0)),
+          0
+        ),
+      };
+    },
+    [filtered]
+  );
+
+  // On phones, every long form takes over the whole screen as a normal in-flow
+  // page (native document scrolling) instead of a modal — this component stays
+  // mounted so all dashboard state is preserved. Desktop/tablet fall through to
+  // the modals below. Only one of these can be open at a time.
+  if (isMobile) {
+    if (showModal) {
+      return (
+        <>
+        <PartModal
+          key={`part:${editPart?.id || 'new'}:${revOf(editPart)}`}
+          asPage
+          demoMode={demoMode}
+          readOnly={partViewOnly}
+          banner={partBanner}
+          part={editPart}
+          inventory={inventory}
+          suppliers={suppliers}
+          saving={saving}
+          isAdmin={canSeeCost}
+          categoryTree={mergedCategoryTree}
+          vehicleTree={mergedVehicleTree}
+          salesHistory={sales}
+          onAddCategory={addCategoryOption}
+          onAddVehicle={addVehicleOption}
+          onSave={handleSave}
+          onSaveSupplier={persistSupplierEdit}
+          onCreateSupplier={createSupplierNow}
+          onClose={() => { closePartModal(); duplicateOriginRef.current = null; }}
+          onDirtyChange={handleModuleDirtyChange}
+        />
+        {partReviewDialog}
+        </>
+      );
+    }
+    if (showSupplierModal) {
+      return (
+        <>
+        <SupplierModal
+          key={`supplier:${editSupplier?.id || 'new'}:${revOf(editSupplier)}`}
+          asPage
+          demoMode={demoMode}
+          readOnly={supplierViewOnly}
+          banner={supplierBanner}
+          supplier={editSupplier}
+          saving={supplierSaving}
+          onSave={handleSupplierSave}
+          onClose={closeSupplierModal}
+          onDirtyChange={handleModuleDirtyChange}
+        />
+        {supplierReviewDialog}
+        </>
+      );
+    }
+    if (checkoutPart) {
+      return (
+        <CheckoutModal key={`co:${checkoutPart.id}`} asPage part={checkoutPart} onConfirm={handleSell} isAdmin={isAdmin || demoAdmin} onClose={() => setCheckoutPart(null)} />
+      );
+    }
+    if (restockTarget) {
+      return (
+        <RestockModal key={`rs:${restockTarget.id}`} asPage part={restockTarget} suppliers={suppliers} onConfirm={handleReceiveStock} onClose={() => setRestockTarget(null)} />
+      );
+    }
+    if (adjustTarget) {
+      return (
+        <StockAdjustModal key={`adj:${adjustTarget.id}`} asPage part={adjustTarget} history={stockAdjustments} onConfirm={handleAdjustStock} onClose={() => setAdjustTarget(null)} />
+      );
+    }
+  }
+
+  return (
+    <div
+      /* APPLICATION SHELL. Viewport-height and overflow-hidden, so this container never
+         scrolls. The demo banner, header and sidebar are laid out inside it and are
+         therefore immovable by construction — not because of position:fixed/sticky, which
+         silently fails whenever an ancestor happens to create a containing block. The one
+         scrolling element is <main id="app-scroll"> below. */
+      className={`relative overflow-hidden flex flex-col app-shell-bg transition-all ${sidebarCollapsed ? 'md:pl-[72px]' : 'md:pl-[280px]'} ${arriving ? 'app-arriving' : ''}`}
+      /* Fill the *visible* viewport. h-screen (100vh) is wrong on mobile — the dynamic
+         browser toolbar makes 100vh taller than what's on screen, letting the shell shift
+         under it. 100dvh tracks the visible height; the vh line is a fallback for old
+         browsers that don't support dvh. */
+      style={{ height: '100vh', minHeight: '100dvh', maxHeight: '100dvh' }}
+    >
+      {!bootHidden && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9998, opacity: bootFading ? 0 : 1, transition: 'opacity 0.4s ease', pointerEvents: bootFading ? 'none' : 'auto' }}>
+          <BootSplash />
+        </div>
+      )}
+      {arriving && <div aria-hidden className="arrival-bloom fixed inset-0 z-[300] pointer-events-none" />}
+      {demoMode && (
+        <div
+          ref={(el) => { if (el) document.documentElement.style.setProperty('--demo-banner-h', `${el.offsetHeight}px`); }}
+          className="flex-none flex items-center justify-center gap-3 px-4 py-2 text-center z-[90]" style={{ background: 'linear-gradient(90deg,#d4af37,#aa801e)', color: '#1a1a1a' }}>
+          <span className="text-xs sm:text-sm font-bold">{demoAdmin
+            ? 'Demo Admin Mode — Managing isolated demo inventory. Production data remains fully protected.'
+            : 'Demo Mode — Safe sandbox. Changes stay in this browser and never touch real data.'}</span>
+        </div>
+      )}
+      <ScrollToTop />
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        collapsed={sidebarCollapsed}
+        setCollapsed={setSidebarCollapsed}
+        mobileOpen={sidebarMobileOpen}
+        setMobileOpen={setSidebarMobileOpen}
+        isAdmin={isAdmin || demoMode}
+        alertCount={unreadAlertCount}
+        reminderCount={countCustomerReminders(customers)}
+        jobCount={jobCards.filter((j) => !['Delivered', 'Closed', 'Cancelled'].includes(j.status)).length}
+        inventoryCount={inventory.filter((p) => !p.archived && (p.stock || 0) <= (p.minStock || 5)).length}
+        status={{
+          color: connError ? '#ef4444' : online ? '#34d399' : '#ef4444',
+          label: connError ? 'Connection Error' : online ? 'Connected' : 'Offline',
+          lastSync: lastSync ? lastSync.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—',
+          lastBackup: lastBackup ? new Date(lastBackup).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Never',
+          records: (inventory.length + suppliers.length + sales.length + restocks.length + auditLog.length).toLocaleString('en-IN'),
+        }}
+        onRetry={retrySync}
+      />
+      <ConfirmHost />
+      {/* Fix 1: subtle grid overlay adds depth over the gradient */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-0 opacity-[0.035]"
+        style={{
+          backgroundImage:
+            'linear-gradient(rgba(var(--fg-rgb),0.7) 1px, transparent 1px), linear-gradient(90deg, rgba(var(--fg-rgb),0.7) 1px, transparent 1px)',
+          backgroundSize: '38px 38px',
+        }}
+      />
+
+      {/* GLOBAL STICKY HEADER — account bar + page-title header now live inside ONE
+          sticky wrapper, instead of being two INDEPENDENTLY sticky/positioned elements.
+          They used to be separate: the account bar was `relative` (never stuck at all —
+          "user info, logout" scrolled away immediately), and only <header> below it was
+          `sticky`, offset just by the demo banner's height. Any module wanting a sticky
+          sub-header of its own (see CustomersModule's KPI/toolbar bar) had to offset by
+          `--app-header-h`, which only ever measured the page-title <header> — so its
+          real on-screen height (account bar + header together) was never actually
+          reflected in that one variable, a "chain of independently-measured heights"
+          that's exactly the kind of thing an unrelated change (new text, a wrapped
+          line, a toggled banner) can silently throw off, reading as an intermittent,
+          module-dependent regression. Now there is exactly ONE sticky container, ONE
+          measured height (the whole visible header block), and ONE offset (the demo
+          banner) — account bar and header always move together, everywhere. */}
+      <div
+        ref={(el) => { if (el) document.documentElement.style.setProperty('--app-header-h', `${el.offsetHeight}px`); }}
+        className="flex-none z-30 backdrop-blur-md"
+      >
+        {/* Fix 2: top account bar — avatar, signed-in email/ID, gold Logout */}
+        <div
+          className="px-4 sm:px-6 py-2.5"
+          style={{ background: 'rgba(10,10,10,0.55)', borderBottom: '1px solid rgba(212,175,55,0.12)' }}
+        >
+          <div className={`${SHELL_WIDTH_CLS} mx-auto flex items-center justify-between gap-3`}>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <button onClick={() => setSidebarMobileOpen(true)} className="md:hidden flex items-center justify-center w-8 h-8 rounded-lg text-white/70 hover:bg-white/10 flex-shrink-0" title="Menu">
+                <Menu size={18} />
+              </button>
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-black flex-shrink-0 bg-gradient-to-br from-[#e8c84a] to-[#aa801e]"
+                style={{ boxShadow: '0 0 0 1px rgba(212,175,55,0.45)' }}
+              >
+                {user?.email ? user.email[0].toUpperCase() : <User size={14} />}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[9px] uppercase tracking-wider text-white/45 leading-none mb-0.5">
+                  Signed in as
+                </p>
+                <p className="text-xs font-medium text-white/80 truncate max-w-[170px] sm:max-w-md">
+                  {user?.email || user?.uid || 'admin@balajiauto.in'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Global Actions menu — lives beside Logout in the shared account bar so it's
+                  the same header action group on every page. Styled to match Logout (no
+                  floating card / border box). Shown on tabs where import/export/backup make
+                  sense (inventory + overview), gated by permission. */}
+              {/* Settings QA fix: this input used to live inside the inventory/overview-only
+                  block below, so backupInputRef.current was null on every other tab —
+                  Settings > Backup & Data's "Restore from file" button called
+                  backupInputRef.current?.click(), which silently no-opped there. Rendered
+                  unconditionally (gated only on isAdmin, matching who can restore) so the
+                  ref is always live regardless of which tab is open. */}
+              {isAdmin && (
+                <input
+                  ref={backupInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) { pendingRestoreFile.current = f; setRestoreText(''); setRestoreConfirm(true); } e.target.value = ''; }}
+                />
+              )}
+              {(activeTab === 'inventory' || activeTab === 'overview') && (isAdmin || canExport) && (
+                <div className="relative">
+                  <button
+                    ref={actionsAnchorRef}
+                    onClick={() => setActionsOpen((v) => !v)}
+                    aria-haspopup="menu"
+                    aria-expanded={actionsOpen}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 text-white/75 bg-white/5 border border-white/15 hover:bg-white/10"
+                    title="Import, export, backup & more"
+                  >
+                    <Settings size={13} /> <span className="hidden sm:inline">Actions</span> <ChevronDown size={12} className={`transition-transform ${actionsOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {actionsOpen && (
+                    <ActionMenu anchorRef={actionsAnchorRef} open onClose={() => setActionsOpen(false)} items={[
+                      { type: 'section', label: 'Inventory' },
+                      isAdmin && { type: 'item', label: 'Import Inventory', icon: PackagePlus, onClick: () => setShowImport(true) },
+                      (isAdmin || canExport) && { type: 'item', label: 'Export to Excel', icon: Download, onClick: exportInventoryExcel },
+                      isAdmin && { type: 'section', label: 'Data Management' },
+                      isAdmin && { type: 'item', label: 'Backup Data', icon: ShieldCheck, onClick: exportFullBackup },
+                      isAdmin && { type: 'item', label: 'Restore Backup', icon: Upload, danger: true, onClick: () => backupInputRef.current?.click() },
+                      (isAdmin || canExport) && { type: 'section', label: 'Reports' },
+                      (isAdmin || canExport) && { type: 'item', label: 'Export Audit Logs', icon: FileText, onClick: exportAuditLogs },
+                    ]} />
+                  )}
+                </div>
+              )}
+              <button
+                onClick={() => setShowLogoutConfirm(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 text-[#d4af37] bg-[#d4af37]/10 border border-[#d4af37]/30 hover:bg-[#d4af37]/20"
+              >
+                <LogOut size={13} /> Logout
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* UNIVERSAL PAGE HEADER STANDARDIZATION: this used to be a second, separate,
+            global sticky bar that existed purely to inject a lone "Add Part"/"Add
+            Supplier" button (justify-end, no title) — a competing header mechanism
+            alongside PageHeader/PageShell instead of being part of one. The Inventory
+            Parts view and the Suppliers view now each own their own <PageHeader
+            action={...}> button, in their normal content flow, using the exact same
+            handlers this block used to call. Removing this also means --app-header-h
+            (measured on the wrapping div just below) is now a constant across every
+            tab instead of fluctuating between two heights depending on activeTab/
+            invSubView — strictly simpler, and every --app-header-h consumer
+            (DetailsPanel.jsx etc.) already reads it live, so nothing else needed a
+            matching fix. */}
+      </div>
+
+      {/* Universal workspace-width architecture (all desktop modules, not a per-tab
+          exception): <main> is the ONE page-level scroll container (overflow-y-auto)
+          for the whole app and owns nothing about width — it always spans exactly the
+          space the flex shell hands it, so its native scrollbar sits at the true
+          available-viewport edge (flush against the sidebar) on any monitor size,
+          collapsed or expanded sidebar alike. Width-capping/centering is a SEPARATE
+          concern owned by the plain, non-scrolling <div> immediately inside it below.
+          This used to be one class list on <main> itself, capped to a 1280px
+          single-column default for every tab except customers/vehicles (max-w-none
+          2xl:max-w-[1800px]) — measured live at 1920px, that left a real ~182px dead margin on
+          most tabs (Job Cards, Billing, Inventory, Suppliers, Sales/Services/Stock
+          In/Out, Analytics, Reports, Alerts, Reminders, Dashboard) while only two tabs
+          got the wide budget, and coupling the cap to the scroll container itself
+          meant the scrollbar always sat at the edge of whatever box was capped, not
+          the true viewport edge — a smaller version of the same gap would have
+          reappeared on any monitor wide enough to exceed 1800px too. So the shell hands
+          every tab the same 1800px budget unconditionally. Settings (the one page that
+          used to opt out with its own narrow single-column cap) was rebuilt around this
+          same budget too — see SettingsView's SETTINGS_WIDE_SECTIONS/SETTINGS_CARD_MAX:
+          sections with several field-groups use the full column as a card grid, small
+          sections cap at a comfortable reading width instead of stretching individual
+          inputs — a per-SECTION content decision, not a per-PAGE exception to this
+          shell anymore. The shell stays fully generic across every tab now. */}
+      {/* ONE shared capacity-cleanup wizard instance for the whole shell — opened by
+          setting capacityCleanupModule to a module key from ANY capacity guard inside
+          this file (restocks, stockAdjustments, ...), closed by setting it back to null.
+          Mounted once here rather than at each of the many setRestockTarget/
+          setAdjustTarget call sites. Note: the mobile isMobile/showXModal branches above
+          return early and bypass this tree entirely — on mobile the blocking toast still
+          fires from the guard itself, but this wizard won't be reachable until the user
+          backs out of that full-page form. */}
+      <CapacityCleanupModal
+        open={!!capacityCleanupModule} moduleKey={capacityCleanupModule || 'restocks'}
+        onClose={() => setCapacityCleanupModule(null)} demoMode={demoMode} actorEmail={capacityActorEmail}
+        onComplete={() => { refreshCapacityCollection(capacityCleanupModule); setCapacityRefreshTick((n) => n + 1); }}
+      />
+      <main id={APP_SCROLL_ID} style={{ overscrollBehavior: 'contain' }} className="relative z-10 flex-1 min-h-0 overflow-y-auto">
+      <div className={`mx-auto w-full ${SHELL_WIDTH_CLS} px-4 sm:px-6 py-6 pb-20 md:pb-6`}>
+        {/* Tabs — hidden; the left sidebar is now the primary navigation. */}
+        <div className="hidden items-center gap-2 mb-6">
+          {[
+            { id: 'overview', label: 'Overview', icon: LayoutDashboard, count: null },
+            { id: 'inventory', label: 'Inventory', icon: Package, count: inventory.length },
+            { id: 'suppliers', label: 'Suppliers', icon: Users, count: suppliers.filter((s) => !s.archived).length },
+            ...(isAdmin ? [{ id: 'analytics', label: 'Analytics', icon: BarChart3, count: null }] : []),
+          ].map(({ id, label, icon: Icon, count }) => {
+            const active = activeTab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition active:scale-95 ${
+                  active
+                    ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] shadow-lg shadow-[#d4af37]/10'
+                    : 'text-white/60 bg-white/5 border border-white/10 hover:bg-white/10'
+                }`}
+              >
+                <Icon size={16} />
+                {label}
+                {count != null && (
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                      active ? 'bg-black/20 text-black' : 'bg-white/10 text-white/50'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeTab === 'overview' && (
+          <OverviewView
+            inventory={inventory}
+            demoMode={demoMode}
+            sales={sales}
+            suppliers={suppliers}
+            invoices={invoices}
+            jobCards={jobCards}
+            customers={customers}
+            vehicles={[]}
+            auditLog={auditLog}
+            restocks={restocks}
+            stockAdjustments={stockAdjustments}
+            reorderRequests={reorderRequests}
+            purchaseOrders={purchaseOrders}
+            lastSync={lastSync}
+            lastBackup={lastBackup}
+            online={online}
+            connError={connError}
+            isAdmin={isAdmin}
+            onNavigate={(tab, opts) => {
+              // Universal drill-down navigation review — this used to switch the
+              // Dashboard's OWN activeTab in place (setActiveTab(tab) + the same opts
+              // applied in-process), which silently replaced the Dashboard the owner
+              // was monitoring with whatever the Insight/Reorder Center link pointed
+              // at. Every one of these targets (Inventory Parts/Stock/PO, Billing,
+              // Job Cards) is a full workspace — search, filter, sort, pagination,
+              // real record actions — the same class of destination this app already
+              // opens in a new tab for View Customer/Vehicle/Invoice/Job Card. Reuses
+              // that exact ?open=nav:<json>#<tab> router (see dashboardDrillDownUrl
+              // above, and the mount effect that consumes it) instead of a second
+              // mechanism, so the Dashboard tab is left untouched and the destination
+              // tab applies this filter against its OWN current data on load — never
+              // a frozen count from the moment the Dashboard rendered it.
+              window.open(dashboardDrillDownUrl(tab, opts), '_blank');
+            }}
+            onAddPart={() => { setEditPart(null); setShowModal(true); }}
+            onAddSupplier={() => { setEditSupplier(null); setShowSupplierModal(true); }}
+            onImport={() => { if (demoMode) { notify.info('Bulk import isn\'t part of the demo — use "Add Part" to try adding items.'); return; } setShowImport(true); }}
+            onReorder={(p) => openReorderDialog(p)}
+            onAdvanceStatus={(r) => advanceReorderStatus(r)}
+            onClearRequest={(r) => clearReorderRequest(r)}
+            canDestroy={canDelete}
+            onEditPart={(p) => { setEditPart(p); setShowModal(true); }}
+            onQuickSell={() => setQuickPick('sell')}
+            onQuickReceive={(p) => (p && p.id ? setRestockTarget(p) : setQuickPick('receive'))}
+          />
+        )}
+
+        {activeTab === 'inventory' && (
+        <>
+        {/* Phase 1: Inventory module sub-navigation */}
+        <div className="flex items-center gap-1 mb-5 p-1 rounded-xl w-max max-w-full overflow-x-auto" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+          {[
+            { k: 'dashboard', label: tr('invTab.dashboard', 'Dashboard') },
+            { k: 'parts', label: tr('invTab.parts', 'Parts') },
+            { k: 'categories', label: tr('invTab.categories', 'Categories') },
+            { k: 'stock', label: tr('invTab.stock', 'Stock') },
+            { k: 'po', label: tr('invTab.po', 'Purchase Orders') },
+            { k: 'archive', label: tr('invTab.archive', 'Archive') },
+            { k: 'io', label: tr('invTab.io', 'Import / Export') },
+            { k: 'reports', label: tr('invTab.reports', 'Reports') },
+          ].map((tab) => (
+            <button key={tab.k} onClick={() => setInvSubView(tab.k)} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition ${invSubView === tab.k ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]' : 'text-white/60 hover:text-white/90 hover:bg-white/5'}`}>{tab.label}</button>
+          ))}
+        </div>
+        {invSubView === 'stock' && (
+          <InventoryStock
+            inventory={inventory}
+            sales={sales}
+            restocks={restocks}
+            stockAdjustments={stockAdjustments}
+            formatINR={formatINR}
+            onReceive={(p) => (p && p.id ? setRestockTarget(p) : setQuickPick('receive'))}
+            onBulkReceive={() => setShowBulkReceive(true)}
+            onAdjust={() => setQuickPick('adjust')}
+            onReorder={(p) => openReorderDialog(p)}
+            initialFilter={pendingStockFilter}
+            onInitialFilterHandled={() => setPendingStockFilter(null)}
+            demoMode={demoMode}
+            actorEmail={capacityActorEmail}
+            capacityRefreshTick={capacityRefreshTick}
+            onCleanupComplete={() => { refreshCapacityCollection('restocks'); refreshCapacityCollection('stockAdjustments'); setCapacityRefreshTick((n) => n + 1); }}
+          />
+        )}
+        {invSubView === 'po' && (
+          <InventoryPurchaseOrders
+            purchaseOrders={purchaseOrders}
+            suppliers={suppliers}
+            inventory={inventory}
+            formatINR={formatINR}
+            canManage={canManageData || demoMode}
+            demoMode={demoMode}
+            actorEmail={capacityActorEmail}
+            onCapacityCleanup={() => refreshCapacityCollection('purchaseOrders')}
+            onCreate={createPO}
+            onAdvance={advancePO}
+            onReceive={receivePO}
+            onCancel={cancelPO}
+            initialReceivePOId={pendingReceivePOId}
+            onInitialReceiveHandled={() => setPendingReceivePOId(null)}
+            initialStatusFilter={pendingPOStatusFilter}
+            onInitialStatusFilterHandled={() => setPendingPOStatusFilter(null)}
+          />
+        )}
+        {invSubView === 'io' && (
+          <PageHeader title="Import / Export" icon={Upload}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-2xl p-5 backdrop-blur-sm" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+                <div className="flex items-center gap-2 mb-1"><PackagePlus size={16} className="text-[#d4af37]" /><h3 className="text-sm font-bold text-white/90">Import parts</h3></div>
+                <p className="text-xs text-white/50 mb-3">Bulk-add parts from an Excel/CSV file. Existing SKUs are skipped.</p>
+                <button
+                  onClick={() => { if (demoMode) { toast('Bulk import isn\u2019t part of the demo \u2014 use \u201cAdd Part\u201d to try adding items.', { icon: '\uD83E\uDDEA' }); return; } setShowImport(true); }}
+                  className="h-10 px-4 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-95 transition flex items-center gap-2"
+                ><Upload size={15} /> Import file</button>
+              </div>
+              <div className="rounded-2xl p-5 backdrop-blur-sm" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+                <div className="flex items-center gap-2 mb-1"><Download size={16} className="text-emerald-400" /><h3 className="text-sm font-bold text-white/90">Export inventory</h3></div>
+                <p className="text-xs text-white/50 mb-3">Download all {inventory.filter((p) => !p.archived).length} active parts as an Excel sheet.</p>
+                <button onClick={() => exportInventoryExcel()} className="h-10 px-4 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 active:scale-95 transition flex items-center gap-2"><Download size={15} /> Export to Excel</button>
+              </div>
+            </div>
+            <div className="rounded-2xl overflow-hidden backdrop-blur-sm" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+              <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.06)' }}><History size={15} className="text-[#d4af37]" /><h3 className="text-sm font-bold text-white/90">Import / Export history</h3></div>
+              {ioHistory.length ? (
+                <div className="divide-y divide-white/[0.04]">
+                  {ioHistory.map((h, i) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                      <span className={`w-2 h-2 rounded-full ${h.type === 'import' ? 'bg-[#d4af37]' : 'bg-emerald-400'}`} />
+                      <span className="flex-1 text-sm text-white/80 capitalize">{h.type} · {h.count} part{h.count === 1 ? '' : 's'}</span>
+                      <span className="text-[11px] text-white/45">{new Date(h.ts).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-white/45 py-8 text-center">No imports or exports yet.</p>}
+            </div>
+          </PageHeader>
+        )}
+        {invSubView === 'reports' && (
+          <InventoryReports inventory={inventory} sales={sales} formatINR={formatINR} demoMode={demoMode} demoCanExport={demoCan('exportExcel')} onProtectedAction={() => protectedDemoToast(true)} />
+        )}
+        {invSubView === 'categories' && (
+          <InventoryCategories
+            inventory={inventory}
+            formatINR={formatINR}
+            canManage={canManageData}
+            onRename={(oldN, newN) => renameCategory(oldN, newN)}
+            onDelete={(name) => deleteCategory(name)}
+            onOpenCategory={(cat) => { setInvSubView('parts'); setCategoryFilter(cat); setInvFilter('active'); setSearch(''); }}
+          />
+        )}
+        {invSubView === 'archive' && (
+          <InventoryArchive
+            inventory={inventory}
+            formatINR={formatINR}
+            canRestore={canDelete || demoMode}
+            canDelete={canDelete}
+            onRestore={(part) => confirmAndRestore(part)}
+            restoringId={restoringPartId}
+            onDelete={(p) => handleDelete(p.id)}
+            onEditPart={(p) => { setEditPart(p); setShowModal(true); }}
+          />
+        )}
+        {invSubView === 'dashboard' && (
+          <InventoryOverview
+            inventory={inventory}
+            sales={sales}
+            restocks={restocks}
+            stockAdjustments={stockAdjustments}
+            reorderRequests={reorderRequests}
+            suppliers={suppliers}
+            formatINR={formatINR}
+            onNavigate={(tab, opts) => { if (opts?.subView) setInvSubView(opts.subView); if (opts?.invFilter) setInvFilter(opts.invFilter); if (opts?.stockFilter) setPendingStockFilter(opts.stockFilter); setCategoryFilter('All'); setSearch(''); }}
+            onAddPart={() => { setEditPart(null); setShowModal(true); }}
+            onQuickReceive={(p) => (p && p.id ? setRestockTarget(p) : setQuickPick('receive'))}
+            onQuickSell={() => setQuickPick('sell')}
+            onAddSupplier={() => { setEditSupplier(null); setShowSupplierModal(true); }}
+            onEditPart={(p) => { setEditPart(p); setShowModal(true); }}
+          />
+        )}
+        {invSubView === 'parts' && (
+        <>
+        {/* Parts review (Issue 6.17/6.18) — drilling in from a Category card left no
+            trace of it: the header always read the same static "Parts" regardless of
+            whether the list was showing everything or one category, and there was no
+            way back except manually reselecting the Categories tab. Both now only
+            appear when a category filter is actually active, so the default "browsing
+            all parts" view is unchanged. */}
+        <PageHeader
+          title="Parts"
+          icon={PackageSearch}
+          subtitle={categoryFilter !== 'All' ? (
+            <>
+              Viewing <b className="text-white/70">{categoryFilter}</b>{' · '}
+              <button type="button" onClick={() => { setCategoryFilter('All'); setInvSubView('categories'); }} className="font-semibold text-[#d4af37]/80 hover:text-[#d4af37] hover:underline">
+                ← Back to Categories
+              </button>
+            </>
+          ) : ['low', 'out', 'reorder'].includes(invFilter) ? (
+            // 1.3 — a drill-down from Dashboard (Reorder Center / an Insight) must land
+            // somewhere that visibly confirms it's showing the thing that was promised,
+            // not a generic Parts list the owner has to re-figure-out from scratch.
+            <>
+              Viewing <b className="text-white/70">{{ low: 'Low Stock', out: 'Out of Stock', reorder: 'Needs Reorder' }[invFilter]}</b>{' · '}
+              <button type="button" onClick={() => setInvFilter('active')} className="font-semibold text-[#d4af37]/80 hover:text-[#d4af37] hover:underline">
+                ← Back to Active
+              </button>
+            </>
+          ) : undefined}
+          action={
+            <button
+              onClick={() => { setEditPart(null); setShowModal(true); }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110 active:scale-95 transition shadow-lg shadow-[#d4af37]/10"
+            >
+              <Plus size={16} /> <span className="hidden sm:inline">Add Part</span>
+            </button>
+          }
+        />
+        {/* Stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+          {/* COLOR SYSTEM REVIEW: Stock Value was an arbitrary green and Potential Profit
+              an arbitrary blue — neither is a status. Stock Value is a plain valuation
+              (neutral, like Billing's Revenue/GST cards); Potential Profit is "Profit",
+              which is green everywhere else in the app (Billing's Profit Today/Month) —
+              same word, same meaning, same color now. Total Parts keeps gold as this
+              page's one primary/headline count; Low Stock/Out of Stock already correctly
+              used the shared warn/danger tones, now pulled from SEMANTIC directly so they
+              can never drift from Vehicles'/Billing's/Reminders' own warn/danger. */}
+          {[
+            { label: 'Total Parts', value: stats.total, icon: PackageSearch, color: SEMANTIC.gold, onClick: () => { setInvFilter('active'); setCategoryFilter('All'); setSearch(''); } },
+            { label: 'Low Stock', value: stats.lowStock, icon: AlertTriangle, color: SEMANTIC.warn, onClick: () => { setInvFilter('low'); } },
+            { label: 'Out of Stock', value: stats.outOfStock, icon: PackageX, color: SEMANTIC.danger, onClick: () => { setInvFilter('out'); } },
+            { label: 'Stock Value', value: formatINR(stats.totalValue), icon: PackageSearch, color: SEMANTIC.muted },
+            { label: 'Potential Profit', value: formatINR(stats.potentialProfit), icon: TrendingUp, color: SEMANTIC.ok },
+          ].map(({ label, value, icon: Icon, color, onClick }) => {
+            const active = (label === 'Low Stock' && lowStockOnly) || (label === 'Out of Stock' && outOfStockOnly);
+            const Tag = onClick ? 'button' : 'div';
+            return (
+              <Tag
+                key={label}
+                onClick={onClick}
+                className={`text-left rounded-2xl p-3.5 backdrop-blur-sm transition ${onClick ? 'hover:bg-white/[0.06] active:scale-[0.98] cursor-pointer' : ''}`}
+                style={{ background: 'rgba(var(--fg-rgb),0.03)', border: `1px solid ${active ? color + '80' : 'rgba(var(--fg-rgb),0.06)'}` }}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] uppercase tracking-wider text-white/45">{tr(`inventory.kpi.${label.replace(/\s/g, '')}`, label)}</span>
+                  <Icon size={14} style={{ color }} />
+                </div>
+                <div className="text-lg font-bold" style={{ color }}>
+                  {value}
+                </div>
+              </Tag>
+            );
+          })}
+        </div>
+
+        {/* Search + filters — glassmorphism bar */}
+        <div
+          className="rounded-2xl p-3 mb-5 backdrop-blur-md"
+          style={{ background: 'rgba(var(--fg-rgb),0.04)', border: '1px solid rgba(var(--fg-rgb),0.08)' }}
+        >
+          <div className="flex gap-2 mb-3">
+            <div className="relative flex-1">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={tr('inventory.searchPlaceholder', 'Search by name, SKU, OEM no., barcode, category, vehicle…')}
+                className="w-full pl-9 pr-9 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/50 transition"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/45 hover:text-white/60"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            {!listening && (
+              <button
+                onClick={() => setVoiceLang((l) => (l === 'en-IN' ? 'te-IN' : 'en-IN'))}
+                className="flex items-center justify-center h-10 px-2.5 rounded-xl text-xs font-bold border bg-white/5 border-white/10 text-white/60 hover:bg-white/10 transition"
+                title="Voice language (English / Telugu)"
+              >
+                {voiceLang === 'te-IN' ? 'తె' : 'EN'}
+              </button>
+            )}
+            <button
+              onClick={startVoiceSearch}
+              className={`flex items-center justify-center gap-1.5 rounded-xl transition active:scale-90 border font-bold text-xs ${
+                listening
+                  ? 'px-3 h-10 bg-red-500/25 border-red-500/60 text-red-300 animate-pulse ring-2 ring-red-500/50'
+                  : 'w-10 h-10 bg-[#d4af37]/10 border-[#d4af37]/30 text-[#d4af37] hover:bg-[#d4af37]/20'
+              }`}
+              title={listening ? 'Stop & search' : `Voice search (${voiceLang === 'te-IN' ? 'Telugu' : 'English'})`}
+            >
+              <Mic size={16} />
+              {listening && <span className="whitespace-nowrap">Stop &amp; Search</span>}
+            </button>
+          </div>
+
+          {/* Fix 1: live voice-feedback box — shows exactly what the mic hears */}
+          {listening && (
+            <div className="mb-3 rounded-xl px-4 py-3 flex items-start gap-3 bg-red-500/10 border border-red-500/30">
+              <span className="relative flex h-2.5 w-2.5 mt-1 flex-shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wider text-red-300/70 font-semibold">Listening… speak now, then tap “Stop &amp; Search”</p>
+                <p className="text-sm text-white mt-0.5 break-words">
+                  {liveTranscript || <span className="text-white/45 italic">Waiting for your voice…</span>}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Desktop: Status and Category are two DIFFERENT kinds of filter — a state
+              (Active/Low/Out/Archived) vs. a taxonomy (Category) — so Issue 2 splits them
+              into their own labeled rows instead of one shared horizontally-scrolling
+              strip. That also fixes a real usability bug the shared row had: scrolling
+              right to reach a category chip could scroll the status pills out of view
+              too, hiding which state filter was active. Each row now scrolls
+              independently, and stays exactly as compact (two short rows, not a tall
+              panel) as the single-row version was. */}
+          <div className="hidden sm:block space-y-2">
+            <div className="flex items-center gap-2.5">
+              <span className="text-[10px] uppercase tracking-wider text-white/45 font-semibold flex-shrink-0 w-16">Status</span>
+              <div className="flex items-center rounded-full border border-white/10 bg-white/5 p-0.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }} role="group" aria-label="Inventory state filter">
+                {[
+                  ['active', 'Active', null],
+                  ['low', 'Low Stock', AlertTriangle],
+                  ['out', 'Out of Stock', PackageX],
+                  // Union of low+out — same population as the Dashboard's Reorder Center /
+                  // "N reorder items" count, so that deep-link lands on a matching filter
+                  // instead of forcing the owner to reconcile two separate pills by hand.
+                  ['reorder', 'Needs Reorder', ShoppingCart],
+                  ['archived', 'Archived', Archive],
+                  ['all', 'All', null],
+                ].map(([v, label, Icon]) => {
+                  // archived filter is viewable by everyone (incl. demo user); row actions stay gated
+                  const on = invFilter === v;
+                  const tone = v === 'low' ? 'text-amber-300' : v === 'out' ? 'text-red-300' : 'text-[#d4af37]';
+                  return (
+                    <button
+                      key={v}
+                      onClick={() => setInvFilter(v)}
+                      className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap transition flex-shrink-0 ${
+                        on ? `bg-white/10 ${tone}` : 'text-white/50 hover:text-white/80'
+                      }`}
+                    >
+                      {Icon && <Icon size={11} />}{label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <span className="text-[10px] uppercase tracking-wider text-white/45 font-semibold flex-shrink-0 w-16">Category</span>
+              <div className="flex gap-2 overflow-x-auto pb-0.5 flex-1 min-w-0" style={{ scrollbarWidth: 'none' }}>
+                {categoryOptionsForFilter.length > 21 ? (
+                  // Parts review (Issue 6.9) — a plain native <select> doesn't scale past a
+                  // couple dozen options: no search-within-list, and the browser renders it
+                  // as one long unfiltered scroll. Real inventories can carry hundreds of
+                  // categories. MiniSelect is the app's own searchable-combobox primitive
+                  // (type to filter, same component every other catalog picker already
+                  // uses) — swapping in the exact same threshold this file already chose
+                  // (>21) to leave the small-N chip strip untouched, since chips are
+                  // genuinely the better UX for a handful of categories at a glance.
+                  <div className="w-44 flex-shrink-0">
+                    <MiniSelect
+                      value={categoryFilter}
+                      options={categoryOptionsForFilter}
+                      labels={{ All: 'All Categories' }}
+                      emptyValue="All"
+                      onPick={(v) => setCategoryFilter(v || 'All')}
+                      inputCls="w-full px-3 py-1.5 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-white/70 outline-none focus:border-[#d4af37]/60"
+                    />
+                  </div>
+                ) : (
+                  categoryOptionsForFilter.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setCategoryFilter(cat)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition flex-shrink-0 ${
+                        categoryFilter === cat
+                          ? 'bg-gradient-to-r from-[#d4af37] to-[#aa801e] text-black font-bold'
+                          : 'bg-white/5 text-white/50 border border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Mobile: single Filters button → bottom sheet (CHANGE-05) */}
+          <button
+            onClick={() => setShowFilterSheet(true)}
+            className="sm:hidden w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white/70 active:scale-[0.99]"
+          >
+            <Filter size={15} /> Filters
+            {(() => {
+              const n = (categoryFilter !== 'All' ? 1 : 0) + (invFilter !== 'active' ? 1 : 0);
+              return n ? <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-[#d4af37] text-black">{n}</span> : null;
+            })()}
+          </button>
+        </div>
+
+        {/* Bulk actions bar. Parts review (Issue 6.10/6.16) — Archive used to be the
+            ONLY archive-state action (no bulk Restore, the exact inverse every row
+            already offers individually), and it was gated purely on permission, not
+            on whether the selection actually contained anything archivable — clicking
+            it against an all-archived selection just no-op'd with a toast instead of
+            the button honestly reflecting that there was nothing to do. Both buttons
+            below are now computed from the selection's REAL composition: disabled
+            with a reason (matching the row menu's own disabled+reason pattern) when
+            every selected part already fails that action, active otherwise. */}
+        {selectedIds.size > 0 && (() => {
+          const selectedParts = resolveSelectedRecords(selectedIds, inventory, (p) => p.id);
+          const archivableCount = selectedParts.filter((p) => !p.archived).length;
+          const restorableCount = selectedParts.filter((p) => p.archived).length;
+          return (
+            <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-xl" style={{ background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.3)' }}>
+              <span className="text-sm font-semibold text-white/85">{selectedIds.size} selected</span>
+              <div className="flex items-center gap-2 ml-auto">
+                {(canDelete || demoMode) && (
+                  <button
+                    onClick={bulkArchive}
+                    disabled={archivableCount === 0}
+                    title={archivableCount === 0 ? 'All selected parts are already archived' : `Archive ${archivableCount} part${archivableCount === 1 ? '' : 's'}`}
+                    className={`h-8 px-3 rounded-lg text-xs font-semibold border transition flex items-center gap-1.5 ${archivableCount === 0 ? 'bg-white/[0.02] border-white/5 text-white/45 cursor-not-allowed' : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/10 active:scale-95'}`}
+                  ><Archive size={13} /> Archive{archivableCount > 0 ? ` (${archivableCount})` : ''}</button>
+                )}
+                {(canDelete || demoMode) && (
+                  <button
+                    onClick={bulkRestore}
+                    disabled={restorableCount === 0}
+                    title={restorableCount === 0 ? 'No selected parts are archived' : `Restore ${restorableCount} part${restorableCount === 1 ? '' : 's'}`}
+                    className={`h-8 px-3 rounded-lg text-xs font-semibold border transition flex items-center gap-1.5 ${restorableCount === 0 ? 'bg-white/[0.02] border-white/5 text-white/45 cursor-not-allowed' : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/10 active:scale-95'}`}
+                  ><ArchiveRestore size={13} /> Restore{restorableCount > 0 ? ` (${restorableCount})` : ''}</button>
+                )}
+                {/* Issue 7.13 — bulk adjustment intentionally opens a modal with a
+                    reason field PER selected part (not a single shared reason for
+                    the batch), so an audit that finds 20 damaged / 15 lost / 12
+                    expired doesn't get miscoded as one reason for all 47. */}
+                {(canDelete || demoMode) && (
+                  <button onClick={() => setShowBulkAdjust(true)} className="h-8 px-3 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 active:scale-95 transition flex items-center gap-1.5"><SlidersHorizontal size={13} /> Adjust ({selectedIds.size})</button>
+                )}
+                {/* 1.3 — the Dashboard's own reorder workflow only ever handled one part
+                    at a time; selecting several low-stock parts here and creating their
+                    POs in one action (grouped by supplier) closes that gap without a
+                    second, parallel PO-creation code path. */}
+                {(canManageData || demoMode) && (
+                  <button onClick={() => setShowBulkReorder(true)} className="h-8 px-3 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 active:scale-95 transition flex items-center gap-1.5"><ShoppingCart size={13} /> Create PO ({selectedIds.size})</button>
+                )}
+                <button onClick={() => exportInventoryExcel(selectedParts)} className="h-8 px-3 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 active:scale-95 transition flex items-center gap-1.5"><Download size={13} /> Export</button>
+                <button onClick={clearSelection} className="h-8 px-3 rounded-lg text-xs font-semibold text-white/50 hover:text-white/80 transition">Clear</button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Table */}
+        <div
+          className="rounded-2xl overflow-hidden backdrop-blur-sm"
+          style={{ background: 'rgba(var(--fg-rgb),0.02)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}
+        >
+          {loading ? (
+            <div className="p-4 space-y-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3 rounded-xl p-3 animate-pulse" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.05)' }}>
+                  <div className="w-10 h-10 rounded-lg bg-white/10 flex-shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 rounded bg-white/10" style={{ width: `${30 + (i % 3) * 12}%` }} />
+                    <div className="h-2.5 rounded bg-white/5 w-1/4" />
+                  </div>
+                  <div className="h-7 w-20 rounded-lg bg-white/10 hidden sm:block" />
+                  <div className="h-7 w-24 rounded-lg bg-white/5 hidden md:block" />
+                </div>
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="p-12 flex flex-col items-center gap-3 text-center">
+              <PackageSearch size={32} className="text-white/20" />
+              {inventory.length === 0 ? (
+                <p className="text-sm text-white/45">No parts yet. Click &quot;Add Part&quot; to get started.</p>
+              ) : search.trim() ? (
+                <>
+                  <p className="text-sm text-white/60">No matching part found for &ldquo;{search.trim()}&rdquo;.</p>
+                  <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+                    <button
+                      onClick={() => { setEditPart({ name: search.trim() }); setShowModal(true); }}
+                      className="h-11 px-4 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-[0.98] transition flex items-center gap-2"
+                    >
+                      <Plus size={16} /> Create New Part
+                    </button>
+                    <button
+                      onClick={() => notify.info('Online catalogue isn’t connected yet. It needs a licensed parts data provider before it can search — nothing runs automatically.', { duration: 5000 })}
+                      className="h-11 px-4 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/70 active:scale-[0.98] transition flex items-center gap-2"
+                      title="Optional — never runs automatically"
+                    >
+                      <Search size={15} /> Search Online Catalogue
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-white/45 mt-1">Online search is optional and only runs when you tap it.</p>
+                </>
+              ) : (
+                <p className="text-sm text-white/45">{invFilter === 'dead' ? 'No dead stock found.' : invFilter === 'fast' ? 'No fast movers yet — record some sales to see them here.' : invFilter === 'low' ? 'No low-stock parts.' : invFilter === 'out' ? 'Nothing is out of stock.' : invFilter === 'reorder' ? 'Nothing needs reordering — all parts above minimum stock.' : 'No parts match the current filter.'}</p>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* Mobile: tappable cards (the table is unusable on a phone) */}
+              <div className="md:hidden space-y-2.5">
+                {pagedInventory.map((part) => (
+                  <MobilePartCard
+                    key={part.id}
+                    part={part}
+                    highlight={part.id === highlightPartId}
+                    isAdmin={canDelete}
+                    canRestore={canDelete || demoMode}
+                    selected={selectedIds.has(part.id)}
+                    onToggleSelect={toggleSelect}
+                    onEdit={(p) => { setEditPart(p); setShowModal(true); }}
+                    onDelete={handleDelete}
+                    onArchive={handleArchive}
+                    onRestore={handleRestore}
+                    onReorder={(p) => openReorderDialog(p)}
+                    onSell={handleSellClick}
+                    onCommitStock={commitStock}
+                    onReceive={setRestockTarget}
+                    onAdjust={setAdjustTarget}
+                    canChangeStock={!demoMode || demoAdmin || !!demoPerms.changeStock}
+                    onStockBlocked={() => protectedDemoToast(true)}
+                    demoMode={demoMode}
+                  />
+                ))}
+              </div>
+
+              {/* Desktop: full table */}
+              <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+                    <th className="px-4 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={pagedInventory.length > 0 && pagedInventory.every((p) => selectedIds.has(p.id))}
+                        onChange={() => setSelectedIds((s) => { const n = new Set(s); const all = pagedInventory.length > 0 && pagedInventory.every((p) => n.has(p.id)); pagedInventory.forEach((p) => (all ? n.delete(p.id) : n.add(p.id))); return n; })}
+                        className="accent-[#d4af37] w-4 h-4 cursor-pointer align-middle"
+                        aria-label="Select all on page"
+                      />
+                    </th>
+                    {[
+                      { label: '', key: null },
+                      { label: 'Part', key: 'name' },
+                      { label: 'SKU', key: null },
+                      { label: 'Category', key: 'category' },
+                      { label: 'Vehicle', key: null },
+                      { label: 'Stock', key: 'stock' },
+                      { label: 'Status', key: null },
+                      { label: 'Selling / Floor', key: 'sellingPrice', align: 'right' },
+                      { label: '', key: null },
+                    ].map(({ label, key, align }, i) => (
+                      <th
+                        key={label + i}
+                        onClick={() => key && toggleSort(key)}
+                        className={`${align === 'right' ? 'text-right' : 'text-left'} px-4 py-3 text-[10px] uppercase tracking-wider text-white/45 font-medium ${
+                          key ? 'cursor-pointer hover:text-white/60 select-none' : ''
+                        }`}
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {label}
+                          {key && sortConfig.key === key && (
+                            <span className="text-[#d4af37]">{sortConfig.dir === 'asc' ? '↑' : '↓'}</span>
+                          )}
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedInventory.map((part) => (
+                    <tr
+                      key={part.id}
+                      id={`inv-row-${part.id}`}
+                      className={`group transition-colors align-middle ${part.archived ? 'opacity-60' : ''} ${part.id === highlightPartId ? 'bg-[#d4af37]/15' : 'hover:bg-white/[0.05]'}`}
+                      style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.04)', boxShadow: part.id === highlightPartId ? 'inset 0 0 0 2px rgba(212,175,55,0.55)' : 'none' }}
+                    >
+                      <td className="px-4 py-2.5 w-10">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(part.id)}
+                          onChange={() => toggleSelect(part.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="accent-[#d4af37] w-4 h-4 cursor-pointer align-middle"
+                          aria-label={`Select ${part.name}`}
+                        />
+                      </td>
+                      <td className="px-4 py-2.5" style={{ width: 56 }}>
+                        <PartImageThumb
+                          src={part.imageString}
+                          alt={part.name}
+                          demoMode={demoMode}
+                          onHover={handleImageHover}
+                          onMove={handleImageMove}
+                          onLeave={handleImageLeave}
+                        />
+                      </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-white">{part.name}</span>
+                          {isFastMover(part) && (
+                            <span title={`Sold ${part.salesCount || 0}+ times — meets this shop's fast-mover threshold (${getFastMoverMin()})`} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-[#d4af37]/15 text-[#d4af37] border border-[#d4af37]/30 cursor-help">
+                              <Zap size={9} /> Fast Mover
+                            </span>
+                          )}
+                          {isDeadStock(part) && (
+                            <span title={deadStockReason(part)} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-white/8 text-white/45 border border-white/15 cursor-help">
+                              <Archive size={9} /> Dead Stock
+                            </span>
+                          )}
+                        </div>
+                        {showArchived && part.archived && (
+                          <div className="text-[10px] text-white/45 mt-1 flex items-center gap-1">
+                            <Archive size={9} /> Archived{part.archivedAt ? ` ${new Date((part.archivedAt.seconds || 0) * 1000).toLocaleDateString('en-IN')}` : ''}{part.archivedBy ? ` · by ${String(part.archivedBy).split('@')[0]}` : ''}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap">
+                        <div className="text-white/70 font-mono text-[13px] tracking-tight">{part.sku || '—'}</div>
+                        {part.locationBin && (
+                          <div className="flex items-center gap-1 text-[11px] text-white/45 mt-0.5">
+                            <MapPin size={10} /> {part.locationBin}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-white/50 whitespace-nowrap">{part.category || '—'}</td>
+                      <td className="px-4 py-2.5 text-white/50 whitespace-nowrap">{part.vehicle || '—'}</td>
+                      <td className="px-4 py-2.5">
+                        <StockStepper part={part} onCommit={commitStock} onSell={handleSellClick} canChangeStock={!demoMode || demoAdmin || !!demoPerms.changeStock} onBlocked={() => protectedDemoToast(true)} />
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {/* Issue 6.15: route through the same reorder dialog the mobile
+                            card's own Reorder button uses (openReorderDialog) — not the
+                            bare handleReorder() WhatsApp shortcut, which skips logging a
+                            tracked reorder request AND skips the "Reorder via PO" option
+                            that dialog offers. Two reorder triggers silently diverging
+                            (one tracked+PO-aware, one a fire-and-forget WhatsApp ping)
+                            is exactly the class of drift this module review targets. */}
+                        <StatusBadge stock={part.stock || 0} minStock={part.minStock} onReorder={() => openReorderDialog(part)} />
+                      </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap text-right" style={{ width: 120 }}>
+                        {part.mrp > 0 && Math.round(part.mrp) !== Math.round(part.sellingPrice || 0) && (
+                          <div className="text-[10px] text-white/45 leading-tight tabular-nums line-through">{formatINR(part.mrp)}</div>
+                        )}
+                        <div className="text-[#d4af37] font-bold leading-tight tabular-nums">{formatINR(part.sellingPrice)}</div>
+                        {part.minSellingPrice > 0 && (
+                          <div className="text-[11px] text-red-400/80 leading-tight tabular-nums">Min: {formatINR(part.minSellingPrice)}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {/* Parts review (Issue 6.1) — Edit and Receive are the two
+                            actions a workshop actually reaches for on most rows
+                            (fixing details, routine stock intake); they stay
+                            always-visible. Everything else here is either occasional
+                            (Adjust, History, Duplicate, Archive/Restore) or destructive
+                            (Delete) — consolidated into one "more actions" menu using
+                            the same shared ActionMenu the rest of the app already uses
+                            for this exact pattern, instead of up to 9 always-visible
+                            icon buttons fighting for space on every single row. */}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => {
+                              setEditPart(part);
+                              setShowModal(true);
+                            }}
+                            className="w-8 h-8 rounded-lg flex items-center justify-center bg-[#d4af37]/10 border border-[#d4af37]/25 text-[#d4af37] hover:bg-[#d4af37]/20 transition"
+                            title="Edit part"
+                          >
+                            <Edit3 size={13} />
+                          </button>
+                          <button
+                            onClick={() => setRestockTarget(part)}
+                            className="w-8 h-8 rounded-lg flex items-center justify-center bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/20 transition"
+                            title="Receive stock (restock)"
+                          >
+                            <PackagePlus size={13} />
+                          </button>
+                          <button
+                            ref={rowMenuAnchorRef(part.id)}
+                            onClick={() => setRowMenuFor(rowMenuFor === part.id ? null : part.id)}
+                            title="More actions"
+                            aria-haspopup="menu"
+                            aria-expanded={rowMenuFor === part.id}
+                            className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/55 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37]/60"
+                          >
+                            <MoreVertical size={13} />
+                          </button>
+                          {rowMenuFor === part.id && (
+                            <ActionMenu anchorRef={rowMenuAnchorRef(part.id)} open onClose={() => setRowMenuFor(null)} items={[
+                              { type: 'section', label: 'Stock' },
+                              (part.stock || 0) > 0
+                                ? { type: 'item', label: 'Adjust Stock', icon: PackageX, onClick: () => setAdjustTarget(part) }
+                                : { type: 'item', label: 'Adjust Stock', icon: PackageX, onClick: () => {}, disabled: true, reason: 'Nothing in stock to adjust' },
+                              { type: 'item', label: 'Movement History', icon: History, onClick: () => setLedgerTarget(part) },
+                              { type: 'section', label: 'Part' },
+                              (() => {
+                                const blocked = partHasCopy(part) || partIsCopy(part);
+                                return blocked
+                                  ? { type: 'item', label: 'Duplicate', icon: Copy, onClick: () => {}, disabled: true, reason: 'A copy already exists — edit the existing copy instead' }
+                                  : { type: 'item', label: 'Duplicate', icon: Copy, onClick: () => handleDuplicate(part) };
+                              })(),
+                              (canDelete || demoMode) && !part.archived && { type: 'item', label: 'Archive', icon: Archive, onClick: () => handleArchive(part.id) },
+                              (canDelete || demoMode) && part.archived && { type: 'item', label: 'Restore from Archive', icon: ArchiveRestore, onClick: () => confirmAndRestore(part), disabled: restoringPartId === part.id },
+                              (canDelete || demoMode) && { type: 'section', label: 'Danger Zone' },
+                              (canDelete || demoMode) && { type: 'item', label: 'Delete Permanently', icon: Trash2, danger: true, onClick: () => handleDelete(part.id) },
+                            ]} />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              </div>
+
+              {/* Pagination controls */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 mt-1" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+                <div className="flex items-center gap-2 text-xs text-white/45">
+                  <span>Rows:</span>
+                  <select
+                    value={invPerPage}
+                    onChange={(e) => setInvPerPage(Number(e.target.value))}
+                    className="bg-white/5 border border-white/15 rounded-lg px-2 py-1 text-white/80 focus:outline-none focus:border-[#d4af37]/50"
+                  >
+                    {[10, 25, 50, 100].map((n) => <option key={n} value={n} style={{ background: 'var(--surface-2)' }}>{n}</option>)}
+                  </select>
+                  <span className="ml-1">
+                    {(invPage - 1) * invPerPage + 1}–{Math.min(invPage * invPerPage, filtered.length)} of {filtered.length}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setInvPage((p) => Math.max(1, p - 1))} disabled={invPage <= 1} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white/70 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white/10">Prev</button>
+                  {Array.from({ length: invTotalPages }, (_, i) => i + 1)
+                    .filter((p) => p === 1 || p === invTotalPages || Math.abs(p - invPage) <= 1)
+                    .reduce((acc, p, idx, arr) => { if (idx > 0 && p - arr[idx - 1] > 1) acc.push('…'); acc.push(p); return acc; }, [])
+                    .map((p, i) => p === '…'
+                      ? <span key={`e${i}`} className="px-2 text-white/45 text-xs">…</span>
+                      : <button key={p} onClick={() => setInvPage(p)} className={`min-w-[32px] px-2 py-1.5 rounded-lg text-xs font-semibold border ${invPage === p ? 'bg-[#d4af37] text-black border-[#d4af37]' : 'bg-white/5 text-white/70 border-white/10 hover:bg-white/10'}`}>{p}</button>
+                    )}
+                  <button onClick={() => setInvPage((p) => Math.min(invTotalPages, p + 1))} disabled={invPage >= invTotalPages} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white/70 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white/10">Next</button>
+                  {/* Issue 6.13: at a couple thousand parts and 10-25/page, the
+                      ellipsis strip alone can't reach a page in the middle without
+                      dozens of clicks — a direct "go to page" input scales to any
+                      dataset size. Only shown once there are enough pages for it
+                      to matter; below that the ellipsis strip already shows every page. */}
+                  {invTotalPages > 7 && (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const n = Math.round(Number(e.currentTarget.jumpPage.value));
+                        if (Number.isFinite(n) && n >= 1 && n <= invTotalPages) setInvPage(n);
+                        e.currentTarget.jumpPage.value = '';
+                      }}
+                      className="flex items-center gap-1 ml-1"
+                    >
+                      <span className="text-xs text-white/45">Go to</span>
+                      <input
+                        name="jumpPage"
+                        type="number"
+                        min={1}
+                        max={invTotalPages}
+                        placeholder={String(invPage)}
+                        className="w-14 bg-white/5 border border-white/15 rounded-lg px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-[#d4af37]/50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        aria-label={`Go to page (1–${invTotalPages})`}
+                      />
+                    </form>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <p className="text-xs text-white/45 mt-3">
+          Showing {pagedInventory.length} of {filtered.length} {invFilter === 'archived' ? 'archived ' : ''}products{search || categoryFilter !== 'All' || invFilter !== 'active' ? ' (filtered)' : ''}
+        </p>
+        </>
+        )}
+        </>
+        )}
+
+        {activeTab === 'jobcards' && (
+          <JobCardModule demoMode={demoMode} demoCanDelete={demoCan('deleteJobCards')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} inventory={inventory} customers={customers} invoices={invoices} onPersist={persistJobCard} onDelete={deleteJobCard} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('jobCards')} onDirtyChange={handleModuleDirtyChange} onRegisterVehicle={(custId, veh) => { const nv = { id: `v_${Date.now()}`, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === custId ? { ...c, vehicles: [...(c.vehicles || []), nv] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: nv.regNo || nv.id, detail: `${nv.regNo || ''} ${nv.model || ''}`.trim() })); }} savedCards={jobCards}
+            onOpenCustomer={(c) => { try { window.open(`/?open=customer:${encodeURIComponent(c.code || c.id || '')}#customers`, '_blank'); } catch { setActiveTab('customers'); } }}
+            onOpenVehicle={(reg) => { try { window.open(`/?open=vehicles:${encodeURIComponent(reg || '')}#vehicles`, '_blank'); } catch { setActiveTab('vehicles'); setSearch(reg || ''); } }}
+            onOpenInvoice={(iv) => { try { window.open(`/?open=invoice:${encodeURIComponent(iv.invNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(iv.invNo || ''); } }}
+            onCreateInvoice={(jc) => { const tok = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`; try { localStorage.setItem(`maruti_invoice_prefill::${tok}`, JSON.stringify({ customerId: jc.customerId || '', customer: jc.customer, phone: jc.phone, vehicle: jc.vehicle || '', regNo: jc.regNo || '', jobNo: jc.jobNo || '' })); } catch {} try { const w = window.open(`/?open=newinvoice:${tok}#billing`, '_blank'); if (!w) { setActiveTab('billing'); } toast.success(`Invoice for ${jc.jobNo} opened in a new tab`); } catch { setActiveTab('billing'); } }}
+            initialKpiFilter={pendingJobKpiFilter}
+            onInitialKpiFilterHandled={() => setPendingJobKpiFilter(null)} />
+        )}
+
+        {activeTab === 'customers' && (
+          <CustomersModule demoMode={demoMode} demoCanDelete={demoCan('deleteCustomers')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} jobCards={jobCards} invoices={invoices} customers={customers} setCustomers={setCustomers} onSaveCustomerEdit={saveCustomerEdit} onAudit={pushAudit} actorEmail={capacityActorEmail} onDirtyChange={handleModuleDirtyChange}
+            onOpenJobCard={(j) => { try { window.open(`/?open=jobcard:${encodeURIComponent(j.jobNo || '')}#jobcards`, '_blank'); } catch { setActiveTab('jobcards'); setSearch(j.jobNo || ''); } }}
+            onOpenInvoice={(iv) => { try { window.open(`/?open=invoice:${encodeURIComponent(iv.invNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(iv.invNo || ''); } }}
+            onCreateJobCard={(c) => { const tok = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`; writeJobCardDraft(c, tok); try { const w = window.open(`/?open=newjobcard:${tok}#jobcards`, '_blank'); if (!w) { writeJobCardDraft(c); setActiveTab('jobcards'); } toast.success(`Job card for ${c.name} opened in a new tab`); } catch { writeJobCardDraft(c); setActiveTab('jobcards'); } }}
+            onCreateInvoice={(c) => { const tok = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`; writeInvoicePrefill(c, tok); try { const w = window.open(`/?open=newinvoice:${tok}#billing`, '_blank'); if (!w) { writeInvoicePrefill(c); setActiveTab('billing'); } toast.success(`Invoice for ${c.name} opened in a new tab`); } catch { writeInvoicePrefill(c); setActiveTab('billing'); } }} />
+        )}
+
+        {activeTab === 'vehicles' && (
+          <VehiclesModule demoMode={demoMode} demoCanDelete={demoCan('deleteVehicles')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} customers={customers} jobCards={jobCards} invoices={invoices} setCustomers={setCustomers} onAudit={pushAudit} actorEmail={capacityActorEmail}
+            onOpenJobCard={(j) => { try { window.open(`/?open=jobcard:${encodeURIComponent(j.jobNo || '')}#jobcards`, '_blank'); } catch { setActiveTab('jobcards'); setSearch(j.jobNo || ''); } }}
+            onOpenInvoice={(iv) => { try { window.open(`/?open=invoice:${encodeURIComponent(iv.invNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(iv.invNo || ''); } }}
+            onOpenCustomer={(c) => { try { window.open(`/?open=customer:${encodeURIComponent(c.code || c.id || '')}#customers`, '_blank'); } catch { setActiveTab('customers'); } }}
+            onViewJobCards={(v) => { try { window.open(`/?open=jobcardlist:${encodeURIComponent(v.regNo || '')}#jobcards`, '_blank'); } catch { setActiveTab('jobcards'); setSearch(v.regNo || ''); } }}
+            onViewInvoices={(v) => { try { window.open(`/?open=invoicelist:${encodeURIComponent(v.regNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(v.regNo || ''); } }}
+            onCreateJobCard={(c) => { const tok = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`; writeJobCardDraft(c, tok); try { const w = window.open(`/?open=newjobcard:${tok}#jobcards`, '_blank'); if (!w) { writeJobCardDraft(c); setActiveTab('jobcards'); } toast.success(`Job card for ${c.name} opened in a new tab`); } catch { writeJobCardDraft(c); setActiveTab('jobcards'); } }}
+            onCreateInvoice={(c) => { const tok = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`; writeInvoicePrefill(c, tok); try { const w = window.open(`/?open=newinvoice:${tok}#billing`, '_blank'); if (!w) { writeInvoicePrefill(c); setActiveTab('billing'); } toast.success(`Invoice for ${c.name} opened in a new tab`); } catch { writeInvoicePrefill(c); setActiveTab('billing'); } }} />
+        )}
+
+        {activeTab === 'reminders' && (
+          <RemindersModule customers={customers} invoices={invoices} jobCards={jobCards} purchaseOrders={purchaseOrders} suppliers={suppliers} demoMode={demoMode} onAudit={pushAudit} />
+        )}
+
+        {activeTab === 'billing' && (
+          <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoice} onDelete={deleteInvoice} onCollectPayment={demoMode ? undefined : collectInvoicePayment} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onDirtyChange={handleModuleDirtyChange}
+            onQuickCustomer={(data) => { if (data?.phone && !isIndianMobile(data.phone)) { toast.error(MOBILE_ERROR); return null; } if (data?.email && !isValidEmail(data.email)) { toast.error(EMAIL_ERROR); return null; } const id = `c_${Date.now()}`; const c = { id, createdAt: Date.now(), ...withCustomerDefaults({ ...data, phone: data?.phone ? mobileInput(data.phone) : '' }, customers) }; setCustomers((prev) => [...prev, c]).then(() => pushAudit({ action: 'Customer Created', entity: 'Customer', entityId: c.code || c.id, detail: `${c.code || ''} · ${c.name || ''}` })); return c; }}
+            onQuickVehicle={(customerId, veh) => { const id = `v_${Date.now()}`; const v = { id, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === customerId ? { ...c, vehicles: [...(c.vehicles || []), v] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: v.regNo || v.id, detail: `${v.regNo || ''} ${v.model || ''}`.trim() })); return v; }}
+            initialStatusFilter={pendingBillingStatusFilter}
+            onInitialStatusFilterHandled={() => setPendingBillingStatusFilter(null)}
+          />
+        )}
+
+        {activeTab === 'suppliers' && (
+          <>
+            <PageHeader title={tr('page.suppliers', 'Suppliers')} icon={Users} action={
+              <button
+                onClick={() => { setEditSupplier(null); setShowSupplierModal(true); }}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110 active:scale-95 transition shadow-lg shadow-[#d4af37]/10"
+              >
+                <Plus size={16} /> <span className="hidden sm:inline">{tr('suppliers.action.addSupplier', 'Add Supplier')}</span>
+              </button>
+            } />
+            {/* Suppliers module sub-navigation */}
+            <div className="flex items-center gap-1 mb-5 p-1 rounded-xl w-max max-w-full overflow-x-auto" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+              {[{ k: 'directory', label: tr('common.directory', 'Directory') }, { k: 'performance', label: tr('common.performance', 'Performance') }].map((tab) => (
+                <button key={tab.k} onClick={() => setSupSubView(tab.k)} className={`px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition ${supSubView === tab.k ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]' : 'text-white/60 hover:text-white/90 hover:bg-white/5'}`}>{tab.label}</button>
+              ))}
+            </div>
+            {supSubView === 'directory' && (
+              <SupplierDirectory
+                suppliers={suppliers}
+                inventory={inventory}
+                purchaseOrders={purchaseOrders}
+                restocks={restocks}
+                formatINR={formatINR}
+                loading={loading}
+                canManage={canManageData || demoMode}
+                onEdit={(s) => { setEditSupplier(s); setShowSupplierModal(true); }}
+                onArchive={(canManageData || demoMode) ? (s) => handleSupplierArchive(s.id, !s.archived) : undefined}
+                onDelete={(canManageData || demoMode) ? (s) => handleSupplierDelete(s.id) : undefined}
+                onAddPart={() => { setEditPart(null); setShowModal(true); }}
+                // View Part Details — new tab opens at the deep-link URL (resolved by
+                // the openPartDetail-consuming effect once that tab's own inventory
+                // loads); if the popup is blocked, fall through to the SAME
+                // openPartDetail used everywhere else a part is "viewed" in this app,
+                // right here in the current tab — no separate/duplicate destination
+                // for the two cases.
+                onViewPart={(p) => { const key = p.sku || p.name || ''; try { const w = window.open(`/?open=inventory:${encodeURIComponent(key)}#inventory`, '_blank'); if (!w) openPartDetail(p); } catch { openPartDetail(p); } }}
+                onAddToPO={(p) => { setPoSeed({ id: p.id, _n: Date.now() }); toast.success(`${p.name} added to Purchase Order`); }}
+                onReceiveStock={(p) => setRestockTarget(p)}
+                // Supplier-aware PO panel review — poPanel is now a RENDER FUNCTION, not a
+                // pre-built element. SupplierDirectory owns which supplier is currently
+                // selected (local state, not lifted here), so the docked PO builder can only
+                // become supplier-aware if SupplierDirectory itself supplies that selection at
+                // render time — it's called as poPanel(selectedSupplier) from inside there.
+                poPanel={(selectedSupplier) => <SupplierPOBuilder docked inventory={inventory} suppliers={suppliers} restocks={restocks} formatINR={formatINR} onCreatePO={createPO} seedPart={poSeed} demoMode={demoMode} selectedSupplier={selectedSupplier} />}
+                selectSupplierId={perfSelectId}
+              />
+            )}
+            {supSubView === 'performance' && (
+              <SupplierPerformance
+                suppliers={suppliers.filter((s) => !s.archived)}
+                inventory={inventory}
+                formatINR={formatINR}
+                loading={loading}
+                demoMode={demoMode}
+                demoCanExport={demoCan('exportExcel')}
+                onProtectedAction={() => protectedDemoToast(true)}
+                onOpenSupplier={(id, target) => { if (target === '_blank') { try { window.open(`/?open=suppliers:${encodeURIComponent(id)}#suppliers`, '_blank'); return; } catch { /* fall through */ } } setSupSubView('directory'); setPerfSelectId(id); setTimeout(() => setPerfSelectId(null), 100); }}
+              />
+            )}
+          </>
+        )}
+
+        {activeTab === 'analytics' && (isAdmin || demoMode) && (
+          <AnalyticsView
+            inventory={inventory}
+            sales={sales}
+            rollups={rollups}
+            restocks={restocks}
+            auditLog={auditLog}
+            stockAdjustments={stockAdjustments}
+            onEditPart={(p) => {
+              setEditPart(p);
+              setShowModal(true);
+            }}
+            demoMode={demoMode}
+            demoCanExport={demoCan('exportExcel')}
+            onProtectedAction={() => protectedDemoToast(true)}
+            actorEmail={capacityActorEmail}
+            capacityRefreshTick={capacityRefreshTick}
+            onAuditCleanupComplete={() => { refreshCapacityCollection('auditLog'); setCapacityRefreshTick((n) => n + 1); }}
+          />
+        )}
+
+        {activeTab === 'sales' && <SalesView sales={sales} demoMode={demoMode} demoCanExport={demoCan('exportExcel')} onProtectedAction={() => protectedDemoToast(true)} actorEmail={capacityActorEmail} onCleanupComplete={() => refreshCapacityCollection('sales')} />}
+        {activeTab === 'services' && <ServicesView sales={sales} demoMode={demoMode} demoCanExport={demoCan('exportExcel')} onProtectedAction={() => protectedDemoToast(true)} actorEmail={capacityActorEmail} onCleanupComplete={() => refreshCapacityCollection('sales')} />}
+        {activeTab === 'stockin' && <StockInView restocks={restocks} demoMode={demoMode} demoCanExport={demoCan('exportExcel')} onProtectedAction={() => protectedDemoToast(true)} actorEmail={capacityActorEmail} capacityRefreshTick={capacityRefreshTick} onCleanupComplete={() => { refreshCapacityCollection('restocks'); setCapacityRefreshTick((n) => n + 1); }} />}
+        {activeTab === 'stockout' && <StockOutView sales={sales} stockAdjustments={stockAdjustments} demoMode={demoMode} demoCanExport={demoCan('exportExcel')} onProtectedAction={() => protectedDemoToast(true)} actorEmail={capacityActorEmail} capacityRefreshTick={capacityRefreshTick} onCleanupComplete={() => { refreshCapacityCollection('stockAdjustments'); setCapacityRefreshTick((n) => n + 1); }} />}
+        {activeTab === 'reports' && (
+          <ReportsView
+            isAdmin={canManageData || demoMode}
+            demoMode={demoMode}
+            demoCanExport={demoCan('exportExcel')}
+            onProtectedAction={() => protectedDemoToast(true)}
+            formatINR={formatINR}
+            invoices={invoices}
+            customers={customers}
+            jobCards={jobCards}
+            inventory={inventory}
+            suppliers={suppliers}
+            purchaseOrders={purchaseOrders}
+            sales={sales}
+            restocks={restocks}
+            stockAdjustments={stockAdjustments}
+            auditLog={auditLog}
+            counts={{ inventory: inventory.length, sales: sales.length, suppliers: suppliers.length, audit: auditLog.length, total: inventory.length + suppliers.length + sales.length + restocks.length + auditLog.length }}
+          />
+        )}
+        {activeTab === 'alerts' && (
+          <AlertsView
+            alerts={allAlerts}
+            readIds={readAlerts}
+            archivedIds={archivedAlerts}
+            onMarkRead={markAlertRead}
+            onMarkAllRead={markAllAlertsRead}
+            onArchive={archiveAlert}
+            canDestroy={canDelete}
+            inventory={inventory}
+            onEditPart={(p) => { setEditPart(p); setShowModal(true); }}
+            onQuickReceive={(p) => setRestockTarget(p)}
+            capacityStatus={alertCapacityStatus}
+            capacityGetEntries={() => alertCapacityEntries}
+            capacityOnConfirm={pruneAlertEntries}
+            onCapacityCleanup={() => {}}
+          />
+        )}
+        {activeTab === 'settings' && (
+          <SettingsView
+            onDirtyChange={setSettingsDirty}
+            totalRecords={inventory.length + suppliers.length + sales.length + restocks.length + auditLog.length}
+            lastBackup={lastBackup}
+            lastSync={lastSync}
+            online={online}
+            isAdmin={isAdmin}
+            demoMode={demoMode}
+            demoAdmin={demoAdmin}
+            sidebarCollapsed={sidebarCollapsed}
+            setSidebarCollapsed={setSidebarCollapsed}
+            userEmail={user?.email}
+            onBackup={exportFullBackup}
+            onRestore={() => backupInputRef.current?.click()}
+            admins={dbAdmins}
+            bootstrapAdmins={bootstrapAdmins}
+            onAddAdmin={addAdminEmail}
+            onRemoveAdmin={removeAdminEmail}
+            staffPerms={staffPerms}
+            onAddStaff={addStaffEmail}
+            onRemoveStaff={removeStaffEmail}
+            onSetStaffPerm={setStaffPermission}
+            recoveryMeta={recoveryMeta}
+            onResetAllData={resetAllData}
+            onRestoreVault={restoreFromVault}
+          />
+        )}
+        {activeTab === 'settings' && ((isAdmin && !demoMode) || (demoMode && demoAdmin)) && (
+          <div className="mt-5 rounded-2xl p-5" style={{ background: 'rgba(212,175,55,0.06)', border: '1px solid rgba(212,175,55,0.25)' }}>
+            <div className="flex items-center gap-2 mb-1">
+              <FlaskConical size={18} className="text-[#d4af37]" />
+              <h3 className="text-base font-bold text-white">Demo Management</h3>
+            </div>
+            {isAdmin && !demoMode ? (
+              <>
+                <p className="text-xs text-white/50 mb-4">Switch your session into Demo Admin Mode to manage the sample demo dataset. Your production data stays completely isolated and untouched. No logout required.</p>
+                <button
+                  onClick={() => { try { sessionStorage.setItem('maruti_demo', '1'); sessionStorage.setItem('maruti_demo_admin', '1'); } catch {}; window.location.href = '/?demo=admin'; }}
+                  className="px-4 py-2.5 rounded-xl text-sm font-bold bg-[#d4af37]/15 border border-[#d4af37]/30 text-[#d4af37] hover:bg-[#d4af37]/25"
+                >🛠 Enter Demo Admin Mode</button>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-white/50 mb-4">Demo Admin tools — restore the original seeded demo dataset for this session. Production data is never touched.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button onClick={() => resetDemoScope('all', 'All demo data')} className="px-3 py-2.5 rounded-xl text-sm font-semibold bg-[#d4af37]/15 border border-[#d4af37]/30 text-[#d4af37] hover:bg-[#d4af37]/25">↺ Restore Original Demo Dataset</button>
+                  <button onClick={() => resetDemoScope('inventory', 'Inventory')} className="px-3 py-2.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10">Reset Demo Inventory</button>
+                  <button onClick={() => resetDemoScope('sales', 'Sales')} className="px-3 py-2.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10">Reset Demo Sales</button>
+                  <button onClick={() => resetDemoScope('suppliers', 'Suppliers')} className="px-3 py-2.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10">Reset Demo Suppliers</button>
+                  <button onClick={() => resetDemoScope('alerts', 'Alerts')} className="px-3 py-2.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10">Reset Demo Alerts</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      </main>
+
+      {showModal && (
+        <PartModal
+          key={`part:${editPart?.id || 'new'}:${revOf(editPart)}`}
+          demoMode={demoMode}
+          readOnly={partViewOnly}
+          banner={partBanner}
+          part={editPart}
+          inventory={inventory}
+          suppliers={suppliers}
+          saving={saving}
+          isAdmin={canSeeCost}
+          categoryTree={mergedCategoryTree}
+          vehicleTree={mergedVehicleTree}
+          salesHistory={sales}
+          onAddCategory={addCategoryOption}
+          onAddVehicle={addVehicleOption}
+          onSave={handleSave}
+          onSaveSupplier={persistSupplierEdit}
+          onCreateSupplier={createSupplierNow}
+          onClose={() => { closePartModal(); duplicateOriginRef.current = null; }}
+          onDirtyChange={handleModuleDirtyChange}
+        />
+      )}
+      {partReviewDialog}
+
+      {showSupplierModal && (
+        <SupplierModal
+          key={`supplier:${editSupplier?.id || 'new'}:${revOf(editSupplier)}`}
+          demoMode={demoMode}
+          readOnly={supplierViewOnly}
+          banner={supplierBanner}
+          supplier={editSupplier}
+          saving={supplierSaving}
+          onSave={handleSupplierSave}
+          onClose={closeSupplierModal}
+          onDirtyChange={handleModuleDirtyChange}
+        />
+      )}
+      {supplierReviewDialog}
+
+      {showLogoutConfirm && (
+        <LogoutConfirmModal
+          onCancel={() => setShowLogoutConfirm(false)}
+          onConfirm={confirmLogout}
+        />
+      )}
+
+      {/* Task 3: possible-duplicate prompt */}
+      {dupPrompt && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }} onClick={() => setDupPrompt(null)}>
+          <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: 'var(--surface-3)', border: '1px solid rgba(245,158,11,0.4)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-1"><AlertTriangle size={18} className="text-amber-400" /><h3 className="text-base font-bold text-white">Possible duplicate</h3></div>
+            <p className="text-sm text-white/60 mt-1">A part like this already exists:</p>
+            <div className="mt-2 rounded-xl px-3 py-2 bg-white/[0.04] border border-white/10">
+              <p className="text-sm font-semibold text-white">{dupPrompt.existing.name}</p>
+              <p className="text-[11px] text-white/45">{dupPrompt.existing.sku ? `SKU ${dupPrompt.existing.sku} · ` : ''}Stock {dupPrompt.existing.stock ?? 0}{dupPrompt.existing.vehicle ? ` · ${dupPrompt.existing.vehicle}` : ''}</p>
+            </div>
+            <div className="flex flex-col gap-2 mt-4">
+              <button
+                onClick={() => { const ex = dupPrompt.existing; setDupPrompt(null); setShowModal(false); setEditPart(ex); setTimeout(() => setShowModal(true), 0); }}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-white/85 hover:bg-white/10"
+              >
+                View existing
+              </button>
+              <div className="flex gap-2">
+                <button onClick={() => setDupPrompt(null)} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/70">Cancel</button>
+                <button
+                  onClick={() => { const f = dupPrompt.form; setDupPrompt(null); handleSave({ ...f, _dupAck: true }); }}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]"
+                >
+                  Create anyway
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FIX-09: on-brand confirmation modal for destructive actions */}
+      {confirmState && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }} onClick={() => setConfirmState(null)}>
+          <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: 'var(--surface-3)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-white">{confirmState.title}</h3>
+            <p className="text-sm text-white/60 mt-2 leading-relaxed">{confirmState.message}</p>
+            <div className="flex gap-2.5 mt-5">
+              <button onClick={() => setConfirmState(null)} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition">Cancel</button>
+              <button
+                onClick={() => { const fn = confirmState.onConfirm; setConfirmState(null); fn?.(); }}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition ${confirmState.danger ? 'text-white bg-red-500/90 hover:bg-red-500' : 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] hover:brightness-110'}`}
+              >
+                {confirmState.confirmLabel || 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {checkoutPart && (
+        <CheckoutModal
+          key={`co:${checkoutPart.id}`}
+          part={checkoutPart}
+          onConfirm={handleSell}
+          isAdmin={isAdmin || demoAdmin}
+          onClose={() => setCheckoutPart(null)}
+        />
+      )}
+
+      {quickPick && (
+        <QuickPickModal
+          mode={quickPick}
+          inventory={inventory}
+          purchaseOrders={purchaseOrders}
+          demoMode={demoMode}
+          onClose={() => setQuickPick(null)}
+          onPick={(p) => {
+            const mode = quickPick;
+            setQuickPick(null);
+            if (mode === 'sell') handleSellClick(p);
+            else if (mode === 'adjust') setAdjustTarget(p);
+            else setRestockTarget(p);
+          }}
+          onPickPO={(po) => {
+            setQuickPick(null);
+            setActiveTab('inventory');
+            setInvSubView('po');
+            setPendingReceivePOId(po.id);
+          }}
+        />
+      )}
+
+      {showBulkReceive && (
+        <BulkReceiveModal
+          inventory={inventory}
+          suppliers={suppliers}
+          onClose={() => setShowBulkReceive(false)}
+          onSubmit={handleBulkReceive}
+        />
+      )}
+
+      {showBulkAdjust && (
+        <BulkAdjustModal
+          parts={inventory.filter((p) => selectedIds.has(p.id))}
+          onClose={() => setShowBulkAdjust(false)}
+          onSubmit={handleBulkAdjust}
+        />
+      )}
+
+      {showBulkReorder && (
+        <BulkReorderModal
+          parts={inventory.filter((p) => selectedIds.has(p.id))}
+          onClose={() => setShowBulkReorder(false)}
+          onSubmit={handleBulkReorder}
+        />
+      )}
+
+      {restockTarget && (
+        <RestockModal
+          key={`rs:${restockTarget.id}`}
+          part={restockTarget}
+          suppliers={suppliers}
+          onConfirm={handleReceiveStock}
+          onClose={() => setRestockTarget(null)}
+        />
+      )}
+
+      {adjustTarget && (
+        <StockAdjustModal
+          key={`adj:${adjustTarget.id}`}
+          part={adjustTarget}
+          history={stockAdjustments}
+          onConfirm={handleAdjustStock}
+          onClose={() => setAdjustTarget(null)}
+        />
+      )}
+
+      {ledgerTarget && (
+        <ProductLedgerModal
+          part={ledgerTarget}
+          sales={sales}
+          restocks={restocks}
+          stockAdjustments={stockAdjustments}
+          onClose={() => setLedgerTarget(null)}
+        />
+      )}
+
+      {showImport && (
+        <ImportModal
+          existingSkus={new Set(inventory.map((p) => safeLower(p.sku)).filter(Boolean))}
+          onImported={(n) => recordIO('import', n)}
+          onClose={() => setShowImport(false)}
+        />
+      )}
+
+      <CommandPalette
+        open={cmdkOpen}
+        onClose={() => setCmdkOpen(false)}
+        inventory={inventory}
+        suppliers={suppliers}
+        customers={customers}
+        invoices={invoices}
+        jobCards={jobCards}
+        onPickCustomer={(c) => { setActiveTab('customers'); setSearch(c.name || ''); }}
+        onPickInvoice={(iv) => { setActiveTab('billing'); setSearch(iv.invNo || ''); }}
+        onPickJobCard={(j) => { setActiveTab('jobcards'); setSearch(j.jobNo || ''); }}
+        onPickPart={(p) => { setEditPart(p); setShowModal(true); }}
+        onPickSupplier={() => setActiveTab('suppliers')}
+        // Same navigation-consistency class as openPartDetail above (Multiple Entry
+        // Points audit): this landed on the generic Inventory Dashboard sub-view
+        // instead of the category-filtered Parts list, same root cause (invSubView
+        // never set) as the View Part bug — category drill-down elsewhere in the app
+        // (InventoryCategories.jsx's onOpenCategory) already gets this right.
+        onPickCategory={(c) => { setActiveTab('inventory'); setInvSubView('parts'); setCategoryFilter(c); }}
+        onPickVehicle={(v) => { setActiveTab('inventory'); setSearch(v); }}
+      />
+
+      {/* Restore safety: never executes immediately — user must type RESTORE. */}
+      {restoreConfirm && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(6px)' }} onClick={() => { setRestoreConfirm(false); pendingRestoreFile.current = null; }}>
+          <div className="w-full max-w-md rounded-2xl p-5" style={{ background: 'var(--surface-1)', border: '1px solid rgba(239,68,68,0.35)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="flex items-center justify-center w-9 h-9 rounded-full bg-red-500/15"><Upload size={18} className="text-red-400" /></span>
+              <h3 className="text-base font-bold text-white">Restore Backup</h3>
+            </div>
+            <p className="text-sm text-white/60 leading-relaxed mb-1">This may <span className="text-red-300 font-semibold">replace current data</span> with the backup’s version (records with matching IDs are overwritten). This cannot be undone.</p>
+            <p className="text-xs text-white/45 mb-3">File: {pendingRestoreFile.current?.name || '—'}</p>
+            <label className="block text-[11px] uppercase tracking-wider text-white/45 mb-1.5">Type <span className="text-white font-bold">RESTORE</span> to continue</label>
+            <input
+              autoFocus
+              value={restoreText}
+              onChange={(e) => setRestoreText(e.target.value)}
+              placeholder="RESTORE"
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/15 text-white placeholder-white/25 focus:border-red-400/60 mb-4"
+            />
+            <div className="flex gap-2.5">
+              <button onClick={() => { setRestoreConfirm(false); pendingRestoreFile.current = null; }} className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80 hover:bg-white/10">Cancel</button>
+              <button
+                disabled={restoreText !== 'RESTORE'}
+                onClick={() => { const f = pendingRestoreFile.current; setRestoreConfirm(false); pendingRestoreFile.current = null; if (f && restoreText === 'RESTORE') importFullBackup(f); }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition disabled:opacity-40 disabled:cursor-not-allowed text-white bg-red-500/80 hover:bg-red-500 border border-red-400/40"
+              >
+                Restore Backup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CHANGE-05: mobile filter bottom sheet */}
+      {showFilterSheet && (
+        <div className="fixed inset-0 z-[100] flex items-end sm:hidden" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={() => setShowFilterSheet(false)}>
+          <div className="w-full rounded-t-3xl p-4 pb-6 max-h-[80vh] overflow-y-auto" style={{ background: 'var(--surface-3)', border: '1px solid rgba(var(--fg-rgb),0.08)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-white">Filters</h3>
+              <button onClick={() => { setCategoryFilter('All'); setInvFilter('active'); }} className="text-xs text-white/50 hover:text-white">Clear all</button>
+            </div>
+            <p className="text-[10px] uppercase tracking-wider text-white/45 mb-2">Status</p>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              {[
+                ['active', 'Active'],
+                ['low', 'Low Stock'],
+                ['out', 'Out of Stock'],
+                ['reorder', 'Needs Reorder'],
+                ['archived', 'Archived'],
+                ['all', 'All'],
+              ].map(([v, label]) => {
+                // archived viewable by all roles
+                const on = invFilter === v;
+                const tone = v === 'low' ? 'border-amber-500/40 text-amber-300 bg-amber-500/15' : v === 'out' ? 'border-red-500/40 text-red-300 bg-red-500/15' : 'border-[#d4af37]/40 text-[#d4af37] bg-[#d4af37]/15';
+                return (
+                  <button
+                    key={v}
+                    onClick={() => setInvFilter(v)}
+                    className={`py-2.5 rounded-xl text-sm font-bold border transition ${on ? tone : 'bg-white/5 text-white/60 border-white/10'}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] uppercase tracking-wider text-white/45 mb-2">Category</p>
+            <div className="grid grid-cols-2 gap-2">
+              {categoryOptionsForFilter.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setCategoryFilter(cat)}
+                  className={`py-2.5 px-3 rounded-xl text-sm font-medium text-left truncate ${categoryFilter === cat ? 'bg-gradient-to-r from-[#d4af37] to-[#aa801e] text-black font-bold' : 'bg-white/5 text-white/60 border border-white/10'}`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setShowFilterSheet(false)} className="w-full mt-5 py-3 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]">
+              Show {filtered.length} results
+            </button>
+          </div>
+        </div>
+      )}
+
+      {alternativePart && (
+        <AlternativeModal
+          part={alternativePart}
+          alternatives={inventory.filter(
+            (p) =>
+              p.id !== alternativePart.id &&
+              (p.stock || 0) > 0 &&
+              safeLower(p.category) === safeLower(alternativePart.category) &&
+              !!alternativePart.category
+          )}
+          onPick={(alt) => {
+            setAlternativePart(null);
+            setCheckoutPart(alt); // pivot: sell the alternative instead
+          }}
+          onClose={() => setAlternativePart(null)}
+        />
+      )}
+
+      {reorderTarget && (
+        <ReorderModal
+          target={reorderTarget}
+          onPick={(number) => {
+            openWhatsAppPO(reorderTarget.part, reorderTarget.supplierName, number);
+            setReorderTarget(null);
+          }}
+          onClose={() => setReorderTarget(null)}
+        />
+      )}
+
+      {/* Fix 5: shared hover preview — sizes to the image's natural aspect ratio
+          (capped), so wide/tall parts fill a product-card frame with no letterbox
+          white bands. Flips away from the cursor and clamps to the viewport. */}
+      {hoveredImage.src && (() => {
+        const MAX = 224, FRAME = MAX + 20, GAP = 18, PAD = 12; // FRAME ≈ image + card padding
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+        let left = hoveredImage.x + GAP;
+        if (left + FRAME + PAD > vw) left = hoveredImage.x - FRAME - GAP;
+        if (left < PAD) left = PAD;
+        let top = hoveredImage.y + GAP;
+        if (top + FRAME + PAD > vh) top = hoveredImage.y - FRAME - GAP;
+        if (top < PAD) top = PAD;
+        return (
+          <div className="pointer-events-none" style={{ position: 'fixed', top, left, zIndex: 99999 }}>
+            <div className="rounded-xl shadow-2xl border-2 border-[#d4af37]/60 bg-white flex items-center justify-center" style={{ padding: 10 }}>
+              <img
+                src={hoveredImage.src}
+                alt="preview"
+                style={{ maxWidth: MAX, maxHeight: MAX, width: 'auto', height: 'auto', display: 'block' }}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Multi-supplier reorder: choose which supplier to order from. Primary is
+          pre-highlighted; works in demo, demo-admin and production. */}
+      {reorderDialog && (() => {
+        const d = reorderDialog;
+        const p = d.part;
+        return (
+          <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(6px)' }} onClick={() => setReorderDialog(null)}>
+            <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
+                <h3 className="text-base font-bold text-white flex items-center gap-2"><RefreshCw size={16} className="text-[#d4af37]" /> Reorder part</h3>
+                <button onClick={() => setReorderDialog(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
+              </div>
+              <div className="p-5 space-y-3">
+                {d.existing && (
+                  <div className="rounded-xl p-3 text-xs" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)' }}>
+                    <span className="text-amber-300 font-semibold">A reorder is already active</span>
+                    <span className="text-white/60"> — {d.existing.status}. You can still send another message, raise a PO, or cancel the active reorder below.</span>
+                  </div>
+                )}
+                <div className="rounded-xl divide-y divide-white/[0.06]" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+                  {[
+                    ['Part', p.name],
+                    ['Current stock', `${p.stock || 0}`],
+                    ['Minimum stock', `${p.minStock || 5}`],
+                    ['Contact', d.phone ? d.phone : 'no number on file'],
+                  ].map(([k, v]) => (
+                    <div key={k} className="flex justify-between gap-3 px-3 py-2 text-sm"><span className="text-white/45">{k}</span><span className="text-white/85 text-right font-medium">{v}</span></div>
+                  ))}
+                </div>
+                {/* Issue 7.10 — real supplier choice, in place, from the part's own
+                    getPartSuppliers() data (never invented). Only shown when the part
+                    actually has more than one; a single-supplier part just shows the
+                    static row below like before. */}
+                {d.suppliers.length > 1 ? (
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-wider text-white/45 mb-1.5">Supplier</label>
+                    <div className="space-y-1.5">
+                      {d.suppliers.map((sup, i) => {
+                        const active = (sup.id || sup.name) === (d.supplierId || d.supplierName);
+                        return (
+                          <button
+                            key={sup.id || i}
+                            onClick={() => setReorderDialog((prev) => ({ ...prev, supplierId: sup.id || null, supplierName: sup.name, phone: tenDigits(sup.phone) || '' }))}
+                            className={`w-full text-left px-3 py-2 rounded-xl flex items-center justify-between transition ${active ? 'bg-[#d4af37]/10' : 'hover:bg-white/5'}`}
+                            style={{ border: `1px solid ${active ? 'rgba(212,175,55,0.5)' : 'rgba(var(--fg-rgb),0.1)'}` }}
+                          >
+                            <span>
+                              <span className="block text-sm font-semibold text-white">{sup.name}</span>
+                              <span className="block text-[11px] text-white/45">{sup.phone || 'no number'}{sup.isPreferred ? ' · Primary' : ' · Secondary'}</span>
+                            </span>
+                            {active && <span className="text-[10px] font-bold uppercase tracking-wide text-[#d4af37]">Selected</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex justify-between gap-3 px-3 py-2 text-sm rounded-xl" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+                    <span className="text-white/45">Supplier</span><span className="text-white/85 text-right font-medium">{d.supplierName || '— none linked —'}</span>
+                  </div>
+                )}
+                {/* Issue 7.11 — the recommended quantity is a starting point, not an
+                    enforced value; editable here and threaded through both the
+                    WhatsApp message and the PO line item below. */}
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wider text-white/45 mb-1.5">Order Quantity <span className="text-white/45 normal-case">(suggested: {d.suggestedQty})</span></label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={d.qty}
+                    onChange={(e) => { const v = parseInt(e.target.value, 10); setReorderDialog((prev) => ({ ...prev, qty: Number.isFinite(v) && v > 0 ? v : '' })); }}
+                    className="w-full px-3 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 transition"
+                  />
+                </div>
+              </div>
+              <div className="px-5 pb-5 space-y-2 safe-bottom-pad">
+                <button onClick={() => reorderViaWhatsApp(d)} disabled={!d.phone || !d.qty} className="w-full h-11 rounded-xl text-sm font-bold flex items-center justify-center gap-2 bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition"><MessageCircle size={16} /> Send WhatsApp reorder</button>
+                <button onClick={() => reorderViaPO(d)} disabled={!d.qty} className="w-full h-11 rounded-xl text-sm font-bold flex items-center justify-center gap-2 text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition"><ClipboardList size={16} /> Create purchase order</button>
+                {d.existing && canDelete && (
+                  <button onClick={() => { clearReorderRequest(d.existing); setReorderDialog(null); }} className="w-full h-10 rounded-xl text-sm font-semibold text-red-400 bg-red-500/10 border border-red-500/25 active:scale-95 transition">Cancel active reorder</button>
+                )}
+                <button onClick={() => setReorderDialog(null)} className="w-full h-10 rounded-xl text-sm font-semibold text-white/60 hover:text-white/90 bg-white/5 border border-white/10 transition">Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {showPOBuilder && (
+        <SupplierPOBuilder
+          inventory={inventory}
+          suppliers={suppliers}
+          restocks={restocks}
+          formatINR={formatINR}
+          onClose={() => setShowPOBuilder(false)}
+          onCreatePO={createPO}
+          demoMode={demoMode}
+        />
+      )}
+
+
+      {/* Mobile bottom navigation (phones only) */}
+      <nav
+        className="md:hidden fixed bottom-0 left-0 right-0 z-[80] flex items-stretch"
+        style={{ background: 'var(--surface-1)', backdropFilter: 'blur(12px)', borderTop: '1px solid rgba(var(--fg-rgb),0.08)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        {[
+          { id: 'overview', label: tr('nav.overview', 'Overview'), icon: LayoutDashboard },
+          { id: 'inventory', label: tr('nav.inventory', 'Inventory'), icon: Package },
+          { id: 'sales', label: tr('nav.sales', 'Sales'), icon: ShoppingCart },
+          { id: 'alerts', label: tr('nav.alerts', 'Alerts'), icon: AlertTriangle, badge: unreadAlertCount },
+          { id: '__more', label: tr('common.more', 'More'), icon: MoreHorizontal },
+        ].map((it) => {
+          const active = it.id === '__more' ? false : activeTab === it.id;
+          return (
+            <button
+              key={it.id}
+              onClick={() => { if (it.id === '__more') { setSidebarMobileOpen(true); } else { setActiveTab(it.id); } }}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 py-2 relative active:scale-95 transition"
+            >
+              <span className="relative">
+                <it.icon size={20} style={{ color: active ? '#d4af37' : 'rgba(var(--fg-rgb),0.5)' }} />
+                {it.badge > 0 && (
+                  <span className="absolute -top-1.5 -right-2 min-w-[15px] h-[15px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">{it.badge > 9 ? '9+' : it.badge}</span>
+                )}
+              </span>
+              <span className="text-[10px] font-medium" style={{ color: active ? '#d4af37' : 'rgba(var(--fg-rgb),0.45)' }}>{it.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}

@@ -1,0 +1,384 @@
+/* Balaji Auto OS — "Ignition" login. Scoped module: nothing here leaks to global CSS.
+   Palette is BRAND ONLY — gold / amber / warm glow / dark charcoal. No blue/purple/cyan/green. */
+
+.scene {
+  --gold: #d4af37;
+  --gold-soft: #e9c766;
+  --amber: #c8901f;
+  --char-0: #0a0a0b;   /* deep charcoal base */
+  --char-1: #121110;
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: var(--char-0);
+  color: #f4f1ea;
+  font-family: Inter, Montserrat, system-ui, sans-serif;
+}
+
+/* ── AURORA ─────────────────────────────────────────────────────────────────
+   2 blurred radial blobs, transform-animated only (never filter/bg-position in the
+   loop — those thrash the compositor). GPU-composited via translateZ + will-change. */
+.aurora {
+  position: absolute;
+  inset: -20%;
+  pointer-events: none;
+  z-index: 0;
+}
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  opacity: 0.55;
+}
+.blob1 {
+  width: 46vw; height: 46vw;
+  left: 8%; top: 18%;
+  background: radial-gradient(circle at 50% 50%, rgba(212,175,55,0.55), rgba(212,175,55,0) 70%);
+  animation: drift1 22s ease-in-out infinite alternate;
+}
+.blob2 {
+  width: 38vw; height: 38vw;
+  left: 30%; top: 40%;
+  background: radial-gradient(circle at 50% 50%, rgba(200,144,31,0.42), rgba(200,144,31,0) 70%);
+  animation: drift2 28s ease-in-out infinite alternate;
+}
+@keyframes drift1 {
+  from { transform: translate3d(0,0,0) scale(1); }
+  to   { transform: translate3d(6%, -4%, 0) scale(1.12); }
+}
+@keyframes drift2 {
+  from { transform: translate3d(0,0,0) scale(1.05); }
+  to   { transform: translate3d(-5%, 5%, 0) scale(0.95); }
+}
+/* very subtle pointer parallax; driven by --px/--py set on the scene, one write/frame */
+.auroraParallax {
+  transform: translate3d(calc(var(--px, 0) * 14px), calc(var(--py, 0) * 14px), 0);
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* a soft vignette so text always has a dark substrate (contrast) */
+.vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(ellipse 120% 100% at 42% 45%, transparent 45%, rgba(0,0,0,0.55) 100%);
+}
+
+/* ── NEEDLE SWEEP (first visit only) ────────────────────────────────────────
+   A single gold hairline draws L→R across black — the "power on" beat. */
+.needle {
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  height: 1px;
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent 0%, rgba(212,175,55,0) 8%,
+    rgba(233,199,102,0.9) 48%, rgba(233,199,102,1) 50%,
+    rgba(233,199,102,0.9) 52%, rgba(212,175,55,0) 92%, transparent 100%);
+  transform: scaleX(0);
+  transform-origin: left center;
+  box-shadow: 0 0 18px rgba(233,199,102,0.6);
+}
+.needleOn { animation: sweep 380ms cubic-bezier(0.4, 0, 0.1, 1) forwards; }
+@keyframes sweep {
+  0%   { transform: scaleX(0); opacity: 0; }
+  30%  { opacity: 1; }
+  70%  { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(1); opacity: 0; }
+}
+
+/* ── GLASS CARD ─────────────────────────────────────────────────────────────
+   Frosted surface, but text sits on a solid-enough inner layer for WCAG AA. */
+.card {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  border-radius: 22px;
+  padding: 34px 32px 28px;
+  background: linear-gradient(160deg, rgba(28,26,24,0.82), rgba(16,15,14,0.9));
+  border: 1px solid rgba(212,175,55,0.18);
+  box-shadow:
+    0 24px 70px rgba(0,0,0,0.6),
+    inset 0 1px 0 rgba(255,255,255,0.05);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+/* thin gold top edge — the "instrument bezel" */
+.card::before {
+  content: '';
+  position: absolute;
+  left: 10%; right: 10%; top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(212,175,55,0.6), transparent);
+}
+.cardShake { animation: shake 420ms cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+/* error: the ring flashes red once (the "machine rejected you" beat) */
+.cardReject { animation: reject 700ms ease-out; }
+@keyframes reject {
+  0%, 100% { border-color: rgba(212,175,55,0.18); }
+  15%, 45% { border-color: rgba(248,113,113,0.7); box-shadow: 0 24px 70px rgba(0,0,0,0.6), 0 0 30px rgba(248,113,113,0.25); }
+}
+
+/* ── FIELDS ─────────────────────────────────────────────────────────────────
+   Glass input + floating label + gold focus ring that breathes once. */
+.fieldWrap { position: relative; margin-bottom: 16px; }
+.field {
+  width: 100%;
+  height: 50px;
+  padding: 0 14px 0 42px;
+  border-radius: 13px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.09);
+  color: #f4f1ea;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 200ms, background 200ms, box-shadow 200ms;
+}
+.field::placeholder { color: rgba(244,241,234,0.32); }
+.field:focus {
+  border-color: rgba(212,175,55,0.55);
+  background: rgba(212,175,55,0.05);
+  box-shadow: 0 0 0 3px rgba(212,175,55,0.12);
+  animation: ringBreathe 600ms ease-out;
+}
+@keyframes ringBreathe {
+  0% { box-shadow: 0 0 0 0 rgba(212,175,55,0.28); }
+  100% { box-shadow: 0 0 0 3px rgba(212,175,55,0.12); }
+}
+.fieldIcon {
+  position: absolute;
+  left: 14px; top: 50%;
+  transform: translateY(-50%);
+  color: rgba(233,199,102,0.55);
+  pointer-events: none;
+}
+.fieldLabel {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(233,199,102,0.75);
+  margin-bottom: 7px;
+  font-weight: 600;
+}
+.pwToggle {
+  position: absolute;
+  right: 8px; top: 50%;
+  transform: translateY(-50%);
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(244,241,234,0.4);
+  border-radius: 9px;
+  background: transparent;
+  transition: color 180ms, background 180ms;
+}
+.pwToggle:hover { color: rgba(233,199,102,0.9); background: rgba(255,255,255,0.05); }
+
+/* ── IGNITION BUTTON ────────────────────────────────────────────────────────
+   Gold fill + a sheen that sweeps once on reveal and again on hover. */
+.btn {
+  position: relative;
+  width: 100%;
+  height: 52px;
+  margin-top: 6px;
+  border-radius: 14px;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  color: #1a1408;
+  background: linear-gradient(135deg, #e9c766, #c8901f);
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: transform 120ms ease, box-shadow 200ms ease;
+  box-shadow: 0 8px 24px rgba(200,144,31,0.28);
+}
+.btn:hover:not(:disabled) { box-shadow: 0 10px 30px rgba(200,144,31,0.42); }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(0.995); }
+.btn:disabled { opacity: 0.7; cursor: default; }
+.btn .sheen {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255,255,255,0.5), transparent);
+  transform: translateX(-140%) skewX(-18deg);
+}
+.btnSheenOnce .sheen { animation: sheen 900ms ease-out 1; }
+.btn:hover:not(:disabled) .sheen { animation: sheen 850ms ease-out 1; }
+@keyframes sheen {
+  from { transform: translateX(-140%) skewX(-18deg); }
+  to   { transform: translateX(325%) skewX(-18deg); }
+}
+/* progress rail while signing in (keeps existing loading logic) */
+.progressRail {
+  position: relative;
+  width: 100%; height: 3px;
+  border-radius: 3px;
+  background: rgba(26,20,8,0.35);
+  overflow: hidden;
+}
+.progressRail::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 35%;
+  border-radius: 3px;
+  background: rgba(26,20,8,0.85);
+  transform: translateX(-100%);
+  animation: rail 1s linear infinite;
+}
+@keyframes rail { from { transform: translateX(-100%); } to { transform: translateX(285%); } }
+
+/* ── SYSTEM STATUS ──────────────────────────────────────────────────────────*/
+.status {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: rgba(244,241,234,0.45);
+}
+.statusDot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 10px rgba(52,211,153,0.7);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* ── LEFT PANEL ─────────────────────────────────────────────────────────────*/
+.wordmark {
+  font-weight: 800;
+  font-size: clamp(26px, 3.2vw, 44px);
+  letter-spacing: 0.08em;
+  color: #f4f1ea;
+  line-height: 1.05;
+}
+.wordmarkGold { color: var(--gold-soft); }
+.tagline {
+  margin-top: 18px;
+  font-size: clamp(13px, 1.2vw, 15px);
+  letter-spacing: 0.04em;
+  color: rgba(244,241,234,0.5);
+  font-weight: 400;
+  max-width: 30ch;
+}
+
+/* ── DEMO ENTRY + FOOTER (moved out of inline styles in login.js) ────────────
+   Was inline-styled with no hover / focus / disabled feedback — inconsistent with the
+   primary button and a keyboard/a11y gap. Now a real secondary button. */
+.demoWrap { width: 100%; display: flex; flex-direction: column; gap: 12px; }
+.orRow { display: flex; align-items: center; gap: 12px; }
+.orLine { flex: 1; height: 1px; background: rgba(255,255,255,0.1); }
+.orText { font-size: 9px; letter-spacing: 0.3em; color: rgba(210,205,192,0.4); }
+.demoBtn {
+  width: 100%;
+  height: 52px;   /* match the primary IgnitionButton (was 46px — inconsistent) */
+  border-radius: 13px;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: rgba(233,199,102,0.95);
+  background: rgba(212,175,55,0.06);
+  border: 1px solid rgba(212,175,55,0.28);
+  transition: background 180ms, border-color 180ms, transform 120ms;
+}
+.demoBtn:hover:not(:disabled) { background: rgba(212,175,55,0.12); border-color: rgba(212,175,55,0.45); }
+.demoBtn:active:not(:disabled) { transform: translateY(1px) scale(0.995); }
+.demoBtn:disabled { opacity: 0.55; cursor: default; }
+.loginFooter {
+  text-align: center;
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  color: rgba(210,205,192,0.28);
+}
+
+/* ── REDUCED MOTION: kill every animation, show final state ──────────────────*/
+@media (prefers-reduced-motion: reduce) {
+  .blob1, .blob2 { animation: none !important; }
+  .needle { display: none !important; }
+  .card:focus, .field:focus { animation: none !important; }
+  .btnSheenOnce .sheen, .btn:hover .sheen { animation: none !important; }
+  .statusDot { animation: none !important; }
+  .cardShake, .cardReject { animation: none !important; }
+  .auroraParallax { transition: none !important; }
+  /* everything that reveals starts already-visible */
+  .reveal, .revealCard, .wordmarkAnim, .taglineAnim { animation: none !important; opacity: 1 !important; transform: none !important; letter-spacing: normal; }
+}
+
+/* ── CSS REVEAL SYSTEM (replaces Framer Motion entirely) ─────────────────────
+   The Ignition sequence is a FIXED one-shot timeline, which is exactly what CSS
+   keyframes + animation-delay express with zero JS and zero runtime library.
+
+   Two modes, toggled by a class on the scene root:
+     .seqFull  → play the full staggered boot (first visit this session)
+     .seqInstant → everything already in final state, one 250ms fade (returning visit)
+*/
+
+/* fade+rise, used for the staggered fields and blocks */
+@keyframes revealUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* card materialize: blur + scale, the "HUD focusing" beat */
+@keyframes cardIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+/* wordmark: letter-spacing tightens wide→normal */
+@keyframes wordmarkIn {
+  from { opacity: 0; letter-spacing: 0.4em; }
+  to   { opacity: 1; letter-spacing: 0.08em; }
+}
+
+/* PRE-BOOT: rendered between SSR and the effect deciding which sequence to play.
+   Reveal elements are held hidden with NO animation, so nothing flashes visible before
+   the real sequence (full or instant) takes over. The dark scene + aurora show normally.
+
+   SAFETY: a CSS-only fallback reveals everything after 3s even if JavaScript never runs
+   (disabled, or a load error). JS normally resolves this within one frame, so the
+   fallback only matters as a guarantee that the form is ALWAYS reachable. */
+.seqPre .wordmarkAnim,
+.seqPre .taglineAnim,
+.seqPre .revealCard,
+.seqPre .reveal {
+  opacity: 0;
+  animation: fadeInInstant 0.4s ease-out 3s forwards;
+}
+
+/* FULL sequence — staggered via per-element delays that match the approved timeline. */
+.seqFull .wordmarkAnim { opacity: 0; animation: wordmarkIn 0.8s cubic-bezier(0.22,1,0.36,1) 0.5s forwards; }
+.seqFull .taglineAnim  { opacity: 0; animation: revealUp 0.7s cubic-bezier(0.22,1,0.36,1) 1.0s forwards; }
+.seqFull .revealCard   { opacity: 0; animation: cardIn 0.6s cubic-bezier(0.22,1,0.36,1) 0.9s forwards; }
+/* the card's inner rows, staggered 80ms apart starting at 1.3s */
+.seqFull .reveal { opacity: 0; animation: revealUp 0.5s cubic-bezier(0.22,1,0.36,1) forwards; }
+.seqFull .reveal:nth-child(1) { animation-delay: 1.30s; }
+.seqFull .reveal:nth-child(2) { animation-delay: 1.38s; }
+.seqFull .reveal:nth-child(3) { animation-delay: 1.46s; }
+.seqFull .reveal:nth-child(4) { animation-delay: 1.54s; }
+.seqFull .reveal:nth-child(5) { animation-delay: 1.62s; }
+.seqFull .reveal:nth-child(6) { animation-delay: 1.70s; }
+/* the button sheen sweeps once as it arrives (~1.7s) */
+.seqFull .btnSheenOnce .sheen { animation: sheen 900ms ease-out 1.8s 1; }
+
+/* INSTANT — returning visit this session: one gentle 250ms fade, no stagger, no needle */
+@keyframes fadeInInstant { from { opacity: 0; } to { opacity: 1; } }
+.seqInstant .revealCard,
+.seqInstant .wordmarkAnim,
+.seqInstant .taglineAnim { opacity: 0; animation: fadeInInstant 0.25s ease-out forwards; }
+.seqInstant .reveal { opacity: 1; }        /* fields already in place */
+.seqInstant .taglineAnim { letter-spacing: normal; }
+.seqInstant .wordmarkAnim { letter-spacing: 0.08em; }
+.seqInstant .btnSheenOnce .sheen { animation: none; }
+
+/* success overlay (replaces the Framer AnimatePresence) */
+@keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes successPop { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+.successOverlay { animation: overlayIn 0.25s ease-out forwards; }
+.successCard { animation: successPop 0.35s cubic-bezier(0.22,1,0.36,1) forwards; }
