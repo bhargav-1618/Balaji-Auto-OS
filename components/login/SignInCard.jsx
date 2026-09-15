@@ -2,6 +2,7 @@ import { Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react';
 import styles from '../../styles/login.module.css';
 import GlassField from './GlassField';
 import { IgnitionButton, SystemStatus } from './IgnitionButton';
+import DiagnosticScan from './DiagnosticScan';
 
 /**
  * The glass sign-in card. PRESENTATION ONLY — every value and handler is a prop, owned
@@ -19,6 +20,7 @@ export default function SignInCard({
 }) {
   return (
     <div className={`${styles.card} ${styles.revealCard} ${shake ? styles.cardShake : ''} ${reject ? styles.cardReject : ''}`}>
+      {!instant && <DiagnosticScan />}
       {/* brand block */}
       <div className={styles.reveal} style={{ textAlign: 'center', marginBottom: 24 }}>
         <img
