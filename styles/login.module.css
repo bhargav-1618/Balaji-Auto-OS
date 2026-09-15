@@ -91,6 +91,74 @@
   100% { transform: scaleX(1); opacity: 0; }
 }
 
+/* ── POWER PULSE (first visit only) ───────────────────────────────────────
+   A single soft radial flash from center, opacity-only, ~150ms — the ignition
+   beat itself, distinct from and preceding the needle's gauge-sweep beat. */
+.powerPulse {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, rgba(233,199,102,0.35), rgba(233,199,102,0) 45%);
+  opacity: 0;
+}
+.powerPulseOn { animation: powerPulse 480ms ease-out forwards; }
+@keyframes powerPulse {
+  0%   { opacity: 0; }
+  35%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ── DIAGNOSTIC SCAN (first visit only) ───────────────────────────────────
+   Fills the gap between the card's own entrance (cardIn, starts 0.9s) and its
+   real content revealing (starts 1.3s) — previously an empty rounded rectangle
+   with nothing in it. A thin scanline sweeps top→bottom inside the card while
+   2 short HUD status lines tick through, then the whole thing fades out just
+   as the real form content starts fading in, so the two never visually fight. */
+.diagnosticScan {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  opacity: 0;
+}
+.seqFull .diagnosticScan {
+  animation: scanFadeOut 0.3s ease-in 1.15s forwards;
+}
+@keyframes scanFadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.scanLine {
+  position: absolute;
+  left: 8%; right: 8%; top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(233,199,102,0.75), transparent);
+  transform: translateY(0);
+  opacity: 0;
+}
+.seqFull .scanLine { animation: scanSweep 0.85s cubic-bezier(0.4,0,0.2,1) 0.55s forwards; }
+@keyframes scanSweep {
+  0%   { transform: translateY(20px); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translateY(340px); opacity: 0; }
+}
+.scanStatus {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(233,199,102,0.55);
+  opacity: 0;
+}
+.seqFull .scanStatus1 { animation: revealUp 0.35s ease-out 0.65s forwards; }
+.seqFull .scanStatus2 { animation: revealUp 0.35s ease-out 0.95s forwards; }
+
 /* ── GLASS CARD ─────────────────────────────────────────────────────────────
    Frosted surface, but text sits on a solid-enough inner layer for WCAG AA. */
 .card {
@@ -303,6 +371,7 @@
 @media (prefers-reduced-motion: reduce) {
   .blob1, .blob2 { animation: none !important; }
   .needle { display: none !important; }
+  .powerPulse, .diagnosticScan { display: none !important; }
   .card:focus, .field:focus { animation: none !important; }
   .btnSheenOnce .sheen, .btn:hover .sheen { animation: none !important; }
   .statusDot { animation: none !important; }

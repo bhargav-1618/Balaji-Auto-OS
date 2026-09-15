@@ -179,6 +179,7 @@ export default function Login() {
       <div ref={sceneRef} className={`${styles.scene} ${seqClass}`} style={{ display: 'flex' }}>
         <AuroraBackground />
         <div className={styles.vignette} aria-hidden="true" />
+        {needle && <div className={`${styles.powerPulse} ${styles.powerPulseOn}`} aria-hidden="true" />}
         {needle && <div className={`${styles.needle} ${styles.needleOn}`} aria-hidden="true" />}
 
         <div className="loginGrid">
@@ -239,7 +240,7 @@ export default function Login() {
               <span style={{ margin: '0 auto 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 48, height: 48, borderRadius: '50%', border: '2px solid #d4af37' }}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#d4af37" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </span>
-              <p style={{ color: '#ece8dd', fontSize: 16, fontWeight: 600 }}>Login Successful</p>
+              <p style={{ color: '#ece8dd', fontSize: 16, fontWeight: 600, letterSpacing: '0.04em' }}>System Verified</p>
               <p style={{ color: 'rgba(200,195,182,0.5)', fontSize: 11.5, marginTop: 5 }}>Loading Garage Management ERP…</p>
             </div>
           </div>
