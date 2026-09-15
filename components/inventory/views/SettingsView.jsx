@@ -735,7 +735,7 @@ function SettingsView({ onDirtyChange, totalRecords, lastBackup, lastSync, isAdm
             const sectionSave = section === 'demoperms' ? saveDemoPermsChanges : section === 'users' ? saveStaffPermsDraft : saveBiz;
             return (
               <div className={`sticky bottom-0 flex items-center justify-between gap-3 rounded-2xl px-4 py-3 ${SETTINGS_WIDE_SECTIONS.has(section) ? '' : SETTINGS_CARD_MAX}`} style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.2)' }}>
-                <span className="text-[11px] text-white/45">{sectionDirty ? t('state.unsavedChanges', 'You have unsaved changes') : t('state.allChangesSaved', 'All changes saved')}</span>
+                <span role="status" className="text-[11px] text-white/45">{sectionDirty ? t('state.unsavedChanges', 'You have unsaved changes') : t('state.allChangesSaved', 'All changes saved')}</span>
                 <div className="flex gap-2">
                   <button onClick={sectionCancel} disabled={!sectionDirty} className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 text-white/70 disabled:opacity-40">{t('common.cancel', 'Cancel')}</button>
                   <button onClick={sectionSave} disabled={!sectionDirty} className="px-5 py-2 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] disabled:opacity-40">{t('common.saveChanges', 'Save Changes')}</button>
