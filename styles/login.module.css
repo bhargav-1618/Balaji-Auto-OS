@@ -1,89 +1,116 @@
 /* Balaji Auto OS — "Ignition" login. Scoped module: nothing here leaks to global CSS.
-   Palette is BRAND ONLY — gold / amber / warm glow / dark charcoal. No blue/purple/cyan/green. */
+   Environment is a real photograph (public/images/login-hero.jpg, Unsplash License — see
+   docs/ATTRIBUTIONS.md) with a floating console over it. Palette stays BRAND ONLY —
+   gold / amber / warm glow / dark charcoal — for every UI layer on top of the photo. */
 
 .scene {
   --gold: #d4af37;
   --gold-soft: #e9c766;
-  --amber: #c8901f;
-  --char-0: #0a0a0b;   /* deep charcoal base */
-  --char-1: #121110;
-  position: relative;
-  min-height: 100vh;
-  min-height: 100dvh;
-  overflow: hidden;
+  --char-0: #0a0a0b;   /* deep charcoal base — shows through while the photo fades in */
+  /* globals.css locks `html`/`body` to `position:fixed; overflow:hidden` — a deliberate,
+     load-bearing fix for the AUTHENTICATED app shell's own scroll container (#app-scroll).
+     It also applies here, on the public login page, which has no such container of its
+     own — so without this, the console's content (brand + fields + demo button) would be
+     silently unreachable on any viewport shorter than its content, with no way to scroll
+     at all. Rather than touch that global rule, .scene becomes its OWN fixed, viewport-
+     sized frame with its own internal scroll — the same pattern, scoped to this page. */
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--char-0);
   color: #f4f1ea;
   font-family: Inter, Montserrat, system-ui, sans-serif;
 }
 
-/* ── AURORA ─────────────────────────────────────────────────────────────────
-   2 blurred radial blobs, transform-animated only (never filter/bg-position in the
-   loop — those thrash the compositor). GPU-composited via translateZ + will-change. */
-.aurora {
-  position: absolute;
-  inset: -20%;
-  pointer-events: none;
+/* ── ENVIRONMENT: the photograph ──────────────────────────────────────────
+   A real dark-garage/headlight photo, not an illustration, pinned to the viewport
+   (`position: fixed`) so it always fills the screen regardless of whether the console's
+   content below makes the page taller than one screen. It fades in from the scene's own
+   charcoal base via opacity (cheap, GPU-composited) rather than animating `filter` — this
+   project's own convention is transform/opacity only, never a property that forces extra
+   paint work, even for a one-shot reveal. object-position keeps the headlight in frame at
+   every breakpoint; the console floats over the photo's dark negative space, never on top
+   of the vehicle. */
+.heroFixed {
+  position: fixed;
+  inset: 0;
   z-index: 0;
+  overflow: hidden;
 }
-.blob {
+/* Mouse parallax: --px/--py are written by pages/login.js (one write/frame, rAF-throttled,
+   skipped on touch and prefers-reduced-motion — see the effect in login.js). The photo and
+   the console shift by DIFFERENT amounts in response, which is what actually reads as
+   depth — two flat layers moving by the same amount reads as nothing. */
+.heroParallax {
   position: absolute;
-  border-radius: 50%;
-  filter: blur(90px);
-  will-change: transform, opacity;
-  transform: translateZ(0);
-  opacity: 0.55;
+  inset: -3%;
+  transform: translate3d(calc(var(--px, 0) * 20px), calc(var(--py, 0) * 14px), 0);
+  transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.blob1 {
-  width: 46vw; height: 46vw;
-  left: 8%; top: 18%;
-  background: radial-gradient(circle at 50% 50%, rgba(212,175,55,0.55), rgba(212,175,55,0) 70%);
-  animation: drift1 22s ease-in-out infinite alternate;
+.heroPhoto {
+  z-index: 0;
+  object-fit: cover;
+  object-position: 28% 40%;
+  transform: scale(1);
+  transform-origin: 40% 45%;
 }
-.blob2 {
-  width: 38vw; height: 38vw;
-  left: 30%; top: 40%;
-  background: radial-gradient(circle at 50% 50%, rgba(200,144,31,0.42), rgba(200,144,31,0) 70%);
-  animation: drift2 28s ease-in-out infinite alternate;
+@media (min-width: 900px) {
+  .heroPhoto { object-position: 36% 44%; }
 }
-@keyframes drift1 {
-  from { transform: translate3d(0,0,0) scale(1); }
-  to   { transform: translate3d(6%, -4%, 0) scale(1.12); }
+/* Camera settle: an AUTONOMOUS push-and-pan, not mouse-dependent (most users don't move
+   the mouse in the first 3 seconds) — the scene starts zoomed and slightly off-center and
+   eases into rest, a slow reveal rather than a photo that just fades in place. Paired with
+   the opacity fade so the very first frame is never a hard cut. */
+.seqFull .heroPhoto {
+  opacity: 0;
+  transform: scale(1.12) translate(1.6%, 1.1%);
+  animation: photoWake 0.75s ease-out forwards, cameraSettle 3.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
-@keyframes drift2 {
-  from { transform: translate3d(0,0,0) scale(1.05); }
-  to   { transform: translate3d(-5%, 5%, 0) scale(0.95); }
+@keyframes photoWake { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cameraSettle {
+  from { transform: scale(1.12) translate(1.6%, 1.1%); }
+  to   { transform: scale(1) translate(0%, 0%); }
 }
-/* very subtle pointer parallax; driven by --px/--py set on the scene, one write/frame */
-.auroraParallax {
-  transform: translate3d(calc(var(--px, 0) * 14px), calc(var(--py, 0) * 14px), 0);
-  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-/* a soft vignette so text always has a dark substrate (contrast) */
+
+/* a soft vignette so console text always has a dark-enough substrate, strongest on the
+   side the console actually sits on (right on desktop, bottom on mobile) — never a flat
+   scrim over the whole photo, which would flatten the depth the photograph provides. */
 .vignette {
   position: absolute;
   inset: 0;
   z-index: 1;
   pointer-events: none;
-  background: radial-gradient(ellipse 120% 100% at 42% 45%, transparent 45%, rgba(0,0,0,0.55) 100%);
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.06) 40%, rgba(4,4,5,0.88) 100%),
+    linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 42%, rgba(6,6,7,0.55) 76%, rgba(6,6,7,0.82) 100%);
+}
+@media (min-width: 900px) {
+  .vignette {
+    background:
+      linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.04) 45%, rgba(4,4,5,0.55) 100%),
+      linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 40%, rgba(6,6,7,0.58) 74%, rgba(6,6,7,0.86) 100%);
+  }
 }
 
 /* ── NEEDLE SWEEP (first visit only) ────────────────────────────────────────
-   A single gold hairline draws L→R across black — the "power on" beat. */
+   A single gold hairline draws L→R — the "electrical wake" beat, just before the
+   headlight bloom. Kept from the original Ignition sequence; only its delay moved. */
 .needle {
   position: absolute;
-  left: 0; right: 0; top: 50%;
+  left: 0; right: 0; top: 42%;
   height: 1px;
-  z-index: 5;
+  z-index: 2;
   pointer-events: none;
   background: linear-gradient(90deg,
     transparent 0%, rgba(212,175,55,0) 8%,
-    rgba(233,199,102,0.9) 48%, rgba(233,199,102,1) 50%,
-    rgba(233,199,102,0.9) 52%, rgba(212,175,55,0) 92%, transparent 100%);
+    rgba(233,199,102,0.85) 48%, rgba(233,199,102,0.95) 50%,
+    rgba(233,199,102,0.85) 52%, rgba(212,175,55,0) 92%, transparent 100%);
   transform: scaleX(0);
   transform-origin: left center;
-  box-shadow: 0 0 18px rgba(233,199,102,0.6);
+  box-shadow: 0 0 16px rgba(233,199,102,0.5);
 }
-.needleOn { animation: sweep 380ms cubic-bezier(0.4, 0, 0.1, 1) forwards; }
+.needleOn { animation: sweep 380ms cubic-bezier(0.4, 0, 0.1, 1) 0.40s forwards; }
 @keyframes sweep {
   0%   { transform: scaleX(0); opacity: 0; }
   30%  { opacity: 1; }
@@ -91,30 +118,65 @@
   100% { transform: scaleX(1); opacity: 0; }
 }
 
-/* ── POWER PULSE (first visit only) ───────────────────────────────────────
-   A single soft radial flash from center, opacity-only, ~150ms — the ignition
-   beat itself, distinct from and preceding the needle's gauge-sweep beat. */
-.powerPulse {
+/* ── HEADLIGHT BLOOM (first visit only) ───────────────────────────────────
+   The photo is static, so the "headlights power on" illusion comes from a soft radial
+   glow aligned near the photo's actual headlight, growing in and settling to a persistent
+   low ambient glow — not a flash that vanishes. Gradient fill only, never a blur filter. */
+/* Two gradients, not one: a tight bright core at the actual lens position, plus a wider,
+   softer spread offset toward the hood BELOW it — light has a direction (down onto the
+   metal), not a symmetric halo floating in front of the photo. */
+.headlightBloomOn {
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: 2;
   pointer-events: none;
-  background: radial-gradient(circle at 50% 45%, rgba(233,199,102,0.35), rgba(233,199,102,0) 45%);
+  background:
+    radial-gradient(ellipse 22% 14% at 33% 47%, rgba(255,246,222,0.6), rgba(255,246,222,0) 72%),
+    radial-gradient(ellipse 46% 26% at 38% 60%, rgba(233,199,102,0.2), rgba(233,199,102,0) 78%);
   opacity: 0;
 }
-.powerPulseOn { animation: powerPulse 480ms ease-out forwards; }
-@keyframes powerPulse {
+@media (min-width: 900px) {
+  .headlightBloomOn {
+    background:
+      radial-gradient(ellipse 20% 13% at 40% 50%, rgba(255,246,222,0.6), rgba(255,246,222,0) 72%),
+      radial-gradient(ellipse 42% 24% at 44% 62%, rgba(233,199,102,0.2), rgba(233,199,102,0) 78%);
+  }
+}
+/* The lighting has a CAUSE, not just a glow: a weak electrical flicker (power trying to
+   engage) precedes the needle's DRL catch-light beat, which precedes the bloom's real
+   rise — each beat is a consequence of the one before it, not three unrelated glows. */
+.seqFull .headlightBloomOn { animation: bloomOn 0.85s ease-out 0.20s forwards; }
+@keyframes bloomOn {
   0%   { opacity: 0; }
-  35%  { opacity: 1; }
-  100% { opacity: 0; }
+  5%   { opacity: 0.12; }   /* flicker 1 — power attempting to engage */
+  10%  { opacity: 0; }
+  16%  { opacity: 0.18; }   /* flicker 2 */
+  22%  { opacity: 0.04; }
+  60%  { opacity: 1; }      /* the real rise, once the needle has already caught light */
+  100% { opacity: 0.32; }   /* settles to a persistent ambient glow, not a flash */
 }
 
+/* ── FLOOR SPILL (first visit only) ───────────────────────────────────────
+   A consequence of the headlight bloom, not an independent effect: light reaching the
+   ground. Appears only after the bloom's real rise has mostly landed. */
+.floorSpillOn {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: radial-gradient(ellipse 60% 30% at 38% 88%, rgba(233,199,102,0.22), rgba(233,199,102,0) 70%);
+  opacity: 0;
+}
+@media (min-width: 900px) {
+  .floorSpillOn { background: radial-gradient(ellipse 50% 26% at 44% 92%, rgba(233,199,102,0.22), rgba(233,199,102,0) 70%); }
+}
+.seqFull .floorSpillOn { animation: spillIn 0.6s ease-out 0.85s forwards; }
+@keyframes spillIn { from { opacity: 0; } to { opacity: 1; } }
+
 /* ── DIAGNOSTIC SCAN (first visit only) ───────────────────────────────────
-   Fills the gap between the card's own entrance (cardIn, starts 0.9s) and its
-   real content revealing (starts 1.3s) — previously an empty rounded rectangle
-   with nothing in it. A thin scanline sweeps top→bottom inside the card while
-   2 short HUD status lines tick through, then the whole thing fades out just
-   as the real form content starts fading in, so the two never visually fight. */
+   Fills the gap between the console's own entrance and its fields revealing — a thin
+   scanline sweeps the card while 2 short status lines tick through, then fades out just
+   as real content starts fading in. */
 .diagnosticScan {
   position: absolute;
   inset: 0;
@@ -127,13 +189,8 @@
   pointer-events: none;
   opacity: 0;
 }
-.seqFull .diagnosticScan {
-  animation: scanFadeOut 0.3s ease-in 1.15s forwards;
-}
-@keyframes scanFadeOut {
-  from { opacity: 1; }
-  to   { opacity: 0; }
-}
+.seqFull .diagnosticScan { animation: scanFadeOut 0.25s ease-in 1.65s forwards; }
+@keyframes scanFadeOut { from { opacity: 1; } to { opacity: 0; } }
 .scanLine {
   position: absolute;
   left: 8%; right: 8%; top: 0;
@@ -142,12 +199,12 @@
   transform: translateY(0);
   opacity: 0;
 }
-.seqFull .scanLine { animation: scanSweep 0.85s cubic-bezier(0.4,0,0.2,1) 0.55s forwards; }
+.seqFull .scanLine { animation: scanSweep 0.55s cubic-bezier(0.4,0,0.2,1) 1.35s forwards; }
 @keyframes scanSweep {
-  0%   { transform: translateY(20px); opacity: 0; }
+  0%   { transform: translateY(16px); opacity: 0; }
   15%  { opacity: 1; }
   85%  { opacity: 1; }
-  100% { transform: translateY(340px); opacity: 0; }
+  100% { transform: translateY(260px); opacity: 0; }
 }
 .scanStatus {
   font-size: 10px;
@@ -156,24 +213,61 @@
   color: rgba(233,199,102,0.55);
   opacity: 0;
 }
-.seqFull .scanStatus1 { animation: revealUp 0.35s ease-out 0.65s forwards; }
-.seqFull .scanStatus2 { animation: revealUp 0.35s ease-out 0.95s forwards; }
+.seqFull .scanStatus1 { animation: revealUp 0.3s ease-out 1.40s forwards; }
+.seqFull .scanStatus2 { animation: revealUp 0.3s ease-out 1.55s forwards; }
+
+/* ── CONSOLE ────────────────────────────────────────────────────────────────
+   Floats over the photo's negative space — never a card "pasted on top" of the vehicle.
+   Restrained transparency and a thin illuminated border rather than heavy glassmorphism. */
+.console {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  /* moves opposite the photo and by far less — the differential (not the motion itself)
+     is what reads as the console being a physical object closer to camera than the scene
+     behind it */
+  transform: translate3d(calc(var(--px, 0) * -6px), calc(var(--py, 0) * -4px), 0);
+  transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.brandBlock { display: flex; flex-direction: column; align-items: flex-start; }
+.brandIcon {
+  border-radius: 50%;
+  border: 1.5px solid rgba(212,175,55,0.5);
+  box-shadow: 0 0 20px rgba(212,175,55,0.18);
+  margin-bottom: 10px;
+  object-fit: contain;
+}
+.brandSub {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(233,199,102,0.75);
+  font-weight: 600;
+  margin-top: 6px;
+}
 
 /* ── GLASS CARD ─────────────────────────────────────────────────────────────
-   Frosted surface, but text sits on a solid-enough inner layer for WCAG AA. */
+   Diagnostic-console treatment: restrained transparency, thin illuminated border,
+   excellent contrast against a busy photo background — not heavy glassmorphism. */
 .card {
   position: relative;
   z-index: 10;
   width: 100%;
-  border-radius: 22px;
-  padding: 34px 32px 28px;
-  background: linear-gradient(160deg, rgba(28,26,24,0.82), rgba(16,15,14,0.9));
-  border: 1px solid rgba(212,175,55,0.18);
+  border-radius: 18px;
+  padding: 30px 28px 26px;
+  background: linear-gradient(160deg, rgba(10,10,11,0.86), rgba(6,6,7,0.93));
+  border: 1px solid rgba(212,175,55,0.24);
   box-shadow:
-    0 24px 70px rgba(0,0,0,0.6),
+    0 24px 70px rgba(0,0,0,0.55),
     inset 0 1px 0 rgba(255,255,255,0.05);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
 /* thin gold top edge — the "instrument bezel" */
 .card::before {
@@ -181,7 +275,17 @@
   position: absolute;
   left: 10%; right: 10%; top: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(212,175,55,0.6), transparent);
+  background: linear-gradient(90deg, transparent, rgba(212,175,55,0.65), transparent);
+}
+/* the console "receiving power" — a consequence of the headlights/floor-spill already
+   having landed, not simultaneous with the card's own entrance. Border + shadow only.
+   Combined with `.seqFull .revealCard`'s own cardIn animation in the reveal-system
+   section below (a single element can't have `animation` set by two different rules —
+   the later one in source order would simply replace the earlier one, not merge). */
+@keyframes consolePulse {
+  0%   { border-color: rgba(212,175,55,0.24); box-shadow: 0 24px 70px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05); }
+  55%  { border-color: rgba(233,199,102,0.6); box-shadow: 0 24px 70px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05), 0 0 24px rgba(212,175,55,0.2); }
+  100% { border-color: rgba(212,175,55,0.24); box-shadow: 0 24px 70px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05); }
 }
 .cardShake { animation: shake 420ms cubic-bezier(0.36, 0.07, 0.19, 0.97); }
 @keyframes shake {
@@ -193,13 +297,31 @@
 /* error: the ring flashes red once (the "machine rejected you" beat) */
 .cardReject { animation: reject 700ms ease-out; }
 @keyframes reject {
-  0%, 100% { border-color: rgba(212,175,55,0.18); }
-  15%, 45% { border-color: rgba(248,113,113,0.7); box-shadow: 0 24px 70px rgba(0,0,0,0.6), 0 0 30px rgba(248,113,113,0.25); }
+  0%, 100% { border-color: rgba(212,175,55,0.24); }
+  15%, 45% { border-color: rgba(248,113,113,0.7); box-shadow: 0 24px 70px rgba(0,0,0,0.55), 0 0 30px rgba(248,113,113,0.25); }
 }
 
 /* ── FIELDS ─────────────────────────────────────────────────────────────────
    Glass input + floating label + gold focus ring that breathes once. */
 .fieldWrap { position: relative; margin-bottom: 16px; }
+/* The scan-sweep clip region is scoped to .fieldBox (the input's own rounded box) only —
+   NOT .fieldWrap, which also contains .fieldLabel above it. Clipping the outer wrapper
+   clipped the label's own top-left corner against its border-radius, malforming the
+   first letter of EMAIL/PASSWORD. */
+.fieldBox { position: relative; overflow: hidden; border-radius: 13px; }
+/* "the system becomes active" — a one-shot scan line sweeps the field on focus. Runs
+   again every time focus-within newly matches (tabbing away and back re-triggers it). */
+.fieldBox::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(233,199,102,0.16), transparent);
+  transform: translateX(-140%);
+  pointer-events: none;
+}
+.fieldBox:focus-within::after { animation: fieldScan 500ms ease-out; }
+@keyframes fieldScan { from { transform: translateX(-140%); } to { transform: translateX(300%); } }
 .field {
   width: 100%;
   height: 50px;
@@ -286,6 +408,11 @@
   from { transform: translateX(-140%) skewX(-18deg); }
   to   { transform: translateX(325%) skewX(-18deg); }
 }
+/* "AUTHENTICATING → VERIFYING" — purely cosmetic label cycling while signing in (see
+   IgnitionButton.jsx); never gates or delays the real auth call, just decorates however
+   long it naturally takes. */
+.loadingState { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+.loadingLabel { font-size: 12px; font-weight: 700; letter-spacing: 0.16em; }
 /* progress rail while signing in (keeps existing loading logic) */
 .progressRail {
   position: relative;
@@ -320,73 +447,74 @@
 }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
-/* ── LEFT PANEL ─────────────────────────────────────────────────────────────*/
+/* ── BRAND WORDMARK ────────────────────────────────────────────────────────*/
+/* Deliberately restrained — a system identity readout activating, not a website hero
+   heading. Smaller and tighter than a marketing H1 would be. */
 .wordmark {
   font-weight: 800;
-  font-size: clamp(26px, 3.2vw, 44px);
+  font-size: clamp(19px, 2.6vw, 26px);
   letter-spacing: 0.08em;
   color: #f4f1ea;
   line-height: 1.05;
 }
 .wordmarkGold { color: var(--gold-soft); }
 .tagline {
-  margin-top: 18px;
-  font-size: clamp(13px, 1.2vw, 15px);
-  letter-spacing: 0.04em;
-  color: rgba(244,241,234,0.5);
+  margin-top: 8px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: rgba(244,241,234,0.55);
   font-weight: 400;
-  max-width: 30ch;
+  max-width: 34ch;
 }
 
-/* ── DEMO ENTRY + FOOTER (moved out of inline styles in login.js) ────────────
-   Was inline-styled with no hover / focus / disabled feedback — inconsistent with the
-   primary button and a keyboard/a11y gap. Now a real secondary button. */
+/* ── DEMO ENTRY + FOOTER ───────────────────────────────────────────────────*/
 .demoWrap { width: 100%; display: flex; flex-direction: column; gap: 12px; }
 .orRow { display: flex; align-items: center; gap: 12px; }
-.orLine { flex: 1; height: 1px; background: rgba(255,255,255,0.1); }
-.orText { font-size: 9px; letter-spacing: 0.3em; color: rgba(210,205,192,0.4); }
+.orLine { flex: 1; height: 1px; background: rgba(255,255,255,0.14); }
+.orText { font-size: 9px; letter-spacing: 0.3em; color: rgba(230,225,212,0.55); }
 .demoBtn {
   width: 100%;
-  height: 52px;   /* match the primary IgnitionButton (was 46px — inconsistent) */
+  height: 52px;
   border-radius: 13px;
   font-weight: 700;
   font-size: 12px;
   letter-spacing: 0.14em;
   color: rgba(233,199,102,0.95);
-  background: rgba(212,175,55,0.06);
-  border: 1px solid rgba(212,175,55,0.28);
+  background: rgba(212,175,55,0.08);
+  border: 1px solid rgba(212,175,55,0.3);
   transition: background 180ms, border-color 180ms, transform 120ms;
 }
-.demoBtn:hover:not(:disabled) { background: rgba(212,175,55,0.12); border-color: rgba(212,175,55,0.45); }
+.demoBtn:hover:not(:disabled) { background: rgba(212,175,55,0.14); border-color: rgba(212,175,55,0.48); }
 .demoBtn:active:not(:disabled) { transform: translateY(1px) scale(0.995); }
 .demoBtn:disabled { opacity: 0.55; cursor: default; }
 .loginFooter {
   text-align: center;
   font-size: 9px;
   letter-spacing: 0.28em;
-  color: rgba(210,205,192,0.28);
+  color: rgba(230,225,212,0.4);
 }
 
-/* ── REDUCED MOTION: kill every animation, show final state ──────────────────*/
+/* ── REDUCED MOTION: kill every animation, show final state ──────────────────
+   Same information, no cinematic movement: photo, bloom-settled-glow, console and
+   fields all appear immediately in their final state. No unnecessary transitions. */
 @media (prefers-reduced-motion: reduce) {
-  .blob1, .blob2 { animation: none !important; }
+  .heroPhoto { opacity: 1 !important; transform: none !important; animation: none !important; }
+  .heroParallax, .console { transform: none !important; transition: none !important; }
   .needle { display: none !important; }
-  .powerPulse, .diagnosticScan { display: none !important; }
+  .headlightBloomOn, .floorSpillOn, .diagnosticScan { display: none !important; }
   .card:focus, .field:focus { animation: none !important; }
+  .fieldBox::after { display: none !important; }
   .btnSheenOnce .sheen, .btn:hover .sheen { animation: none !important; }
   .statusDot { animation: none !important; }
   .cardShake, .cardReject { animation: none !important; }
-  .auroraParallax { transition: none !important; }
   /* everything that reveals starts already-visible */
   .reveal, .revealCard, .wordmarkAnim, .taglineAnim { animation: none !important; opacity: 1 !important; transform: none !important; letter-spacing: normal; }
 }
 
 /* ── CSS REVEAL SYSTEM (replaces Framer Motion entirely) ─────────────────────
-   The Ignition sequence is a FIXED one-shot timeline, which is exactly what CSS
-   keyframes + animation-delay express with zero JS and zero runtime library.
-
-   Two modes, toggled by a class on the scene root:
-     .seqFull  → play the full staggered boot (first visit this session)
+   A FIXED one-shot ~2s timeline via CSS keyframes + animation-delay — zero JS timeline,
+   zero runtime library. Two modes, toggled by a class on the scene root:
+     .seqFull    → play the full boot (first visit this session)
      .seqInstant → everything already in final state, one 250ms fade (returning visit)
 */
 
@@ -395,7 +523,7 @@
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-/* card materialize: blur + scale, the "HUD focusing" beat */
+/* card materialize: scale, the "console focusing" beat */
 @keyframes cardIn {
   from { opacity: 0; transform: scale(0.97); }
   to   { opacity: 1; transform: scale(1); }
@@ -408,7 +536,7 @@
 
 /* PRE-BOOT: rendered between SSR and the effect deciding which sequence to play.
    Reveal elements are held hidden with NO animation, so nothing flashes visible before
-   the real sequence (full or instant) takes over. The dark scene + aurora show normally.
+   the real sequence (full or instant) takes over.
 
    SAFETY: a CSS-only fallback reveals everything after 3s even if JavaScript never runs
    (disabled, or a load error). JS normally resolves this within one frame, so the
@@ -416,28 +544,37 @@
 .seqPre .wordmarkAnim,
 .seqPre .taglineAnim,
 .seqPre .revealCard,
-.seqPre .reveal {
+.seqPre .reveal,
+.seqPre .heroPhoto {
   opacity: 0;
   animation: fadeInInstant 0.4s ease-out 3s forwards;
 }
 
-/* FULL sequence — staggered via per-element delays that match the approved timeline. */
-.seqFull .wordmarkAnim { opacity: 0; animation: wordmarkIn 0.8s cubic-bezier(0.22,1,0.36,1) 0.5s forwards; }
-.seqFull .taglineAnim  { opacity: 0; animation: revealUp 0.7s cubic-bezier(0.22,1,0.36,1) 1.0s forwards; }
-.seqFull .revealCard   { opacity: 0; animation: cardIn 0.6s cubic-bezier(0.22,1,0.36,1) 0.9s forwards; }
-/* the card's inner rows, staggered 80ms apart starting at 1.3s */
-.seqFull .reveal { opacity: 0; animation: revealUp 0.5s cubic-bezier(0.22,1,0.36,1) forwards; }
-.seqFull .reveal:nth-child(1) { animation-delay: 1.30s; }
-.seqFull .reveal:nth-child(2) { animation-delay: 1.38s; }
-.seqFull .reveal:nth-child(3) { animation-delay: 1.46s; }
-.seqFull .reveal:nth-child(4) { animation-delay: 1.54s; }
-.seqFull .reveal:nth-child(5) { animation-delay: 1.62s; }
-.seqFull .reveal:nth-child(6) { animation-delay: 1.70s; }
-/* the button sheen sweeps once as it arrives (~1.7s) */
-.seqFull .btnSheenOnce .sheen { animation: sheen 900ms ease-out 1.8s 1; }
+/* FULL sequence — staggered via per-element delays, ~2.3s total, each beat a consequence
+   of the one before it:
+   0.00 photo fades in + camera settles (2.6s) · 0.20 electrical flicker · 0.40 needle
+   catches light · 0.85 floor spill (light reaches the ground) · 0.90 instruments wake ·
+   1.05 wordmark · 1.15 HUD · 1.25 console appears · 1.45 console receives power (border
+   pulse) · 1.50–1.85 diagnostic scan · 1.90 fields stagger · 2.25 button sheen. */
+.seqFull .wordmarkAnim { opacity: 0; animation: wordmarkIn 0.55s cubic-bezier(0.22,1,0.36,1) 1.05s forwards; }
+.seqFull .taglineAnim  { opacity: 0; animation: revealUp 0.45s cubic-bezier(0.22,1,0.36,1) 1.15s forwards; }
+/* cardIn (entrance) + consolePulse (the power-received border/shadow beat, defined near
+   .card above) run together — one element, one `animation` property, both effects. */
+.seqFull .revealCard { opacity: 0; animation: cardIn 0.45s cubic-bezier(0.22,1,0.36,1) 1.25s forwards, consolePulse 0.45s ease-out 1.45s forwards; }
+/* the card's inner rows, staggered ~60ms apart starting at 1.90s */
+.seqFull .reveal { opacity: 0; animation: revealUp 0.4s cubic-bezier(0.22,1,0.36,1) forwards; }
+.seqFull .reveal:nth-child(1) { animation-delay: 1.90s; }
+.seqFull .reveal:nth-child(2) { animation-delay: 1.96s; }
+.seqFull .reveal:nth-child(3) { animation-delay: 2.02s; }
+.seqFull .reveal:nth-child(4) { animation-delay: 2.08s; }
+.seqFull .reveal:nth-child(5) { animation-delay: 2.14s; }
+/* the button sheen sweeps once as it arrives (~2.25s) */
+.seqFull .btnSheenOnce .sheen { animation: sheen 900ms ease-out 2.25s 1; }
 
-/* INSTANT — returning visit this session: one gentle 250ms fade, no stagger, no needle */
+/* INSTANT — returning visit this session: one gentle 250ms fade, no stagger, no needle,
+   no headlight-bloom/HUD replay (photo just shows already-on, at full brightness). */
 @keyframes fadeInInstant { from { opacity: 0; } to { opacity: 1; } }
+.seqInstant .heroPhoto,
 .seqInstant .revealCard,
 .seqInstant .wordmarkAnim,
 .seqInstant .taglineAnim { opacity: 0; animation: fadeInInstant 0.25s ease-out forwards; }

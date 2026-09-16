@@ -168,6 +168,29 @@ export function getReorderMultiplier() { const v = parseFloat(currentBizSettings
 export const lockedCapital = (p) => (p.purchasePrice || 0) * (p.stock || 0);
 export const expectedProfit = (p) => ((p.sellingPrice || 0) - (p.purchasePrice || 0)) * (p.stock || 0);
 
+// ID-1 fix — ONE definition of "today's stock OUT": sales (parts sold) plus any
+// stockAdjustment whose delta is negative (damage/loss/theft/personal use/etc).
+// This is the same "sale + negative adjustment = OUT" rule the Stock tab's own
+// 14-day movement chart already used (InventoryOverview's `moveEvents`) and that
+// the dedicated Stock Out ledger already used — the Inventory Dashboard's KPI
+// card was the one outlier, counting sales only. Both call sites now resolve
+// through here so they can never drift apart again.
+const safeNum = (v) => (Number.isFinite(+v) ? +v : 0);
+export function todaysStockOut(sales = [], stockAdjustments = [], now = Date.now()) {
+  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  const todayMs = todayStart.getTime();
+  const saleUnits = sales
+    .filter((s) => (tsToDate(s.soldAt || s.createdAt || s.date)?.getTime() || 0) >= todayMs)
+    .reduce((sum, s) => sum + safeNum(s.qty ?? s.quantity ?? 1), 0);
+  const adjustmentUnits = stockAdjustments
+    .filter((a) => (tsToDate(a.adjustedAt || a.createdAt || a.date)?.getTime() || 0) >= todayMs)
+    .reduce((sum, a) => {
+      const delta = (a.stockAfter != null && a.stockBefore != null) ? (a.stockAfter - a.stockBefore) : safeNum(a.qty ?? a.quantity);
+      return delta < 0 ? sum + Math.abs(delta) : sum;
+    }, 0);
+  return saleUnits + adjustmentUnits;
+}
+
 // Firestore Timestamp → JS Date → age in days (uses lastRestockedAt, else createdAt).
 export const ageDays = (p) => { const d = tsToDate(p?.lastRestockedAt) || tsToDate(p?.createdAt); return d ? Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000)) : null; };
 

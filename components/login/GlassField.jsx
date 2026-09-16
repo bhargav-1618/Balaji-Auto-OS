@@ -13,7 +13,7 @@ const GlassField = forwardRef(function GlassField(
   return (
     <div className={styles.fieldWrap}>
       <label htmlFor={id} className={styles.fieldLabel}>{label}</label>
-      <div style={{ position: 'relative' }}>
+      <div className={styles.fieldBox}>
         {icon && <span className={styles.fieldIcon}>{icon}</span>}
         <input
           ref={ref}

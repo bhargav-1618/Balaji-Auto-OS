@@ -13,14 +13,35 @@ const page = fs.readFileSync(path.resolve(__dirname, '../pages/login.js'), 'utf8
 
 console.log('\nLogin layout — architecture (single spacing system, robust centering)\n');
 
-// ── Issue 1/5: viewport-driven, centered ───────────────────────────────────
+// ── Regression guard: the console's content must NEVER be unreachably clipped ──────────
+// globals.css locks html/body to `position:fixed; overflow:hidden` for the authenticated
+// app shell's own scroll container (#app-scroll) — a real screenshot from a live browser
+// caught this same lock silently swallowing the login page's demo button on any viewport
+// shorter than the console's content, with no way to scroll at all. .scene must be its
+// own fixed, viewport-sized frame with its own overflow-y:auto — never `overflow:hidden`,
+// which would reintroduce the exact same unreachable-content bug.
+ok('.scene is its own fixed, viewport-sized scroll container (position:fixed + inset:0)',
+  /\.scene\s*\{[^}]*position:\s*fixed[^}]*inset:\s*0/.test(css));
+ok('.scene scrolls vertically when its content is taller than the viewport (overflow-y: auto, never hidden)',
+  /\.scene\s*\{[^}]*overflow-y:\s*auto/.test(css) && !/\.scene\s*\{[^}]*overflow:\s*hidden\s*;/.test(css));
+ok('the photo/vignette/ignition-effects environment layer is pinned to the viewport independent of .scene\'s scroll (.heroFixed, position:fixed)',
+  /\.heroFixed\s*\{[^}]*position:\s*fixed[^}]*inset:\s*0/.test(css));
+
+// ── Issue 1/5: viewport-driven, deliberately edge-anchored (not plain center/center) ──
+// The console floats over the photo's negative space — bottom on mobile (photo's darker
+// lower band), right on desktop (photo's dark right two-thirds) — never dead-center on
+// top of the vehicle. This is intentional, not a regression of the old centering guard.
 ok('loginGrid is viewport-driven (min-height 100dvh)', /\.loginGrid\s*\{[^}]*min-height:\s*100dvh/.test(page));
-ok('loginGrid centers its content (justify + align center)',
-  /\.loginGrid\s*\{[^}]*justify-content:\s*center[^}]*align-items:\s*center/.test(page));
+ok('loginGrid anchors the console to the bottom on mobile (over the photo\'s lower band)',
+  /\.loginGrid\s*\{[^}]*justify-content:\s*flex-end[^}]*align-items:\s*center/.test(page));
+ok('loginGrid anchors the console to the right on desktop (over the photo\'s dark side, never on top of the vehicle)',
+  /@media[^{]*\{\s*\.loginGrid\s*\{[^}]*justify-content:\s*center[^}]*align-items:\s*flex-end/.test(page));
 
 // ── Issue 2/3/4/6/7: ONE spacing scale, no stacked margins ─────────────────
-ok('loginRight is a flex column with a single gap', /\.loginRight\s*\{[^}]*display:\s*flex[^}]*gap:\s*16px/.test(page));
-ok('loginRight owns the column width (max-width)', /\.loginRight\s*\{[^}]*max-width:\s*400px/.test(page));
+// (loginRight was renamed .console and moved into the CSS module when the login became a
+// single floating console over a photo instead of a two-panel layout — same principle.)
+ok('console is a flex column with a single gap', /\.console\s*\{[^}]*display:\s*flex[^}]*gap:\s*14px/.test(css));
+ok('console owns the column width (max-width)', /\.console\s*\{[^}]*max-width:\s*400px/.test(css));
 ok('demoWrap no longer has its own stacking margin-top',
   !/\.demoWrap\s*\{[^}]*margin:\s*16px/.test(css) && !/\.demoWrap\s*\{[^}]*margin-top/.test(css));
 ok('demoWrap is a flex column with one gap', /\.demoWrap\s*\{[^}]*display:\s*flex[^}]*gap:\s*12px/.test(css));

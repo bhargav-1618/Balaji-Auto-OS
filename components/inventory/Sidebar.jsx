@@ -56,6 +56,8 @@ const NAV_GROUPS = [
 ];
 // which group holds a given tab id (used to auto-expand the active section)
 const GROUP_OF_TAB = NAV_GROUPS.reduce((acc, g) => { g.items.forEach((it) => { acc[it.id] = g.key; }); return acc; }, {});
+// tab id -> its nav label (used to keep document.title in sync — see ID-4 below)
+const TAB_LABEL = NAV_GROUPS.reduce((acc, g) => { g.items.forEach((it) => { acc[it.id] = it.label; }); return acc; }, {});
 
 function Sidebar({ activeTab, setActiveTab, collapsed, setCollapsed, mobileOpen, setMobileOpen, isAdmin, alertCount, reminderCount = 0, jobCount = 0, inventoryCount = 0, status, onRetry }) {
   const { t } = useTranslation();
@@ -79,6 +81,12 @@ function Sidebar({ activeTab, setActiveTab, collapsed, setCollapsed, mobileOpen,
   // page would be silently unscrollable with nothing on screen to explain it; this
   // releases the lock whenever we navigate and nothing is actually open.
   useEffect(() => { assertBodyUnlockedIfNoModals(); }, [activeTab]);
+  // ID-4 fix — document.title was a static "Inventory — …" set once in pages/index.js's
+  // <Head> (this whole authenticated app is one route; tabs switch client-side, so
+  // <Head> only ever renders once). Sidebar already owns the one activeTab -> label
+  // mapping (NAV_GROUPS above), so it keeps the title in sync instead of a second
+  // lookup living in pages/index.js.
+  useEffect(() => { document.title = `${TAB_LABEL[activeTab] || 'Dashboard'} — Sri Baba Balaji Maruti Care`; }, [activeTab]);
   useEffect(() => { const gk = GROUP_OF_TAB[activeTab]; if (gk) setOpenGroups((s) => (s[gk] ? s : { ...s, [gk]: true })); }, [activeTab]);
   const toggleGroup = (key) => setOpenGroups((s) => ({ ...s, [key]: !s[key] }));
 

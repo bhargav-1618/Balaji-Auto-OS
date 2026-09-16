@@ -18,6 +18,7 @@ import { TrendingUp, Wrench, ShoppingCart, PackagePlus, Send } from 'lucide-reac
 import { useTranslation } from '../../../lib/i18n';
 import { tsToDate, isSameDay } from '../../../lib/format';
 import { SEMANTIC } from '../../../constants/ui';
+import { todaysStockOut } from '../../../services/inventoryService';
 import LedgerPage, { LedgerRow, dstr } from '../../common/LedgerPage';
 import CapacityBanner from '../../common/CapacityBanner';
 
@@ -298,10 +299,11 @@ export function StockOutView({ sales, stockAdjustments, demoMode, demoCanExport 
       const d = (a.stockAfter != null && a.stockBefore != null) ? (a.stockAfter - a.stockBefore) : (a.qty || 0);
       return s + (d < 0 ? Math.abs(d) : 0);
     }, 0);
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    const todayMs = todayStart.getTime();
-    const todayOut = sales.filter((s) => (tsToDate(s.createdAt)?.getTime() || 0) >= todayMs).reduce((s, x) => s + (x.qty || 0), 0)
-      + stockAdjustments.filter((a) => { const d = (a.stockAfter != null && a.stockBefore != null) ? (a.stockAfter - a.stockBefore) : (a.qty || 0); return d < 0 && (tsToDate(a.createdAt)?.getTime() || 0) >= todayMs; }).reduce((s, a) => { const d = (a.stockAfter - a.stockBefore) || -(a.qty || 0); return s + Math.abs(d); }, 0);
+    // ID-1 fix — was its own inline sales+adjustments merge (correct in substance,
+    // but a second copy of the same rule as InventoryOverview's Dashboard KPI,
+    // which used to be sales-only and disagreed with this number). Both now
+    // resolve through the one shared definition in inventoryService.js.
+    const todayOut = todaysStockOut(sales, stockAdjustments);
     return [
       { label: t('stockOut.kpi.todaysStockOut', "Today's Stock Out"), value: todayOut, icon: Send, color: '#d4af37' },
       { label: t('stockOut.kpi.customerSalesUnits', 'Customer Sales (units)'), value: sales.filter((x) => !!x.partId && (x.revenueType || x.category || 'Parts') === 'Parts').reduce((s, x) => s + (x.qty || 0), 0), icon: ShoppingCart, color: '#34d399' },

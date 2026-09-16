@@ -6,6 +6,7 @@
 import React, { useMemo } from 'react';
 import PageHeader from '../common/PageHeader';
 import { SEMANTIC } from '../../constants/ui';
+import { todaysStockOut } from '../../services/inventoryService';
 import {
   PackageSearch, IndianRupee, AlertTriangle, PackageX, Archive, RefreshCw,
   Flame, Snowflake, Plus, PackagePlus, ShoppingCart, ArrowRight, TrendingUp,
@@ -263,11 +264,15 @@ export default function InventoryOverview({
 
     const reorderNeeded = [...low, ...out].sort((a, b) => num(a.stock) - num(b.stock)).slice(0, 6);
 
-    // today's stock movement (in from restocks, out from sales)
+    // today's stock movement (in from restocks, out from sales + negative adjustments)
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
     const todayMs = todayStart.getTime();
     const todayIn = restocks.filter((r) => toMillis(r.receivedAt || r.createdAt || r.date) >= todayMs).reduce((s, r) => s + num(r.qty || r.quantity), 0);
-    const todayOut = sales.filter((s) => toMillis(s.soldAt || s.createdAt || s.date) >= todayMs).reduce((sum, s) => sum + num(s.qty || s.quantity || 1), 0);
+    // ID-1 fix — was sales-only here, disagreeing with this same file's own 14-day
+    // movement chart (moveEvents above, which already counts negative adjustments
+    // as OUT) and with the dedicated Stock Out ledger. Now resolves through the
+    // one shared definition in inventoryService.js instead of a second inline copy.
+    const todayOut = todaysStockOut(sales, stockAdjustments, todayMs);
     const inStockCount = active.filter((p) => num(p.stock) > 0).length;
     const reservedUnits = active.reduce((s, p) => s + num(p.reserved), 0);
 

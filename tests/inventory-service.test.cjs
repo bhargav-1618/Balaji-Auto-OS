@@ -25,7 +25,11 @@ const {
   lockedCapital, expectedProfit, ageDays, isDeadStock, deadStockReason,
   asList, flattenVehicles, compatStr, categoriesStr, partIsUniversal, brandsOf,
   getDeadStockDays, getReorderMultiplier,
+  // ID-1 — the shared "today's stock OUT" definition (see below).
+  todaysStockOut,
 } = require('../services/inventoryService.js');
+const fs = require('fs');
+const path = require('path');
 
 let PASS = 0, FAIL = 0;
 const ok = (n, c) => { if (c) { PASS++; console.log(`  ✓ ${n}`); } else { FAIL++; console.log(`  ✗ ${n}`); } };
@@ -145,6 +149,75 @@ ok('nothing → []', JSON.stringify(brandsOf({})) === '[]');
 
 console.log('\ngetReorderMultiplier — default when no settings blob\n');
 ok('default = 2', getReorderMultiplier() === 2);
+
+// ── ID-1 regression — "Today's Stock Out" must mean the same thing everywhere ──
+// Root cause: the Inventory Dashboard KPI counted sales only; the Stock Out ledger
+// counted sales PLUS negative stockAdjustments (damage/loss/theft/personal use/
+// etc). Same day, same session, two different numbers (12 vs 30 in production).
+// The authoritative definition — already documented in InventoryOverview's own
+// 14-day movement chart and in the Stock Out ledger's own code comment — is
+// "a sale, OR a stockAdjustment whose stock delta is negative, counts as OUT;
+// a positive-delta adjustment (a correction) does NOT." This tests the BUSINESS
+// RULE against a dataset shaped like the kind that caused the discrepancy —
+// never a hardcoded 12/30.
+console.log("\ntodaysStockOut — the ONE definition both the Dashboard KPI and the Stock Out ledger now call\n");
+{
+  const now = new Date('2026-09-17T15:00:00'); // a Thursday, mid-afternoon
+  const todayIso = (h) => new Date('2026-09-17T' + String(h).padStart(2, '0') + ':00:00').toISOString();
+  const yesterdayIso = (h) => new Date('2026-09-16T' + String(h).padStart(2, '0') + ':00:00').toISOString();
+
+  ok('no sales, no adjustments -> 0', todaysStockOut([], [], now) === 0);
+
+  ok('sales alone are counted (the pre-fix Dashboard definition)',
+    todaysStockOut([{ qty: 4, createdAt: todayIso(9) }, { qty: 6, createdAt: todayIso(11) }], [], now) === 10);
+
+  ok('a negative-delta adjustment (damage/loss/theft/personal use) is counted as OUT too — this is exactly what the Dashboard used to omit',
+    todaysStockOut([], [{ stockBefore: 20, stockAfter: 15, createdAt: todayIso(10) }], now) === 5);
+
+  ok('a positive-delta adjustment (a correction / stock found) is NOT counted as OUT',
+    todaysStockOut([], [{ stockBefore: 10, stockAfter: 14, createdAt: todayIso(10) }], now) === 0);
+
+  ok('sales + negative adjustments both contribute — reproduces the production discrepancy shape (some sales, some damage/loss) and proves the merged total',
+    todaysStockOut(
+      [{ qty: 4, createdAt: todayIso(9) }, { qty: 6, createdAt: todayIso(11) }, { qty: 2, createdAt: todayIso(13) }],
+      [
+        { stockBefore: 20, stockAfter: 15, createdAt: todayIso(10) },  // -5, damage
+        { stockBefore: 8, stockAfter: 6, createdAt: todayIso(12) },    // -2, theft
+        { stockBefore: 3, stockAfter: 8, createdAt: todayIso(14) },    // +5, correction — must NOT count
+      ],
+      now,
+    ) === 19); // 4+6+2 sales (=12) + 5+2 negative adjustments (=7) = 19
+
+  ok("yesterday's sales and adjustments are excluded (date-boundary correctness)",
+    todaysStockOut(
+      [{ qty: 100, createdAt: yesterdayIso(23) }],
+      [{ stockBefore: 50, stockAfter: 0, createdAt: yesterdayIso(23) }],
+      now,
+    ) === 0);
+
+  ok('falls back to the signed `qty` field when stockBefore/stockAfter are absent (older records)',
+    todaysStockOut([], [{ qty: -3, createdAt: todayIso(10) }], now) === 3);
+
+  ok('a record with no qty/quantity/delta contributes 0, never NaN',
+    Number.isFinite(todaysStockOut([{ createdAt: todayIso(9) }], [], now)));
+}
+
+console.log('\nID-1 — the Dashboard KPI and the Stock Out ledger both resolve through todaysStockOut, not a second inline copy\n');
+{
+  const read = (p) => fs.readFileSync(path.resolve(__dirname, '..', p), 'utf8');
+  const overview = read('components/inventory/InventoryOverview.jsx');
+  const ledger = read('components/inventory/views/LedgerViews.jsx');
+  ok('InventoryOverview imports the shared todaysStockOut',
+    /import \{ todaysStockOut \} from '\.\.\/\.\.\/services\/inventoryService'/.test(overview));
+  ok("InventoryOverview's Dashboard KPI calls it (not a second sales-only sum)",
+    /const todayOut = todaysStockOut\(sales, stockAdjustments/.test(overview) &&
+    !/todayOut = sales\.filter/.test(overview));
+  ok('LedgerViews (Stock Out module) imports the shared todaysStockOut',
+    /import \{ todaysStockOut \} from '\.\.\/\.\.\/\.\.\/services\/inventoryService'/.test(ledger));
+  ok("LedgerViews' Stock Out headline calls it (not its own inline merge)",
+    /const todayOut = todaysStockOut\(sales, stockAdjustments\)/.test(ledger) &&
+    !/todayOut = sales\.filter\(\(s\) => \(tsToDate/.test(ledger));
+}
 
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

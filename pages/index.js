@@ -37,7 +37,9 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>Inventory — Sri Baba Balaji Maruti Care</title>
+        {/* Matches the default activeTab ('overview' → "Dashboard"); Sidebar.jsx keeps
+            this in sync with whichever tab is actually active after mount (ID-4 fix). */}
+        <title>Dashboard — Sri Baba Balaji Maruti Care</title>
         {/* Viewport is set once in _app.js. It must NOT be redefined here:
             `maximum-scale=1` blocked pinch-zoom, which fails WCAG 1.4.4 and makes the
             app unusable for older workshop owners who zoom to read part numbers. */}
