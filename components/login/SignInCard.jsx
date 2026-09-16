@@ -21,19 +21,6 @@ export default function SignInCard({
   return (
     <div className={`${styles.card} ${styles.revealCard} ${shake ? styles.cardShake : ''} ${reject ? styles.cardReject : ''}`}>
       {!instant && <DiagnosticScan />}
-      {/* brand block */}
-      <div className={styles.reveal} style={{ textAlign: 'center', marginBottom: 24 }}>
-        <img
-          src="/icons/icon-512.png"
-          alt=""
-          width={72}
-          height={72}
-          style={{ borderRadius: '50%', objectFit: 'contain', margin: '0 auto 14px', display: 'block', border: '2px solid rgba(212,175,55,0.5)', boxShadow: '0 0 24px rgba(212,175,55,0.18)' }}
-        />
-        <p style={{ color: '#e9c766', fontSize: 14, letterSpacing: '0.14em', fontWeight: 700 }}>
-          SRI BABA BALAJI MARUTI CARE
-        </p>
-      </div>
 
       <form onSubmit={onSubmit}>
         <div className={styles.reveal}>

@@ -1,16 +1,17 @@
 // pages/login.js — "Ignition" presentation.
-// The visual layer is rebuilt (two-panel aurora boot sequence, glass card) but EVERY
-// piece of authentication logic below is preserved from the previous version: demo
-// login, remember-me + persistence choice, reset email, session-expired toast, and the
-// success -> /outro.mp4 departure. Presentation-only rebuild.
+// The visual layer is a real photographic automotive environment (public/images/login-hero.jpg
+// — Unsplash License, see docs/ATTRIBUTIONS.md) with a floating console over it, but EVERY
+// piece of authentication logic below is preserved unchanged: demo login, remember-me +
+// persistence choice, reset email, session-expired toast, and the success -> /outro.mp4
+// departure. Presentation-only rebuild.
 import { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
+import Image from 'next/image';
 import { auth, signInWithEmailAndPassword, sendPasswordResetEmail } from '../lib/firebase';
 import { setPersistence, browserLocalPersistence, browserSessionPersistence } from 'firebase/auth';
 import toast from '../lib/toast';
 import notify from '../components/common/notify';
 import styles from '../styles/login.module.css';
-import AuroraBackground from '../components/login/AuroraBackground';
 import Wordmark from '../components/login/Wordmark';
 import SignInCard from '../components/login/SignInCard';
 
@@ -85,16 +86,44 @@ export default function Login() {
       setBooted(false);
       setNeedle(true);
       try { sessionStorage.setItem('balaji_booted', '1'); } catch {}
-      const t = setTimeout(() => setNeedle(false), 420);
-      // on the full sequence, focus lands after the fields have revealed (~2.1s)
+      // Must outlive the LONGEST animation gated by `needle` (needle sweep ends 0.78s,
+      // headlight bloom 1.05s, floor spill 1.45s) — unmounting earlier would cut one of
+      // them off mid-animation instead of letting it settle.
+      const t = setTimeout(() => setNeedle(false), 1500);
+      // on the full sequence, focus lands after the fields have finished revealing (~2.6s)
       if (!isTouch) focusTimers.push(setTimeout(() => {
         const el = prefilled ? passwordRef.current : emailRef.current;
         if (el && (!document.activeElement || document.activeElement === document.body)) el.focus();
-      }, 2150));
+      }, 2600));
       return () => { clearTimeout(t); focusTimers.forEach(clearTimeout); };
     }
     setBooted(true);   // returning visit or reduced motion → instant, no sequence
     return () => { focusTimers.forEach(clearTimeout); };
+  }, []);
+
+  // Mouse parallax: --px/--py written on .scene (inherited by both the environment layer
+  // and the console, which move by different amounts — see login.module.css). One write
+  // per animation frame, never per pointermove event. Skipped entirely on touch (no
+  // pointer to track) and under reduced motion (no unnecessary movement).
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    if (window.matchMedia?.('(pointer: coarse)').matches) return undefined;
+    if (reduced()) return undefined;
+    const el = sceneRef.current;
+    if (!el) return undefined;
+    let raf = 0; let nx = 0; let ny = 0;
+    const flush = () => {
+      raf = 0;
+      el.style.setProperty('--px', nx.toFixed(4));
+      el.style.setProperty('--py', ny.toFixed(4));
+    };
+    const move = (e) => {
+      nx = e.clientX / window.innerWidth - 0.5;
+      ny = e.clientY / window.innerHeight - 0.5;
+      if (!raf) raf = requestAnimationFrame(flush);
+    };
+    window.addEventListener('pointermove', move, { passive: true });
+    return () => { window.removeEventListener('pointermove', move); if (raf) cancelAnimationFrame(raf); };
   }, []);
 
   // ───────────────────────── AUTH — preserved ──────────────────────
@@ -176,18 +205,31 @@ export default function Login() {
     <>
       <Head><title>Sign in — Sri Baba Balaji Maruti Care</title></Head>
 
-      <div ref={sceneRef} className={`${styles.scene} ${seqClass}`} style={{ display: 'flex' }}>
-        <AuroraBackground />
-        <div className={styles.vignette} aria-hidden="true" />
-        {needle && <div className={`${styles.powerPulse} ${styles.powerPulseOn}`} aria-hidden="true" />}
-        {needle && <div className={`${styles.needle} ${styles.needleOn}`} aria-hidden="true" />}
+      <div ref={sceneRef} className={`${styles.scene} ${seqClass}`}>
+        {/* Pinned to the viewport (position: fixed), independent of page scroll — never
+            .scene's own overflow:hidden clipping this cost us a fully off-screen, unreachable
+            demo button on any viewport shorter than the console's content. The environment
+            always covers the screen; only the console content below scrolls if it needs to. */}
+        <div className={styles.heroFixed} aria-hidden="true">
+          <div className={styles.heroParallax}>
+            <Image
+              src="/images/login-hero.jpg"
+              alt=""
+              fill
+              priority
+              sizes="100vw"
+              className={styles.heroPhoto}
+            />
+            {needle && <div className={styles.headlightBloomOn} aria-hidden="true" />}
+            {needle && <div className={styles.floorSpillOn} aria-hidden="true" />}
+            {needle && <div className={`${styles.needle} ${styles.needleOn}`} aria-hidden="true" />}
+          </div>
+          <div className={styles.vignette} aria-hidden="true" />
+        </div>
 
         <div className="loginGrid">
-          <div className="loginLeft">
+          <div className={styles.console}>
             <Wordmark />
-          </div>
-
-          <div className="loginRight">
             <SignInCard
               instant={instant}
               shake={shake}
@@ -240,8 +282,8 @@ export default function Login() {
               <span style={{ margin: '0 auto 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 48, height: 48, borderRadius: '50%', border: '2px solid #d4af37' }}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#d4af37" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </span>
-              <p style={{ color: '#ece8dd', fontSize: 16, fontWeight: 600, letterSpacing: '0.04em' }}>System Verified</p>
-              <p style={{ color: 'rgba(200,195,182,0.5)', fontSize: 11.5, marginTop: 5 }}>Loading Garage Management ERP…</p>
+              <p style={{ color: '#ece8dd', fontSize: 16, fontWeight: 600, letterSpacing: '0.04em' }}>Authentication Verified</p>
+              <p style={{ color: 'rgba(233,199,102,0.75)', fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', marginTop: 6, textTransform: 'uppercase' }}>Workshop Access Granted</p>
             </div>
           </div>
         )}
@@ -260,21 +302,16 @@ export default function Login() {
       </div>
 
       <style jsx>{`
+        /* Mobile: console anchored toward the bottom, over the photo's darker lower band.
+           Desktop: console floats right, over the photo's negative space (see heroPhoto's
+           object-position in login.module.css) — never on top of the vehicle itself. */
         .loginGrid {
           position: relative; z-index: 10; width: 100%; min-height: 100dvh;
-          display: flex; flex-direction: column; justify-content: center; align-items: center;
-          gap: 8px; padding: max(1.5rem, env(safe-area-inset-top)) 1.25rem max(1.5rem, env(safe-area-inset-bottom));
+          display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+          padding: max(1.5rem, env(safe-area-inset-top)) 1.25rem max(2.5rem, env(safe-area-inset-bottom));
         }
-        .loginLeft { display: none; }
-        .loginRight {
-          width: 100%; max-width: 400px;
-          display: flex; flex-direction: column; align-items: stretch;
-          gap: 16px;   /* ONE spacing scale for card → OR → demo (no stacked margins) */
-        }
-        @media (min-width: 1024px) {
-          .loginGrid { flex-direction: row; gap: 0; padding-left: 6vw; padding-right: 6vw; align-items: center; }
-          .loginLeft { display: block; flex: 0 0 55%; padding-right: 4vw; }
-          .loginRight { flex: 0 0 45%; max-width: 420px; align-items: stretch; }
+        @media (min-width: 900px) {
+          .loginGrid { justify-content: center; align-items: flex-end; padding-right: 7vw; padding-left: 7vw; }
         }
       `}</style>
     </>
