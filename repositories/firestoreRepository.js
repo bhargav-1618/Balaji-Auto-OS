@@ -16,7 +16,7 @@
 
 import {
   collection, doc, query, orderBy, where, limit, startAfter,
-  onSnapshot, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc,
+  onSnapshot, getDocs, addDoc, setDoc, updateDoc, deleteDoc,
   writeBatch, serverTimestamp, getCountFromServer, runTransaction,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -127,11 +127,6 @@ export async function count(collectionName, constraints = []) {
 // ---------------------------------------------------------------------------
 // CRUD
 // ---------------------------------------------------------------------------
-export async function getById(collectionName, id) {
-  const snap = await getDoc(doc(db, collectionName, id));
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
-}
-
 export async function create(collectionName, data) {
   const ref = await addDoc(collection(db, collectionName), {
     ...data,

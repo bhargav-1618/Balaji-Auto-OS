@@ -260,8 +260,8 @@ carry `window.name` into the new tab? Requested steps: open a page, set
 
 | Surface | Outcome |
 |---|---|
-| **Claude-in-Chrome extension** (would drive the user's real Chrome) | `list_connected_browsers` → `[]`. No browser paired. Same as every prior phase (7, 23). |
-| **In-app Browser pane** | Embedded Chromium **148.0.7778.280** webview inside the Claude desktop app (`Claude/1.46388.4 … Chrome/148.0.7778.280 … MSIX`). It has **no tab strip and no "Duplicate tab" affordance**; `computer` acts only on the page viewport, not browser chrome. Browser-level keyboard shortcuts are **not routed** to it — `ctrl+t` was a confirmed no-op (tab count unchanged). No `ctrl+shift+t` / session-restore path either. `tabs_create` explicitly makes a *fresh blank* tab, not a clone. External origins are blocked (`example.com` denied); files outside the project become opaque `data:` snapshots with storage disabled. |
+| **Real-browser automation** (would drive an actual Chrome instance) | No browser paired for this attempt — same as every prior phase (7, 23). |
+| **Sandboxed preview browser** | An embedded Chromium webview with **no tab strip and no "Duplicate tab" affordance**; automation acts only on the page viewport, not browser chrome. Browser-level keyboard shortcuts are **not routed** to it — `ctrl+t` was a confirmed no-op (tab count unchanged). No `ctrl+shift+t` / session-restore path either. Its own "new tab" action explicitly makes a *fresh blank* tab, not a clone. External origins are blocked (`example.com` denied); files outside the project become opaque `data:` snapshots with storage disabled. |
 
 ### What the in-app pane *could* confirm (real `http://localhost:3000` origin)
 
@@ -322,8 +322,8 @@ real-browser observation the user asked for, and the Chromium `PageState`
 reading still points the other way. Hold for the user's probe result before any
 production change.
 
-Environment for this attempt: Windows 11, Claude desktop app, in-app Chromium
-148.0.7778.280 webview; not a standalone Chrome; not an actual Duplicate-tab
+Environment for this attempt: Windows 11, an embedded Chromium webview in the
+testing environment; not a standalone Chrome; not an actual Duplicate-tab
 gesture; `window.name` before/after not measurable across the gesture.
 
 ---
@@ -337,8 +337,8 @@ VULNERABILITY REPRODUCED?      NO — inferred from Chromium PageState internals
                               never observed on a real browser (no paired browser,
                               no way to trigger a real "Duplicate tab" gesture)
 
-EXTERNAL BROWSER CHECK:        BLOCKED — Claude-in-Chrome: 0 browsers paired.
-                              In-app pane: embedded Chromium 148 webview, no tab
+EXTERNAL BROWSER CHECK:        BLOCKED — no real browser paired for automation.
+                              Sandboxed preview: embedded Chromium webview, no tab
                               strip, no Duplicate-tab gesture, ignores ctrl+t.
                               Could confirm only: window.name survives reload;
                               empty in a plain new tab; sessionStorage not

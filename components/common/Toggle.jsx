@@ -25,7 +25,7 @@ const TRACK_H = 24;
 const KNOB = 20;
 const PAD = (TRACK_H - KNOB) / 2; // 2px
 
-export function Toggle({ on, onChange, disabled = false, label, desc, id, 'aria-label': ariaLabel }) {
+function Toggle({ on, onChange, disabled = false, label, desc, id, 'aria-label': ariaLabel }) {
   const handle = () => { if (!disabled) onChange?.(!on); };
 
   const knob = (

@@ -26,7 +26,7 @@ const ICON_SIZE = 17;
 const SUCCESS_COLOR = '#34d399';
 const ERROR_COLOR = '#ef4444';
 
-export const notify = {
+const notify = {
   // Blocked by a permission/role check — demo-mode guard, staff restriction, read-only
   // account, etc. Warning-tier duration: the user needs a moment to understand WHY
   // their action didn't go through, not just that it didn't. Amber, matching `warning`
