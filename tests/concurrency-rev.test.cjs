@@ -180,6 +180,39 @@ seed('customers', [{ id: 'legacy1', name: 'Legacy', phone: '9000000001' }]); // 
   ok('M: the guarded-save path does not depend on the edit lease or the record-sync layer',
     !/editLease|editLocks|acquireLease|renewLease|useEditLease|recordSync|useRecordSync/.test(store_src + repo_src + read('../lib/concurrency.js')));
 
+  // ── N. ID-7 — a rejected save carries the authoritative record so the caller's
+  // OWN stale list entry can be refreshed without a manual reload, WITHOUT
+  // weakening the rejection itself (the two-tab scenario this was found in: Tab A
+  // saves, Tab B's now-stale edit is rejected, Tab B's list used to keep showing
+  // its own pre-conflict values until a full page reload). ────────────────────
+  const conc_src = read('../lib/concurrency.js');
+  ok('N: conflictError attaches the current authoritative record as `.current` on a stale rejection',
+    /const err = new ConcurrencyError\(CONC_STALE,[\s\S]{0,120}\);\s*\n\s*err\.current = serverDoc \|\| null;\s*\n\s*return err;/.test(conc_src));
+
+  seed('customers', [{ id: 'cN', name: 'Original', phone: '9000000002', _rev: 5 }]);
+  await store.saveGuarded('customers', { id: 'cN', name: 'Saved by A', phone: '9111111111' }, 5, {}); // A saves -> rev 6
+  let staleErrN = null;
+  try { await store.saveGuarded('customers', { id: 'cN', name: 'Attempted by B (stale)' }, 5, {}); } catch (e) { staleErrN = e; }
+  ok('N: B\'s stale save is still rejected exactly as before — the protection itself is unchanged', isConcurrencyError(staleErrN) && staleErrN.code === CONC_STALE);
+  ok('N: the rejection carries A\'s real, current record as `.current` (not B\'s stale view, not empty)',
+    !!staleErrN.current && staleErrN.current.name === 'Saved by A' && staleErrN.current.phone === '9111111111' && staleErrN.current._rev === 6);
+  ok('N: the stored record itself is still exactly A\'s save — B never touched it', rows('customers')[0].name === 'Saved by A' && rows('customers')[0]._rev === 6);
+
+  seed('customers', [{ id: 'cDel', name: 'Doomed', _rev: 1 }]);
+  seed('customers', rows('customers').filter((r) => r.id !== 'cDel')); // B deletes
+  let delErrN = null;
+  try { await store.saveGuarded('customers', { id: 'cDel', name: 'Doomed EDITED' }, 1, {}); } catch (e) { delErrN = e; }
+  ok('N: a stale save on a record deleted elsewhere still rejects with conc/deleted, unchanged', isConcurrencyError(delErrN) && delErrN.code === CONC_DELETED);
+
+  ok('N: saveCustomerEdit wraps its guarded save in try/catch so a rejection can be handled before re-throwing (the throw itself — and therefore the toast/banner in CustomersModule.jsx — is untouched)',
+    /const saveCustomerEdit = useCallback\(async \(record, expectedRev, opts = \{\}\) => \{\s*\n\s*warnIfOffline\('this customer'\);.*\n\s*try \{[\s\S]{0,500}\} catch \(e\) \{[\s\S]{0,1300}throw e;\s*\n\s*\}/.test(dash));
+  ok('N: on a `conc/stale` rejection, saveCustomerEdit refreshes ONLY the affected customer\'s list entry with `e.current` — no full-list reload, no second sync architecture, reusing the exact merge shape the success path already uses',
+    /: \(e\.current \? prev\.map\(\(c\) => \(c\.id === record\.id \? \{ \.\.\.c, \.\.\.e\.current \} : c\)\) : prev\)/.test(dash));
+  ok('N: on a `conc/deleted` rejection, saveCustomerEdit drops the record from the list instead of leaving a phantom stale entry',
+    /const next = e\.code === CONC_DELETED\s*\n\s*\? prev\.filter\(\(c\) => c\.id !== record\.id\)/.test(dash));
+  ok('N: the refresh only ever touches customersRef/setCustomersRaw when something actually changed (skips the update entirely when there is no `.current` to apply)',
+    /if \(next !== prev\) \{ customersRef\.current = next; setCustomersRaw\(next\); \}/.test(dash));
+
   console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
   process.exit(FAIL ? 1 : 0);
 })();

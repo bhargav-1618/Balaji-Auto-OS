@@ -121,7 +121,7 @@ export function createStore(demoMode) {
         const rows = readAll(key) || [];
         const idx = rows.findIndex((r) => r[idField] === record[idField]);
         const state = revState(idx >= 0 ? rows[idx] : null, expectedRev);
-        const err = conflictError(state, label);
+        const err = conflictError(state, label, idx >= 0 ? rows[idx] : null);
         if (err) throw err;
         const { [idField]: _dropId, _rev: _dropRev, ...clean } = record;
         // Phase 3b (CWF-03) — same id-keyed array replay as production guardedSet

@@ -2801,11 +2801,45 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     for (let p = 1; p <= page; p += 1) { doc.setPage(pageStart + p - 1); drawPdfPageNumber(doc, p, { W, M, total: isWorkshop ? page : undefined }); }
   }
 
+  // ID-6 — Print silently did nothing in this environment's popup blocker: the old
+  // code called window.open() AFTER `await import('jspdf')` and `await
+  // drawInvoiceDocument(...)`, and a browser is free to treat the click's user
+  // gesture as expired by the time an async chain like that resolves, silently
+  // returning null instead of opening the tab (confirmed via instrumentation —
+  // window.open was called with the right blob URL and returned null). The fix:
+  // open the tab FIRST, synchronously, still inside the click handler, and only
+  // point it at the finished PDF once generation completes — the standard,
+  // popup-safe pattern for "async content in a new tab". If the browser blocks
+  // even that first synchronous call, or the user closes the tab while the PDF is
+  // still generating, the user is told and can fall back to the PDF button
+  // instead of silently getting nothing.
+  const openPrintWindow = () => {
+    const win = window.open('', '_blank');
+    if (!win) {
+      toast.error('Your browser blocked the print window. Use the PDF button instead, or allow pop-ups for this site.', { duration: 7000 });
+      return null;
+    }
+    try {
+      win.document.write('<title>Preparing to print…</title><body style="background:#111;color:#999;font:14px -apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Preparing document…</body>');
+    } catch { /* best-effort placeholder only — a failure here doesn't block printing */ }
+    return win;
+  };
+  const finishPrintWindow = (win, doc) => {
+    if (win.closed) {
+      toast.error('Print window was closed before the document was ready. Use the PDF button instead.', { duration: 7000 });
+      return;
+    }
+    doc.autoPrint();
+    win.location = doc.output('bloburl');
+  };
+
   const downloadPDF = async (iv, printAfter = false, mode = 'customer') => {
+    const printWin = printAfter ? openPrintWindow() : null;
+    if (printAfter && !printWin) return;
     const { jsPDF } = await import('jspdf');
     const doc = new jsPDF({ unit: PDF_PAGE.unit, format: PDF_PAGE.format });
     await drawInvoiceDocument(doc, iv, mode);
-    if (printAfter) { doc.autoPrint(); window.open(doc.output('bloburl'), '_blank'); } else doc.save(`${iv.invNo}.pdf`);
+    if (printAfter) finishPrintWindow(printWin, doc); else doc.save(`${iv.invNo}.pdf`);
   };
 
   // Universal selection→export/PDF/print record-set review (Issue 9/10) — the actual
@@ -2822,6 +2856,10 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
       toast.error(`${rows.length} invoices selected — a single ${printAfter ? 'print job' : 'PDF'} supports up to ${MAX_BULK_INVOICE_PDF}. Narrow your selection and try again.`, { duration: 7000 });
       return;
     }
+    // ID-6 — same fix as downloadPDF: open the tab synchronously, before any
+    // await, so a bulk Print isn't subject to the same popup-blocking gap.
+    const printWin = printAfter ? openPrintWindow() : null;
+    if (printAfter && !printWin) return;
     setBulkDocBusy({ mode: printAfter ? 'print' : 'pdf', done: 0, total: rows.length });
     try {
       const { jsPDF } = await import('jspdf');
@@ -2835,7 +2873,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
       const stamp = new Date().toISOString().slice(0, 10);
-      if (printAfter) { doc.autoPrint(); window.open(doc.output('bloburl'), '_blank'); }
+      if (printAfter) finishPrintWindow(printWin, doc);
       else doc.save(`Invoices-${rows.length}-selected-${stamp}.pdf`);
       toast.success(`${printAfter ? 'Print dialog opened' : 'PDF downloaded'} for exactly ${rows.length} selected invoice${rows.length === 1 ? '' : 's'}`);
     } finally {
