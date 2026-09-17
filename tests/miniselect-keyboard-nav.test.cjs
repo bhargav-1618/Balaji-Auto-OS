@@ -71,5 +71,38 @@ ok('VehiclesModule.jsx imports the shared MiniSelect',
 ok('Vehicles no longer runs the buggy local outside-click pattern (mousedown + ref.contains on a non-portal ref)',
   !/document\.addEventListener\('mousedown', d\); return \(\) => document\.removeEventListener\('mousedown', d\); \}, \[open\]\);/.test(veh));
 
+// --- ID-5: hideSearch dropdowns (Customers/Vehicles/Billing/Reminders status &
+// type filters) never actually received keyboard focus, so ArrowDown/ArrowUp/Enter
+// (wired above via onKey) never fired — ALL of the assertions above already prove
+// the *logic* is correct once a keydown reaches onKey; these prove the *listbox
+// actually gets focus* in the hideSearch case, which is the part that was broken.
+//
+// Root cause: `autoFocus` is a React-special-cased prop implemented only for
+// button/input/select/textarea host elements (shouldAutoFocusHostComponent) — React
+// silently drops it for a plain <div>, calling no DOM API and rendering no
+// `autofocus` attribute. The listbox <div> here is not one of those tag types, so
+// `autoFocus={hideSearch}` compiled away to nothing: opening a hideSearch dropdown
+// left real focus on the trigger <button>, which has no keydown handler, so the
+// highlighted option could never move by keyboard.
+console.log('\nMiniSelect — hideSearch listbox keyboard focus (ID-5)\n');
+ok('the listbox no longer relies on the React-no-op `autoFocus` prop on a <div>',
+  !/autoFocus=\{hideSearch\}/.test(src));
+ok('the listbox is focused via a ref callback that fires exactly when the node mounts, not a [open, hideSearch] effect (DropdownPanel portals its children one render AFTER `open` flips — see useAnchoredPosition\'s async `measure()` — so an effect keyed on `open` would already have run against a still-null ref by the time this div exists)',
+  /const focusListboxOnMount = \(el\) => \{ listRef\.current = el; if \(el && hideSearch\) el\.focus\(\); \};/.test(src));
+ok('the listbox <div> is wired to that callback ref (this is what actually moves focus into it for hideSearch dropdowns)',
+  /<div ref=\{focusListboxOnMount\} id=\{listboxId\} role="listbox"/.test(src));
+ok('the listbox keeps tabIndex=-1 in the hideSearch case (focusable programmatically without joining normal Tab order)',
+  /tabIndex=\{hideSearch \? -1 : undefined\}/.test(src));
+ok('the listbox keydown handler is still wired only for hideSearch (search-box dropdowns keep taking arrow keys on the search input instead, unchanged)',
+  /onKeyDown=\{hideSearch \? onKey : undefined\}/.test(src));
+ok('the search-box dropdown\'s own autoFocus is untouched (input is a React-native autofocus tag, so this path was never broken and must stay exactly as-is)',
+  /<input\s*\n\s*autoFocus\s*\n\s*value=\{q\}/.test(src));
+ok('the keyboard-highlighted option is exposed via aria-activedescendant on hi (tracks arrow-key movement)',
+  /aria-activedescendant=\{shown\[hi\] \? optionId\(hi\) : undefined\}/.test(src));
+ok('aria-selected on each option reflects the actually committed value, not the transient keyboard highlight (by design — activedescendant already carries the highlight)',
+  /aria-selected=\{o === value\}/.test(src));
+ok('mouse hover/click selection on options is untouched by the focus fix',
+  /onMouseEnter=\{\(\) => setHi\(i\)\}/.test(src) && /onClick=\{\(\) => \{ onPick\(o\); setOpen\(false\); setQ\(''\); \}\}/.test(src));
+
 console.log(`\n  ${PASS} passed, ${FAIL} failed\n`);
 process.exit(FAIL ? 1 : 0);

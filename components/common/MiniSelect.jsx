@@ -99,6 +99,17 @@ export default function MiniSelect({ value, placeholder, options, groups, onPick
   // row), and keep the highlighted row scrolled into view as it moves.
   useEffect(() => { setHi(0); }, [q, open]);
   useEffect(() => { const el = listRef.current?.querySelector(`[data-idx="${hi}"]`); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); }, [hi]);
+  // ID-5: a plain `autoFocus` prop on the listbox <div> below is a no-op — React
+  // only wires up real autofocus-on-mount for button/input/select/textarea host
+  // elements, never for a div. Without this, opening a hideSearch dropdown left
+  // focus on the trigger button, so ArrowDown/ArrowUp/Enter (handled by `onKey`
+  // on the listbox) never fired: the highlighted option could never move. A ref
+  // callback (not a [open, hideSearch] effect) is required because DropdownPanel
+  // mounts its children asynchronously, one render after `open` itself flips —
+  // it measures its position via an effect before it has anything to portal, so
+  // an effect keyed on `open` would already have run against a still-null ref by
+  // the time this div actually exists.
+  const focusListboxOnMount = (el) => { listRef.current = el; if (el && hideSearch) el.focus(); };
   const canAdd = onAdd && q.trim() && !flatOptions.some((o) => o.toLowerCase() === q.trim().toLowerCase());
   // One atomic reset: clears the value, discards any in-progress search text, closes
   // the panel if it happened to be open, and returns focus to the trigger — regardless
@@ -202,7 +213,7 @@ export default function MiniSelect({ value, placeholder, options, groups, onPick
               />
             </div>
           )}
-          <div ref={listRef} id={listboxId} role="listbox" tabIndex={hideSearch ? -1 : undefined} autoFocus={hideSearch} onKeyDown={hideSearch ? onKey : undefined} className="overflow-y-auto dark-scroll outline-none" style={{ flex: '1 1 auto' }}>
+          <div ref={focusListboxOnMount} id={listboxId} role="listbox" tabIndex={hideSearch ? -1 : undefined} onKeyDown={hideSearch ? onKey : undefined} className="overflow-y-auto dark-scroll outline-none" style={{ flex: '1 1 auto' }}>
             {shownGroups ? (
               shownGroups.map((g) => (
                 <React.Fragment key={g.label}>
