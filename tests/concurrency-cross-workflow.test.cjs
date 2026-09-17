@@ -243,7 +243,10 @@ console.log('\nGuardrails\n');
 
 ok('Phase 1a guarded save still checks _rev via revState/conflictError',
   /const state = revState\(snap\.exists\(\) \? snap\.data\(\) : null, expectedRev\);/.test(repo_src)
-  && /const err = conflictError\(state, label\);/.test(repo_src));
+  // ID-7 — conflictError's 3rd arg (the current authoritative doc, for a stale
+  // caller to refresh its own list with — see tests/concurrency-rev.test.cjs
+  // section N) is additive; the guard decision itself (state, label) is unchanged.
+  && /const err = conflictError\(state, label, snap\.exists\(\) \? \{ id: snap\.id, \.\.\.snap\.data\(\) \} : null\);/.test(repo_src));
 ok('Phase 1b edit lease + Phase 1c record-sync are untouched by the persistence layer',
   !/editLease|editLocks|useEditLease|recordSync|useRecordSync/.test(store_src + repo_src + conc_src + po_src));
 ok('invoice number allocation (Phase 2) transaction is untouched',

@@ -4511,16 +4511,36 @@ export default function InventoryDashboard() {
   // dropped by the wizard's save.
   const saveCustomerEdit = useCallback(async (record, expectedRev, opts = {}) => {
     warnIfOffline('this customer'); // Phase 6b (PH6-02) — non-blocking heads-up only
-    const fresh = await store.saveGuarded(COLLECTIONS.CUSTOMERS, record, expectedRev, {
-      label: 'This customer',
-      idArrayKeys: ['vehicles'],
-      clientBefore: opts.clientBefore || null,
-    });
-    const prev = customersRef.current;
-    const next = prev.map((c) => (c.id === record.id ? { ...c, ...record, vehicles: fresh.vehicles || record.vehicles, _rev: fresh._rev } : c));
-    customersRef.current = next;
-    setCustomersRaw(next);
-    return fresh;
+    try {
+      const fresh = await store.saveGuarded(COLLECTIONS.CUSTOMERS, record, expectedRev, {
+        label: 'This customer',
+        idArrayKeys: ['vehicles'],
+        clientBefore: opts.clientBefore || null,
+      });
+      const prev = customersRef.current;
+      const next = prev.map((c) => (c.id === record.id ? { ...c, ...record, vehicles: fresh.vehicles || record.vehicles, _rev: fresh._rev } : c));
+      customersRef.current = next;
+      setCustomersRaw(next);
+      return fresh;
+    } catch (e) {
+      // ID-7 — a rejected (stale/deleted) save means THIS tab's own list entry for
+      // this customer is also stale, and used to stay that way until a manual
+      // reload. saveGuarded already read the authoritative current row to detect
+      // the conflict; conflictError() (lib/concurrency.js) now attaches it as
+      // `e.current`, so it can be reused here to refresh the one affected list
+      // entry — a deleted record is dropped, a stale one is replaced with the
+      // real current data. This never touches the rejection itself: the error
+      // still propagates unchanged, so every existing toast/banner keeps behaving
+      // exactly as before.
+      if (isConcurrencyError(e)) {
+        const prev = customersRef.current;
+        const next = e.code === CONC_DELETED
+          ? prev.filter((c) => c.id !== record.id)
+          : (e.current ? prev.map((c) => (c.id === record.id ? { ...c, ...e.current } : c)) : prev);
+        if (next !== prev) { customersRef.current = next; setCustomersRaw(next); }
+      }
+      throw e;
+    }
     // `warnIfOffline` must stay a dependency — it closes over `online`, and this
     // callback's own memoization would otherwise pin it to whatever `online` was
     // on first render (this callback's other dependency, `store`, is a `useMemo`

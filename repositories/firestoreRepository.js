@@ -185,7 +185,7 @@ export async function guardedSet(collectionName, id, data, expectedRev, label, o
   return withTimeout(runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const state = revState(snap.exists() ? snap.data() : null, expectedRev);
-    const err = conflictError(state, label);
+    const err = conflictError(state, label, snap.exists() ? { id: snap.id, ...snap.data() } : null);
     if (err) throw err;
     const server = snap.data() || {};
     const { id: _dropId, _rev: _dropRev, ...clean } = data || {};
