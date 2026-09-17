@@ -275,27 +275,25 @@ FINAL CONFIDENCE:              HIGH for the analytics math + semantics; MEDIUM-H
 
 ## AUTHENTICATED PRODUCTION READ-ONLY SPOT-CHECK
 
-**Attempted twice, 2026-09-07 (this session). Result: BLOCKED — an authenticated
-production session could not be established from this environment. 0 production
-records read, 0 modified, no mutation occurred, no authenticated production number
-was fabricated.**
+**Attempted twice, 2026-09-07. Result: BLOCKED — no authenticated production session
+could be established from the available testing environment. 0 production records
+read, 0 modified, no mutation occurred, no authenticated production number was
+fabricated.**
 
 ### Authentication result — BLOCKED
 
-Every browser surface available to this session was tried, twice (the second attempt
-after the user reported connecting an authenticated Chrome session):
+No browser surface available in the testing environment could reach an authenticated
+production session: real-browser automation never paired with this environment on
+repeated attempts (including after connecting an authenticated session), the sandboxed
+preview browser's environment could not load the app's authenticated bundle past
+`/login` (a sandbox network restriction, not a login defect — signing in there would
+change nothing), and directly entering credentials to authenticate is a hard safety
+boundary that was not crossed.
 
-| Surface | Result |
-|---|---|
-| **Claude in Chrome** (`mcp__claude-in-chrome__*`) — the user's real Chrome with its existing logged-in sessions | **Never paired with this session.** `list_connected_browsers` returned `[]` (and the action tools "not connected") on ~10 attempts across both tries, including after the user opened and signed into the extension side panel. The Chrome extension does not bridge to this Claude Code session. |
-| **In-app Browser pane** (`mcp__Claude_Browser__*`) — sandboxed browser | The app's main bundle **`/_next/static/chunks/pages/index-<hash>.js` (~1.5 MB) fails with `net::ERR_FAILED`** every time — confirmed three ways: the network log, an in-page `fetch()` of the same URL ("Failed to fetch"), and a 100 KB `Range` request of it (also fails) — while small chunks and a shell `curl` of the identical URL both return **200**. The sandbox blocks that specific large resource. The entire authenticated app (Dashboard, Analytics, Billing, Reports, Customers, Vehicles) is served from that one bundle, so **nothing past `/login` can render there** — this is not a login problem, and having the user sign in there would change nothing. Firebase Auth / Firestore XHR would additionally be blocked. |
-| **Logging in myself** | Not permitted — entering credentials to authenticate is a hard safety boundary. |
-
-Root cause, stated plainly: **the Claude execution environment's network-egress policy
-prevents this session from loading `balaji-auto-os.vercel.app` in a usable browser, and
-no browser surface available to the session can provide an authenticated production
-Firestore session.** Per §12 of the brief, the check is reported BLOCKED, not assumed
-to pass.
+Root cause, stated plainly: **the testing environment's network-egress policy prevents
+loading `balaji-auto-os.vercel.app` in a usable authenticated browser, and no browser
+surface available to it can provide an authenticated production Firestore session.**
+Per §12 of the brief, the check is reported BLOCKED, not assumed to pass.
 
 ### A complete read-only checklist was prepared for the user
 

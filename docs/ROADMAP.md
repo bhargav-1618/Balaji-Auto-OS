@@ -856,10 +856,10 @@ current release.
 - ~~**Phase 23 — authenticated production read-only spot-check.**~~ **ATTEMPTED 2×,
   BLOCKED — Phase 23 CLOSED at CONDITIONAL PASS.** The final step was to reconcile the
   four fixes (PH23-01/D1/D2/D3) against real production data. It could not run: the
-  Claude execution environment's network-egress policy prevents loading the production
-  app in any usable browser (Claude-in-Chrome never paired with the Code session;
-  the sandboxed Browser pane blocks the app's ~1.5 MB main bundle with
-  `net::ERR_FAILED` while `curl` gets 200 — confirmed 3 ways — so nothing past
+  testing environment's network-egress policy prevents loading the production
+  app in any usable authenticated browser (no real browser could be paired for
+  automation; the sandboxed preview browser blocks the app's ~1.5 MB main bundle
+  with `net::ERR_FAILED` while `curl` gets 200 — confirmed 3 ways — so nothing past
   `/login` renders), and entering credentials is prohibited. **0 production records
   read, 0 modified, no mutation, no fabricated numbers.** A full BATCH 1–6 read-only
   checklist was handed to the user to run in their own authenticated browser (uses the
