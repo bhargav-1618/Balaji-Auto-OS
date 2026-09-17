@@ -17,6 +17,16 @@ import SignInCard from '../components/login/SignInCard';
 
 const reduced = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
+// The outro departure video is optional, and this deployment does not ship
+// public/outro.mp4 — probing for it with a HEAD request on every single login
+// load was a guaranteed, permanent 404 (there is nothing to ever detect) rather
+// than a real error. NEXT_PUBLIC_HAS_OUTRO_VIDEO lets a deployment that DOES
+// add that file opt back into the probe without a code change; unset (the
+// default, and this deployment's actual state) skips the network request
+// entirely and keeps hasOutro at its existing false default — the exact same
+// outcome the HEAD probe always resolved to here, just without the 404.
+const OUTRO_VIDEO_AVAILABLE = process.env.NEXT_PUBLIC_HAS_OUTRO_VIDEO === '1';
+
 export default function Login() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -62,7 +72,7 @@ export default function Login() {
     try { sessionStorage.removeItem('maruti_demo'); sessionStorage.removeItem('maruti_demo_admin'); } catch {}
     let prefilled = false;
     try { const saved = localStorage.getItem('maruti_login_email'); if (saved) { setEmail(saved); setRemember(true); prefilled = true; } } catch {}
-    fetch('/outro.mp4', { method: 'HEAD' }).then((r) => setHasOutro(r.ok)).catch(() => setHasOutro(false));
+    if (OUTRO_VIDEO_AVAILABLE) fetch('/outro.mp4', { method: 'HEAD' }).then((r) => setHasOutro(r.ok)).catch(() => setHasOutro(false));
 
     // Autofocus the first field the user actually needs — but never on touch, where it
     // yanks the on-screen keyboard up over the whole boot experience. If email was
