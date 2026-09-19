@@ -70,7 +70,13 @@ console.log('\nPart 2 — every generator migrated off its own local copies, ont
   {
     const importLine = (src.match(/^import \{[^}]*\} from '\.\.\/\.\.\/lib\/pdfTheme';$/m) || [''])[0];
     ok('Job Card: imports the shared theme (page/gold/shop/header/page-number)',
-      ['PDF_PAGE', 'PDF_GOLD', 'SHOP', 'maskShop', 'drawPdfHeader', 'drawPdfPageNumber'].every((n) => importLine.includes(n)));
+      ['PDF_PAGE', 'PDF_GOLD', 'SHOP', 'drawPdfHeader', 'drawPdfPageNumber'].every((n) => importLine.includes(n)));
+    // UX follow-up: brandedShop no longer calls the shared maskShop() at all (every
+    // field it would set is now overridden with a Job Card-specific demo value) — the
+    // import was cleaned up accordingly. Billing/Invoice still import and use it
+    // directly (checked separately below); only Job Card's own import list shrank.
+    ok('Job Card: no longer imports maskShop (its only call site was consolidated away — see brandedShop below)',
+      !importLine.includes('maskShop'));
   }
   ok('Job Card: no more local SHOP re-declaration', !/const SHOP = \{\s*\n\s*name: 'SRI BABA BALAJI/.test(src));
   // `shop: brandedShop` (not bare `shop`) since the Business Logo feature: a copy of
@@ -81,10 +87,21 @@ console.log('\nPart 2 — every generator migrated off its own local copies, ont
   ok('Job Card: page geometry comes from PDF_PAGE, not a local literal', /const \{ W, M \} = PDF_PAGE;/.test(src));
   // Settings QA fix: the intermediate `shop = demoMode ? maskShop(SHOP) : SHOP`
   // (bare hardcoded SHOP either way) is gone — brandedShop is now built directly
-  // from liveShop(demoMode) (Settings -> Business Profile), masked in demo mode via
-  // the same shared maskShop() helper, matching Billing's identical fix.
-  ok('Job Card: demo-mode masking uses the shared helper, applied to the live Settings-driven shop',
-    /const brandedShop = demoMode \? maskShop\(liveShop\(demoMode\)\) : liveShop\(demoMode\);/.test(src));
+  // from liveShop(demoMode) (Settings -> Business Profile).
+  // UX follow-up (consolidation pass): every demo-mode field is now an explicit,
+  // fixed, wholly fictional Job Card-only value spread onto rawShop directly — the
+  // shared maskShop() call was removed as dead weight once every field it used to set
+  // (phones/address/gst/email/website) got its own override anyway. Real admin
+  // (non-demo) still gets rawShop completely untouched.
+  ok('Job Card: demo-mode identity is built directly from the live Settings-driven shop (rawShop), not via maskShop()',
+    /const rawShop = liveShop\(demoMode\);/.test(src) &&
+    /const brandedShop = demoMode\s*\n\s*\? \{ \.\.\.rawShop, name: DEMO_SHOP_NAME, phones: maskPhonePartial\(rawShop\.phones\), gst: DEMO_SHOP_GST, email: DEMO_SHOP_EMAIL, address: DEMO_SHOP_ADDRESS, website: DEMO_SHOP_WEBSITE \}\s*\n\s*: rawShop;/.test(src));
+  ok('Job Card: demo shop name is masked (stricter than shared maskShop(), which leaves it live for other documents)',
+    /const DEMO_SHOP_NAME = /.test(src));
+  ok('Job Card: demo phone reveals only the first 2 digits, not a flat full mask',
+    /const maskPhonePartial = \(phone\) => \{/.test(src) && /digits\.slice\(0, 2\) \+ 'x'\.repeat/.test(src));
+  ok('Job Card: demo website has its own realistic sanitized value (no more unexplained flat XXXXXXXX)',
+    /const DEMO_SHOP_WEBSITE = '/.test(src) && !/website: MASK/.test(src));
 }
 
 // --- Invoice / Estimate (Billing) ---

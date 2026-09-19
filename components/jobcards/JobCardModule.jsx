@@ -14,7 +14,7 @@ import toast from '../../lib/toast';
 import { appScrollTo } from '../../lib/appScroll';
 import { confirmDialog } from '../common/ConfirmDialog';
 import { buildQrPayload, makeQrDataUrl, QR_PT } from '../../lib/pdfQr';
-import { PDF_PAGE, PDF_GOLD, SHOP, maskShop, liveShop, drawPdfHeader, drawPdfPageNumber, drawSectionTitle, drawSignatureBlock, drawChipList, drawPhotoGrid, PDF_SPACING } from '../../lib/pdfTheme';
+import { PDF_PAGE, PDF_GOLD, SHOP, liveShop, drawPdfHeader, drawPdfPageNumber, drawSectionTitle, drawSignatureBlock, drawChipList, drawPhotoGrid, PDF_SPACING } from '../../lib/pdfTheme';
 import {
   ClipboardList, FileDown, Check, X, Plus, Search, ChevronDown, Camera,
   Trash2, Maximize2, Minimize2, CalendarClock, AlertTriangle, Eye, Edit3, Copy, Printer,
@@ -57,6 +57,31 @@ import { nextJobCardNumber } from '../../services/jobCardService';
 // here and in BillingModule.jsx with drifted tagline/address text between the two;
 // one canonical source now, imported above.
 const MASK = 'XXXXXXXX';
+
+// Job Card privacy fix: the shared maskShop() (lib/pdfTheme.js, also used by Billing's
+// invoice/estimate PDFs) intentionally leaves the shop NAME unmasked in demo mode and
+// fully masks phone/address/GST/email/website to a flat 'XXXXXXXX' — a deliberate,
+// already-tested policy for those other documents. Job Card's demo document needs to
+// read as a believable sample workshop PDF, not a broken placeholder, so every one of
+// these fields gets its own fixed, wholly fictional (never derived from the real
+// configured shop) value instead — applied ONLY here, scoped to Job Card's own PDF +
+// preview. Billing/Invoice and every other document that calls maskShop() directly are
+// untouched; this file no longer calls maskShop() at all (see brandedShop below).
+const DEMO_SHOP_NAME = 'Demo Workshop';
+// Only the phone is a partial mask of the REAL configured value (first 2 digits, same
+// digit count) rather than a fixed constant — every other field below is wholly fictional.
+const maskPhonePartial = (phone) => {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits ? digits.slice(0, 2) + 'x'.repeat(Math.max(digits.length - 2, 0)) : MASK;
+};
+const DEMO_SHOP_GST = '37A*****5ZF';
+const DEMO_SHOP_EMAIL = 'de**@example.com';
+// Locality and PIN are partially masked (not spelled out, not the real digits) — an
+// earlier version of this address named the real locality ("Gajuwaka") and the real
+// PIN's first 4 digits verbatim, which still identified the real workshop's location
+// despite the fictional street name. Neither survives in this version.
+const DEMO_SHOP_ADDRESS = '12 Demo Industrial Road, Gaj***, Andhra Pradesh 53****';
+const DEMO_SHOP_WEBSITE = 'demoworkshop.example.com';
 
 // 'Draft' deliberately sits OUTSIDE this list. STATUSES is the linear repair workflow
 // and the code enforces "you can't skip a stage" against its indexes — putting Draft
@@ -405,7 +430,7 @@ const emptyCard = (saved = [], jc = {}, invoices = []) => {
     vehicle: '', make: '', model: '', regNo: '', vin: '', fuel: 'Petrol', engineNo: '',
     complaints: ['', '', '', ''], diagnosis: ['', '', '', ''],
     warnings: [], warningsOther: '', invItems: [], invOther: '', parts: [],
-    damages: [], damageOther: '',
+    damages: [], damageOther: '', noBodyDamage: false,
     inspection: {}, inspectionCustom: {}, inspectionTemplate: template, photosBefore: [], photosAfter: [], notes: '', customerNote: '', technicianNote: '', billingNote: '',
     status, statusLog: [{ status, at: Date.now() }],
   };
@@ -501,6 +526,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
   // Profile, so the on-screen preview didn't even match the real PDF it claims to
   // preview once the PDF generator was fixed. Memoized on [demoMode] like the
   // PDF generator's own brandedShop; doesn't need to re-read on every keystroke.
+  // Demo-mode identity (name/phone) is masked below at render time, same as the PDF
+  // generator's brandedShop — see DEMO_SHOP_NAME/maskPhonePartial above.
   const previewShop = useMemo(() => liveShop(demoMode), [demoMode]);
   const [invQ, setInvQ] = useState('');
   const [previewCard, setPreviewCard] = useState(null);
@@ -821,7 +848,14 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
   const toggleList = (key, val) => set({ [key]: card[key].includes(val) ? card[key].filter((x) => x !== val) : [...card[key], val] });
   const toggleDamage = (part) => {
     const has = card.damages.some((d) => d.part === part);
-    set({ damages: has ? card.damages.filter((d) => d.part !== part) : [...card.damages, { part, note: '' }] });
+    // Selecting a damaged part while "No Body Damage" is on is a contradictory state —
+    // clear it here (only when ADDING a part; removing the last selected part still
+    // leaves the vehicle "unspecified", not "confirmed no damage" — that only happens
+    // via the explicit No Body Damage toggle below).
+    set({ damages: has ? card.damages.filter((d) => d.part !== part) : [...card.damages, { part, note: '' }], ...(has ? {} : { noBodyDamage: false }) });
+  };
+  const toggleNoBodyDamage = () => {
+    set(card.noBodyDamage ? { noBodyDamage: false } : { noBodyDamage: true, damages: [], damageOther: '' });
   };
   const setDamageNote = (part, note) => set({ damages: card.damages.map((d) => (d.part === part ? { ...d, note } : d)) });
   const setDamageField = (part, patch) => set({ damages: card.damages.map((d) => (d.part === part ? { ...d, ...patch } : d)) });
@@ -896,6 +930,12 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     if (engErr) return engErr;
     const vinErr = vinOk(card.vin);
     if (vinErr) return vinErr;
+    // Section 4 — at least one meaningful (non-whitespace) complaint/request is
+    // required on every full save, new or existing record. Draft saves (asDraft in
+    // saveCard) intentionally skip this — a draft only needs a customer name, same as
+    // before. This does NOT affect loading/viewing an old record that has none; it
+    // only blocks the next SAVE of it, same as every other validate() rule here.
+    if (!card.complaints.some((c) => c.trim())) return 'Add at least one client complaint or request before saving the Job Card.';
     if (card.promised && card.dateIn && card.promised < card.dateIn) return 'Promised delivery cannot be earlier than Date & Time In';
     return null;
   }
@@ -911,6 +951,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
       : (card.jobNoMode === 'manual' && (savedRef.current.some((c) => c.jobNo === card.jobNo) || invoices.some((iv) => iv.jobNo === card.jobNo))) ? 'Job Card Number already exists' : null,
     customer: !card.customer.trim() ? 'Customer name is required' : null,
     regNo: !card.regNo.trim() ? 'Registration number is required' : null,
+    complaints: !card.complaints.some((c) => c.trim()) ? 'Add at least one client complaint or request before saving the Job Card.' : null,
   };
   const showErr = (k) => ((touched[k] || triedSave) && fieldErrors[k]) || null;
   // asDraft: park a partially-filled job card. The vehicle is often still being looked
@@ -1009,12 +1050,15 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     // them for PDFs; only the logo was ever wired. liveShop() in lib/pdfTheme.js is
     // now the one place that reads Settings for this purpose — same call Billing's
     // invoice PDF uses, so the two branded documents can't drift from each other
-    // again. maskShop() (used for `shop` above) never masks `.name` — a business
-    // name isn't the kind of contact-detail PII phones/address/GST/email are, and
-    // every demo screenshot already shows it prominently — so brandedShop.name is
-    // live in demo mode too, matching that existing, already-tested policy; only
-    // phones/address/GST/email stay masked there.
-    const brandedShop = demoMode ? maskShop(liveShop(demoMode)) : liveShop(demoMode);
+    // again.
+    // Demo identity: every field below is a fixed, wholly fictional Job Card-only demo
+    // value (see the DEMO_SHOP_*/maskPhonePartial constants above) — real admin gets
+    // rawShop untouched. Billing/Invoice keep their own, separate, already-tested demo
+    // policy (the shared maskShop() in lib/pdfTheme.js) — nothing here changes that.
+    const rawShop = liveShop(demoMode);
+    const brandedShop = demoMode
+      ? { ...rawShop, name: DEMO_SHOP_NAME, phones: maskPhonePartial(rawShop.phones), gst: DEMO_SHOP_GST, email: DEMO_SHOP_EMAIL, address: DEMO_SHOP_ADDRESS, website: DEMO_SHOP_WEBSITE }
+      : rawShop;
     const gold = PDF_GOLD.onDark;
     let page = 1;
     const watermark = () => {
@@ -1240,7 +1284,10 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     doc.setFontSize(6.5); doc.setTextColor(120); doc.text('EXTERIOR CONDITION & PRE-EXISTING DAMAGES:', M + 2, y); y += 8;
     const dmg = card.damages.map((d) => { const bits = [d.type, d.severity, d.note].filter(Boolean).join(', '); return bits ? `${d.part} (${bits})` : d.part; });
     if (card.damageOther) dmg.push(card.damageOther);
-    y = drawChipList(doc, M + 2, y, dmg, listWidth, { emptyText: 'No visible damage recorded.' });
+    // "No Body Damage" is an explicit, deliberate confirmation and must read as such —
+    // distinct from a genuinely empty/unspecified damages list (Case E: absence of
+    // selection is never silently treated as "confirmed no damage").
+    y = drawChipList(doc, M + 2, y, card.noBodyDamage ? [] : dmg, listWidth, { emptyText: card.noBodyDamage ? 'No Body Damage' : 'Not recorded' });
     y += 6;
     y = secTitle(y, '7. MULTI-POINT INSPECTION RESULTS');
     const tmplSet = new Set(INSPECTION_TEMPLATES[card.inspectionTemplate] || ALL_INSPECTION);
@@ -1546,11 +1593,12 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
         </Section>
 
         <Section n={4} title="Client Instructions & Diagnostics">
+          {showErr('complaints') && <p role="alert" className="text-[11px] text-red-400 font-semibold mb-2">{showErr('complaints')}</p>}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {[['complaints', 'Complaint / Request'], ['diagnosis', 'Diagnosis / Technician Notes']].map(([key, label]) => (
               <div key={key}>
                 <div className="flex items-center justify-between mb-1.5">
-                  <p className="text-[10px] uppercase tracking-wide text-white/45">{label}</p>
+                  <p className="text-[10px] uppercase tracking-wide text-white/45">{label}{key === 'complaints' && <span className="text-red-400"> *</span>}</p>
                   <div className="flex gap-1.5">
                     {/* JC 1.2: was complaints-only despite the UI showing complaints and
                         diagnosis as parallel, symmetric columns — diagnosis notes carry
@@ -1572,7 +1620,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                   {card[key].map((v, i) => (
                     <div key={`${key}-${i}`} className="flex items-center gap-1.5">
                       <span className="text-[11px] text-white/45 w-4 text-right flex-shrink-0">{i + 1}.</span>
-                      <input value={v} onChange={(e) => { const arr = [...card[key]]; arr[i] = e.target.value; set({ [key]: arr }); }} placeholder={key === 'complaints' ? 'Customer complaint / request' : 'Technician diagnosis / note'} className={`${inputCls} flex-1`} />
+                      <input value={v} onChange={(e) => { const arr = [...card[key]]; arr[i] = e.target.value; set({ [key]: arr }); }} placeholder={key === 'complaints' ? (i === 0 ? 'Customer complaint / request (required)' : 'Customer complaint / request') : 'Technician diagnosis / note'} aria-required={key === 'complaints' && i === 0 ? true : undefined} className={`${inputCls} flex-1`} />
                       {/* Batch 3 Defect 3: delete now behaves identically for every row
                           regardless of origin — typed, "+ Add"ed, or from "Copy previous"
                           (which can legitimately produce a single-row array, e.g. a repeat
@@ -1590,9 +1638,15 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
           </div>
         </Section>
 
-        <Section n={5} title="Exterior Condition & Inventory Check">
+        {/* Was "Exterior Condition & Inventory Check" — but this section only ever held
+            dashboard warning lights and inventory items present; actual exterior/body
+            condition is what Section 6 (damage notes) records. Retitled to describe what
+            it actually contains, with A/B sub-labels below so it reads as two distinct
+            checks, not one blended concept — no data model change, same warnings/invItems
+            fields, same PDF output. */}
+        <Section n={5} title="Vehicle Warning Indicators & Inventory Check">
           <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-            <p className="text-[10px] uppercase tracking-wide text-white/45">Dashboard warnings on</p>
+            <p className="text-[10px] uppercase tracking-wide text-white/45">A. Dashboard warning indicators on</p>
             <div className="flex items-center gap-2">
               <div className="relative">
                 <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-white/45" />
@@ -1607,7 +1661,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
           </div>
           <input value={card.warningsOther} onChange={(e) => set({ warningsOther: e.target.value })} placeholder="Other warning (custom)…" className={`${inputCls} mb-4`} />
 
-          <p className="text-[10px] uppercase tracking-wide text-white/45 mb-2">Accessories & items present <span className="normal-case text-white/45">(from your Inventory — updates automatically)</span></p>
+          <p className="text-[10px] uppercase tracking-wide text-white/45 mb-2">B. Inventory check — items present <span className="normal-case text-white/45">(from your Inventory — updates automatically)</span></p>
           {card.invItems.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-2">
               {card.invItems.map((n) => (
@@ -1631,6 +1685,18 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
         </Section>
 
         <Section n={6} title="Damage Notes — Vehicle Body">
+          {/* Damage Status is an overall-vehicle status ("no damage exists"), not a body
+              part — kept in its own bordered subsection + divider so it can't be mistaken
+              for one more chip in the body-part row below (accidental-click risk). */}
+          <div className="rounded-xl p-2.5 mb-3" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+            <p className="text-[10px] uppercase tracking-wide text-white/45 mb-1.5">Damage Status</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <ChipToggle on={card.noBodyDamage} label="No Body Damage" onClick={toggleNoBodyDamage} />
+              <p className="text-[10px] text-white/45">Select this only when no visible body damage is present.</p>
+            </div>
+          </div>
+          <div className="h-px bg-white/10 mb-3" />
+          <p className="text-[10px] uppercase tracking-wide text-white/45 mb-1">Damaged Body Parts</p>
           <p className="text-[10px] text-white/45 mb-2">Tap every body part with existing damage, then add a note per part.</p>
           <div className="flex flex-wrap gap-1.5 mb-3">
             {BODY_PARTS.map((p) => <ChipToggle key={p} on={card.damages.some((d) => d.part === p)} label={p} onClick={() => toggleDamage(p)} />)}
@@ -1658,7 +1724,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
               ))}
             </div>
           )}
-          <input value={card.damageOther} onChange={(e) => set({ damageOther: e.target.value })} placeholder="Other damage (custom)…" className={inputCls} />
+          <input value={card.damageOther} onChange={(e) => set({ damageOther: e.target.value, ...(e.target.value.trim() ? { noBodyDamage: false } : {}) })} placeholder="Other damage (custom)…" className={inputCls} />
         </Section>
 
         <Section n={7} title={`Multi-Point Inspection (${inspStats.done}/${inspStats.total})`} right={
@@ -2202,11 +2268,11 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
           <div className="rounded-xl overflow-hidden" style={{ background: '#f5f2ea', color: '#1c1a16', maxHeight: '82vh', overflowY: 'auto' }}>
             {/* header */}
             <div style={{ background: '#161616', padding: '14px 16px', textAlign: 'center' }}>
-              <p style={{ color: '#d4af37', fontWeight: 800, fontSize: 15, letterSpacing: '0.06em' }}>{previewShop.name}</p>
+              <p style={{ color: '#d4af37', fontWeight: 800, fontSize: 15, letterSpacing: '0.06em' }}>{demoMode ? DEMO_SHOP_NAME : previewShop.name}</p>
               <p style={{ color: '#ddd', fontSize: 7, letterSpacing: '0.14em', marginTop: 2 }}>{previewShop.tag}</p>
-              <p style={{ color: '#d4af37', fontSize: 8, marginTop: 4 }}>{demoMode ? 'XXXXXXXXXX' : previewShop.phones}</p>
-              <p style={{ color: '#ccc', fontSize: 7, marginTop: 2 }}>{demoMode ? MASK : previewShop.address}</p>
-              <p style={{ color: '#aaa', fontSize: 6.5, marginTop: 2 }}>GST: {demoMode ? MASK : previewShop.gst} · {demoMode ? MASK : previewShop.email} · {demoMode ? MASK : previewShop.website}</p>
+              <p style={{ color: '#d4af37', fontSize: 8, marginTop: 4 }}>{demoMode ? maskPhonePartial(previewShop.phones) : previewShop.phones}</p>
+              <p style={{ color: '#ccc', fontSize: 7, marginTop: 2 }}>{demoMode ? DEMO_SHOP_ADDRESS : previewShop.address}</p>
+              <p style={{ color: '#aaa', fontSize: 6.5, marginTop: 2 }}>GST: {demoMode ? DEMO_SHOP_GST : previewShop.gst} · {demoMode ? DEMO_SHOP_EMAIL : previewShop.email} · {demoMode ? DEMO_SHOP_WEBSITE : previewShop.website}</p>
               <div style={{ height: 3, background: '#d4af37', marginTop: 8 }} />
             </div>
             <div style={{ padding: 14, fontSize: 10 }}>
@@ -2239,7 +2305,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                 <p style={{ fontWeight: 800, fontSize: 9, borderLeft: '3px solid #d4af37', paddingLeft: 6, marginBottom: 5 }}>6. EXTERIOR CONDITION & INVENTORY CHECK</p>
                 <p style={{ fontSize: 8 }}><b>Warnings:</b> {[...card.warnings, ...(card.warningsOther ? [card.warningsOther] : [])].join(', ') || 'None reported'}</p>
                 <p style={{ fontSize: 8, marginTop: 3 }}><b>Items present:</b> {[...card.invItems, ...(card.invOther ? [card.invOther] : [])].join(', ') || '—'}</p>
-                <p style={{ fontSize: 8, marginTop: 3 }}><b>Damages:</b> {card.damages.length || card.damageOther ? [...card.damages.map((d) => d.note ? `${d.part} (${d.note})` : d.part), ...(card.damageOther ? [card.damageOther] : [])].join(', ') : 'No visible damage recorded.'}</p>
+                <p style={{ fontSize: 8, marginTop: 3 }}><b>Damages:</b> {card.noBodyDamage ? 'No Body Damage' : (card.damages.length || card.damageOther ? [...card.damages.map((d) => d.note ? `${d.part} (${d.note})` : d.part), ...(card.damageOther ? [card.damageOther] : [])].join(', ') : 'Not recorded')}</p>
               </div>
               <div style={{ marginBottom: 10 }}>
                 <p style={{ fontWeight: 800, fontSize: 9, borderLeft: '3px solid #d4af37', paddingLeft: 6, marginBottom: 5 }}>7. MULTI-POINT PREMIUM INSPECTION</p>
