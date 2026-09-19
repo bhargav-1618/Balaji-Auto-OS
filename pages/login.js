@@ -90,12 +90,19 @@ export default function Login() {
       focusTimers.push(setTimeout(focusField, 60));   // instant path
     }
 
-    let firstThisSession = true;
-    try { firstThisSession = sessionStorage.getItem('balaji_booted') !== '1'; } catch {}
-    if (firstThisSession && !reduced()) {
+    // Boot-sequence gating: this used to also require sessionStorage.getItem('balaji_booted')
+    // !== '1' (set once, on first play, never cleared) — the intent was "once per tab", but
+    // sessionStorage survives client-side navigation within a tab (logout's router.push('/login')
+    // never replayed it) and is copied verbatim into a duplicated tab per the HTML spec's
+    // browsing-context-duplication behavior (a duplicate inherited the flag and never got its
+    // own play either). Root-caused and removed — see the login-animation-reentry investigation.
+    // The only remaining gate is reduced-motion; every genuine mount of this page (fresh tab,
+    // logout returning here, a duplicated tab, a refresh) now plays the full sequence once. This
+    // effect's own [] deps already scope it to mount, not re-render, so nothing here needs to
+    // re-derive "was this already shown" from persisted state.
+    if (!reduced()) {
       setBooted(false);
       setNeedle(true);
-      try { sessionStorage.setItem('balaji_booted', '1'); } catch {}
       // Must outlive the LONGEST animation gated by `needle` (needle sweep ends 0.78s,
       // headlight bloom 1.05s, floor spill 1.45s) — unmounting earlier would cut one of
       // them off mid-animation instead of letting it settle.
@@ -107,7 +114,7 @@ export default function Login() {
       }, 2600));
       return () => { clearTimeout(t); focusTimers.forEach(clearTimeout); };
     }
-    setBooted(true);   // returning visit or reduced motion → instant, no sequence
+    setBooted(true);   // reduced motion → instant, no sequence
     return () => { focusTimers.forEach(clearTimeout); };
   }, []);
 
