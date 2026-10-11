@@ -40,6 +40,8 @@ const nextConfig = {
           "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.google.com wss://*.firebaseio.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com",
           "frame-src 'self' https://*.firebaseapp.com https://accounts.google.com",
           "object-src 'none'",
+          // Modern equivalent of X-Frame-Options (kept above for older browsers): only this site may frame itself — clickjacking.
+          "frame-ancestors 'self'",
           "base-uri 'self'",
           "form-action 'self'",
         ].join('; '),

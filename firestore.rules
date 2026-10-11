@@ -41,12 +41,13 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() {
+    // Raw check: a Firebase Auth user exists. Internal building block — data rules use signedIn().
+    function authed() {
       return request.auth != null;
     }
 
     function userEmail() {
-      return signedIn() && request.auth.token.email != null
+      return authed() && request.auth.token.email != null
         ? request.auth.token.email.lower()
         : '';
     }
@@ -62,13 +63,57 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return signedIn() && (
+      return authed() && verifiedOk() && (
         userEmail() == ownerEmail() ||
         (
           exists(/databases/$(database)/documents/appSettings/roles) &&
           'admins' in rolesDoc() &&
           userEmail() in rolesDoc().admins
         )
+      );
+    }
+
+    // ---- OPT-IN HARDENING (security audit SEC-02 / SEC-03) -------------------------------
+    // Both switches live in appSettings/roles (admin-write-only, see the appSettings rule)
+    // and are OFF by default, so publishing these rules changes nothing until the owner
+    // turns one on. Turn them on from Firebase Console > Firestore > appSettings > roles
+    // (the Console bypasses rules, so it is also the recovery path if you lock yourself out).
+    //
+    //  allowedEmails: ["a@x.com", ...]   (lowercase)  SEC-02 — who counts as STAFF.
+    //      absent or empty  => every signed-in Firebase user is staff (today's behaviour).
+    //      non-empty        => only: the owner, admins, anyone in this list, and anyone who
+    //                          already has a "staff" permissions entry. Everyone else —
+    //                          including a stranger who self-registers — is denied everything.
+    //  requireVerifiedEmail: true         SEC-03 — a role is only honoured when the Auth token's
+    //      email is VERIFIED. Without it, an unverified self-registered account that merely
+    //      CLAIMS an admin's email string would be treated as that admin. Verify the owner's
+    //      email FIRST (complete one "Forgot password" reset from the login page), confirm the
+    //      sign-in works, THEN set this to true. Applies to the owner too.
+    function rolesExists() {
+      return exists(/databases/$(database)/documents/appSettings/roles);
+    }
+    function rolesFlagOn(k) {
+      return rolesExists() && (k in rolesDoc()) && rolesDoc()[k] == true;
+    }
+    function verifiedOk() {
+      return !rolesFlagOn('requireVerifiedEmail')
+        || (('email_verified' in request.auth.token) && request.auth.token.email_verified == true);
+    }
+    function allowlistOn() {
+      return rolesExists()
+        && ('allowedEmails' in rolesDoc())
+        && rolesDoc().allowedEmails is list
+        && rolesDoc().allowedEmails.size() > 0;
+    }
+    // signedIn() = "a signed-in STAFF user". With the opt-in switches off this is simply "any
+    // Firebase Auth user" — exactly what it has always meant here (single-shop model).
+    function signedIn() {
+      return authed() && verifiedOk() && (
+        !allowlistOn()
+        || userEmail() == ownerEmail()
+        || userEmail() in rolesDoc().allowedEmails
+        || ('admins' in rolesDoc() && userEmail() in rolesDoc().admins)
+        || ('staff' in rolesDoc() && userEmail() in rolesDoc().staff)
       );
     }
 
