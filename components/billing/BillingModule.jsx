@@ -10,7 +10,7 @@ import { lockBody, unlockBody } from '../Modal';
 import { buildQrPayload, makeQrDataUrl, QR_PT } from '../../lib/pdfQr';
 import { PDF_PAGE, PDF_RULE, SHOP, maskShop, liveShop, drawPdfHeader, drawPdfPageNumber, truncW } from '../../lib/pdfTheme';
 import { renderWorkshopInvoicePdf } from '../../lib/workshopInvoicePdf';
-import { tsToDate, localDateStr, displayDate , num, asArray, isIndianMobile, isValidEmail, MOBILE_ERROR, EMAIL_ERROR } from '../../lib/format';
+import { tsToDate, localDateStr, displayDate , num, asArray, isIndianMobile, isValidEmail, MOBILE_ERROR, EMAIL_ERROR, mobileInput, normalizePhone, waNumber } from '../../lib/format';
 import SearchSelect from '../common/SearchSelect';
 import MiniSelect from '../common/MiniSelect';
 import VehicleMakeModelSelect from '../common/VehicleMakeModelSelect';
@@ -42,6 +42,8 @@ import { statusColor, SHELL_WIDTH_CLS, SEMANTIC } from '../../constants/ui';
 import { invoiceTotals, invoiceStatus } from '../../services/billingService';
 import { BILLABLE_JOB_CARD_STATUSES } from '../../constants';
 import { isValidGstin, GSTIN_ERROR } from '../../lib/gst';
+import { fieldLimitError, lineLimitError, totalLimitError } from '../../services/billingService';
+import useLabelledControl from '../common/useLabelledControl';
 import Badge from '../common/Badge';
 import {
   Receipt, Search, Plus, X, FileDown, Trash2, Eye, IndianRupee, Wallet, Clock, ChevronDown, Printer, Send, TrendingUp, FileText, Undo2, Redo2, Check, ChevronLeft, ChevronRight, MoreVertical, Copy, RefreshCw,
@@ -69,6 +71,18 @@ function LineRowBase({ l, setLine, delLine, dupLine, moveLine, clearPartLink, in
   // those really are used on nearly every line.
   const [moveMenuOpen, setMoveMenuOpen] = useState(false);
   const moveMenuAnchorRef = useRef(null);
+  // QA VAL-004: quantity and rate used to accept any digits — 1e9 × ₹1e6 produced a
+  // ₹1.18-quadrillion invoice with no warning. A value past the limits in
+  // services/billingService.js is REFUSED (the field keeps its previous value) and the user
+  // is told why, rather than being silently clamped to a different amount.
+  const [limitMsg, setLimitMsg] = useState('');
+  const setLimited = (field, raw, extra = {}) => {
+    const v = raw.replace(/[^\d.]/g, '');
+    const msg = fieldLimitError(field, v, l);
+    if (msg) { setLimitMsg(msg); return; }
+    setLimitMsg('');
+    setLine(l.id, { [field]: v, ...extra });
+  };
   const invPart = l.partId ? inventory.find((p) => p.id === l.partId) : null;
   const isLabour = l.kind === 'Labour';
   // BACK-COMPAT: labour lines saved before flat-pricing existed have no `hourly`
@@ -144,14 +158,14 @@ function LineRowBase({ l, setLine, delLine, dupLine, moveLine, clearPartLink, in
         {(!isLabour || isHourly) && (
           <label className="w-16">
             <span className="block text-[9px] uppercase tracking-wide text-white/45 mb-0.5">{isLabour ? 'Hours' : 'Qty'}</span>
-            <input value={l.qty} inputMode="decimal" onChange={(e) => setLine(l.id, { qty: e.target.value.replace(/[^\d.]/g, '') })} placeholder={isLabour ? 'Hrs' : 'Qty'} className={`${inputCls} py-2 text-center ${qtyExceeds ? 'border-amber-500/60' : ''}`} />
+            <input value={l.qty} inputMode="decimal" onChange={(e) => setLimited('qty', e.target.value)} onBlur={() => setLimitMsg('')} placeholder={isLabour ? 'Hrs' : 'Qty'} className={`${inputCls} py-2 text-center ${qtyExceeds ? 'border-amber-500/60' : ''}`} />
           </label>
         )}
 
         <label className={isLabour && !isHourly ? 'w-28' : 'w-24'}>
           <span className="block text-[9px] uppercase tracking-wide text-white/45 mb-0.5">{isLabour ? (isHourly ? 'Rate/hr' : 'Amount ₹') : 'Rate'}</span>
           <input value={l.rate} inputMode="decimal" disabled={!rateEditable}
-            onChange={(e) => setLine(l.id, { rate: e.target.value.replace(/[^\d.]/g, ''), approvedBelowFloor: false })}
+            onChange={(e) => setLimited('rate', e.target.value, { approvedBelowFloor: false })} onBlur={() => setLimitMsg('')}
             placeholder="Rate" title={rateEditable ? undefined : pricingLocked ? 'This action has been disabled by the administrator.' : 'Price override is disabled in Billing settings'}
             className={`${inputCls} py-2 text-right ${belowFloor && !l.approvedBelowFloor ? 'border-red-500/60' : ''} ${!rateEditable ? 'opacity-60 cursor-not-allowed' : ''}`} />
         </label>
@@ -204,6 +218,8 @@ function LineRowBase({ l, setLine, delLine, dupLine, moveLine, clearPartLink, in
           <span className="block text-base font-bold text-white pb-1.5">{inr(lineTotal)}</span>
         </div>
       </div>
+
+      {limitMsg && <p role="alert" className="mt-1.5 px-0.5 text-[10px] text-red-400">{limitMsg} The value was not changed.</p>}
 
       {/* Outside Purchase traceability (Issue 4.6) — an outside-purchase item has no
           inventory record backing it, so unlike a Part line it carries no supplier/
@@ -420,7 +436,8 @@ const emptyInvoice = () => ({
 });
 
 function Field({ label, children, className = '', error }) {
-  return <div className={`min-w-0 ${className}`}><label className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}</label>{children}{error && <p className="text-[10px] text-red-400 mt-1">{error}</p>}</div>;
+  const { id, content } = useLabelledControl(children); // QA A11Y-003: label is tied to its input
+  return <div className={`min-w-0 ${className}`}><label htmlFor={id} className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}</label>{content}{error && <p className="text-[10px] text-red-400 mt-1">{error}</p>}</div>;
 }
 function Stat({ icon: Icon, label, value, color }) {
   // Mobile QA fix: this value <p> had no whitespace-nowrap/tabular-nums, so a long
@@ -805,10 +822,10 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   // customer resolved by phone/name (or re-opened from a saved invoice, where the id may
   // not round-trip) showed ZERO vehicles. Never truncate this list.
   const custVehicles = useMemo(() => {
-    const phone = (inv.phone || '').replace(/\D/g, '').slice(-10);
+    const phone = normalizePhone(inv.phone);
     const name = (inv.customer || '').trim().toLowerCase();
     const c = customers.find((x) => (inv.customerId && x.id === inv.customerId))
-      || customers.find((x) => phone && (x.phone || '').replace(/\D/g, '').slice(-10) === phone)
+      || customers.find((x) => phone && normalizePhone(x.phone) === phone)
       || customers.find((x) => name && (x.name || '').trim().toLowerCase() === name);
     return c ? (c.vehicles || []) : [];
   }, [customers, inv.customerId, inv.phone, inv.customer]);
@@ -821,7 +838,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
   // literal that happened to be value-identical, one of three independent "which
   // statuses are invoiceable" answers in the codebase (Job Card review, Issue 2.6/2.8).
   const custJobCards = useMemo(() => {
-    const phone = (inv.phone || '').replace(/\D/g, '').slice(-10);
+    const phone = normalizePhone(inv.phone);
     const cust = (inv.customer || '').trim().toLowerCase();
     const reg = (inv.regNo || '').replace(/\s/g, '').toUpperCase();
     const billable = jobCards.filter((j) => !j.status || BILLABLE_JOB_CARD_STATUSES.includes(j.status));
@@ -831,7 +848,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     if (!phone && !cust && !reg) return billable;
     return jobCards.filter((j) => {
       if (j.status && !BILLABLE_JOB_CARD_STATUSES.includes(j.status)) return false;   // closed/cancelled/delivered
-      const jPhone = (j.phone || '').replace(/\D/g, '').slice(-10);
+      const jPhone = normalizePhone(j.phone);
       const jCust = (j.customer || '').trim().toLowerCase();
       const jReg = (j.regNo || '').replace(/\s/g, '').toUpperCase();
       return (phone && jPhone && jPhone === phone)
@@ -986,6 +1003,11 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
       // Negatives are never allowed, even on a draft — they corrupt totals.
       if (num(l.qty) < 0 || num(l.rate) < 0 || num(l.disc) < 0 || num(l.gst) < 0) return toast.error(`“${l.desc}” has a negative value. Quantities, rates, discount and GST must be zero or more.`);
       if (num(l.disc) > 100) return toast.error(`“${l.desc}” discount can’t exceed 100%.`);
+      // QA VAL-004: also guards values that never passed through the inputs (a restored
+      // draft, a job-card import) — and applies to drafts too, since an overflowing line
+      // would persist a NaN/Infinity total.
+      const limitErr = lineLimitError(l);
+      if (limitErr) return toast.error(`“${l.desc}” ${limitErr}`);
       // A draft may legitimately have a line with no qty/price filled in yet.
       if (!asDraft && num(l.qty) <= 0) return toast.error(`“${l.desc}” has zero quantity. Set a quantity of at least 1.`);
     }
@@ -995,6 +1017,8 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
     // invoice-level discount can't be negative
     if (num(inv.discount) < 0) return toast.error('Invoice discount can’t be negative.');
     const snap0 = totalsOf({ ...inv, lines: billItems });
+    const totalErr = totalLimitError(snap0.grand);   // QA VAL-004: finite and within the ceiling
+    if (totalErr) return toast.error(totalErr);
     if (!asEstimate && !asDraft && snap0.grand <= 0) return toast.error('Invoice total is zero. Add priced items before saving an invoice.');
     // duplicate invoice-number guard (only when this invoice already carries a number)
     if (inv.invNo && invoices.some((x) => x.id !== inv.id && x.invNo === inv.invNo)) return toast.error(`Invoice number ${inv.invNo} already exists.`);
@@ -1240,7 +1264,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
             div) rather than inventing a second pattern for the same problem. */}
         <div className={`${SHELL_WIDTH_CLS} mx-auto flex items-center justify-between`}>
         <div className="flex items-center gap-3 min-w-0">
-          <button onClick={guardedClose} className="w-9 h-9 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
+          <button aria-label="Close invoice" onClick={guardedClose} className="w-9 h-9 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
           <div className="min-w-0">
             <h3 className="text-base font-bold text-white truncate">
               {isPersisted ? `Edit ${inv.invNo}` : (inv.invNo ? `New Invoice · ${inv.invNo}` : 'New Invoice')}
@@ -1371,11 +1395,11 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
                     // Walk-in is a genuinely separate identity path — it must never carry a
                     // stale customerId forward (that silently re-attaches whatever gets typed
                     // here to a PREVIOUSLY selected existing customer's record).
-                    <input value={inv.customer} onChange={(e) => set({ customer: e.target.value })} placeholder="Type name for walk-in" className={inputCls} />
+                    <input aria-label="Customer name (walk-in)" value={inv.customer} onChange={(e) => set({ customer: e.target.value })} placeholder="Type name for walk-in" className={inputCls} />
                   )}
                 </div>
                 <Field label="Date"><input type="date" value={inv.date} onChange={(e) => set({ date: e.target.value })} className={inputCls} style={{ colorScheme: 'dark' }} /></Field>
-                <Field label="Phone" error={inv.phone && !isIndianMobile(inv.phone) ? MOBILE_ERROR : null}><input value={inv.phone} onChange={(e) => set({ phone: e.target.value.replace(/\D/g, '').slice(0, 10) })} placeholder="10-digit" className={inputCls} /></Field>
+                <Field label="Phone" error={inv.phone && !isIndianMobile(inv.phone) ? MOBILE_ERROR : null}><input value={inv.phone} onChange={(e) => set({ phone: mobileInput(e.target.value) })} placeholder="10-digit" className={inputCls} /></Field>
                 <Field label="GST No. (optional)" error={gstNoErr}><input value={inv.gstNo} onChange={(e) => set({ gstNo: e.target.value.toUpperCase() })} placeholder="Customer GSTIN" className={`${inputCls} ${gstNoErr ? 'border-red-500/60 focus:border-red-500/80' : ''}`} /></Field>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-6 gap-3 mt-3">
@@ -1424,7 +1448,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
                     // field silently stayed the customer-linked SearchSelect (always empty,
                     // "select a customer first") regardless of mode, so only Reg. No. could be
                     // entered. Mirrors the Customer field's own search/walk-in branch above.
-                    <input value={inv.vehicle} onChange={(e) => set({ vehicle: e.target.value })} placeholder="e.g. Maruti Swift Vdi" className={inputCls} />
+                    <input aria-label="Vehicle make and model" value={inv.vehicle} onChange={(e) => set({ vehicle: e.target.value })} placeholder="e.g. Maruti Swift Vdi" className={inputCls} />
                   )}
                 </div>
                 <Field label="Reg. No."><input value={inv.regNo} onChange={(e) => set({ regNo: e.target.value.toUpperCase() })} className={inputCls} /></Field>
@@ -1435,11 +1459,11 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
             {newCust && (
               <div className="fixed inset-0 z-[130] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(3px)' }} onClick={() => setNewCust(null)}>
                 <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}><h3 className="text-base font-bold text-white">New Customer</h3><button onClick={() => setNewCust(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button></div>
+                  <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}><h3 className="text-base font-bold text-white">New Customer</h3><button aria-label="Close new customer form" onClick={() => setNewCust(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button></div>
                   <div className="p-5 space-y-3">
                     <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Name<span className="text-red-400"> *</span></label><input autoFocus value={newCust.name} onChange={(e) => setNewCust({ ...newCust, name: e.target.value })} placeholder="Customer name" className={inputCls} /></div>
                     <div className="grid grid-cols-2 gap-2">
-                      <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Phone</label><input value={newCust.phone} onChange={(e) => setNewCust({ ...newCust, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })} placeholder="10-digit" className={`${inputCls} ${newCust.phone && !isIndianMobile(newCust.phone) ? 'border-red-500/60 focus:border-red-500/80' : ''}`} />{newCust.phone && !isIndianMobile(newCust.phone) && <p className="text-[10px] text-red-400 mt-1">{MOBILE_ERROR}</p>}</div>
+                      <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Phone</label><input value={newCust.phone} onChange={(e) => setNewCust({ ...newCust, phone: mobileInput(e.target.value) })} placeholder="10-digit" className={`${inputCls} ${newCust.phone && !isIndianMobile(newCust.phone) ? 'border-red-500/60 focus:border-red-500/80' : ''}`} />{newCust.phone && !isIndianMobile(newCust.phone) && <p className="text-[10px] text-red-400 mt-1">{MOBILE_ERROR}</p>}</div>
                       <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">GST (optional)</label><input value={newCust.gst} onChange={(e) => setNewCust({ ...newCust, gst: e.target.value.toUpperCase() })} placeholder="GSTIN" className={`${inputCls} ${newCust.gst && !isValidGstin(newCust.gst) ? 'border-red-500/60 focus:border-red-500/80' : ''}`} />{newCust.gst && !isValidGstin(newCust.gst) && <p className="text-[10px] text-red-400 mt-1">{GSTIN_ERROR}</p>}</div>
                     </div>
                     <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Email (optional)</label><input value={newCust.email} onChange={(e) => setNewCust({ ...newCust, email: e.target.value })} placeholder="email@…" className={`${inputCls} ${newCust.email && !isValidEmail(newCust.email) ? 'border-red-500/60 focus:border-red-500/80' : ''}`} />{newCust.email && !isValidEmail(newCust.email) && <p className="text-[10px] text-red-400 mt-1">{EMAIL_ERROR}</p>}</div>
@@ -1455,7 +1479,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
             {newVeh && (
               <div className="fixed inset-0 z-[130] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(3px)' }} onClick={() => setNewVeh(null)}>
                 <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}><h3 className="text-base font-bold text-white">Add Vehicle</h3><button onClick={() => setNewVeh(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button></div>
+                  <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}><h3 className="text-base font-bold text-white">Add Vehicle</h3><button aria-label="Close add vehicle form" onClick={() => setNewVeh(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button></div>
                   <div className="p-5 space-y-3">
                     <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">Registration No.<span className="text-red-400"> *</span></label><input autoFocus value={newVeh.regNo} onChange={(e) => setNewVeh({ ...newVeh, regNo: e.target.value.toUpperCase().replace(/[^A-Z0-9 -]/g, '').slice(0, 13) })} placeholder="TS09EX1234" className={inputCls} /></div>
                     {/* Same Manufacturer→Model cascade used by Customers/Vehicles/Job Cards
@@ -1526,7 +1550,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
               )}
               <div className="relative mb-3" ref={partAnchorRef}>
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
-                <input ref={partSearchRef} value={partQ} onChange={(e) => setPartQ(e.target.value)}
+                <input aria-label="Search inventory parts to add to the invoice" ref={partSearchRef} value={partQ} onChange={(e) => setPartQ(e.target.value)}
                   onKeyDown={(e) => {
                     if (!parts.length) return;
                     if (e.key === 'ArrowDown') { e.preventDefault(); partNavByKey.current = true; setPartHi((i) => Math.min(i + 1, parts.length - 1)); }
@@ -1719,7 +1743,7 @@ function InvoiceModal({ initial, invoices, customers, inventory, jobCards = [], 
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-white/55">Discount</span>
                     <div className="flex items-center gap-1">
-                      <input value={inv.discount} inputMode="numeric" onChange={(e) => set({ discount: e.target.value.replace(/[^\d.]/g, '') })} className="w-16 py-1 px-2 rounded-lg text-xs text-right bg-white/5 border border-white/10 text-white outline-none" />
+                      <input aria-label="Invoice discount" value={inv.discount} inputMode="numeric" onChange={(e) => set({ discount: e.target.value.replace(/[^\d.]/g, '') })} className="w-16 py-1 px-2 rounded-lg text-xs text-right bg-white/5 border border-white/10 text-white outline-none" />
                       {/* Universal dropdown architecture review — native <select> is a
                           browser-owned popup, immune to this app's theming/containment. */}
                       <MiniSelect
@@ -1845,7 +1869,7 @@ function PaymentModal({ invoice, onCollect, onClose }) {
       <div className="w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '92vh', background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} ref={(el) => { if (el && typeof CSS !== 'undefined' && CSS.supports?.('height', '100dvh')) el.style.maxHeight = '92dvh'; }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 flex-shrink-0" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
           <h3 className="text-base font-bold text-white">Collect Payment</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button>
+          <button aria-label="Close collect payment" onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button>
         </div>
         <div className="p-5 space-y-3 overflow-y-auto overscroll-contain dark-scroll flex-1 min-h-0" onKeyDown={(e) => { if (e.key === 'Enter') confirm(); }}>
           {paymentPending && (
@@ -2390,7 +2414,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     // Estimate (both have balance === grand); only a finalised, still-owed invoice.
     const rows = selectedInvoices().filter((iv) => ['Unpaid', 'Partially Paid'].includes(deriveStatus(iv)) && iv.phone);
     if (!rows.length) return toast.error('No selected invoices with a balance & phone');
-    rows.forEach((iv) => { const t = totalsOf(iv); window.open(`https://wa.me/91${(iv.phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(`Reminder: Invoice ${iv.invNo} has a pending balance of ${inr(t.balance)}. Kindly clear at your convenience. — Sri Baba Balaji Maruti Care`)}`, '_blank'); });
+    rows.forEach((iv) => { const t = totalsOf(iv); window.open(`https://wa.me/${waNumber(iv.phone)}?text=${encodeURIComponent(`Reminder: Invoice ${iv.invNo} has a pending balance of ${inr(t.balance)}. Kindly clear at your convenience. — Sri Baba Balaji Maruti Care`)}`, '_blank'); });
     toast.success(`Opened ${rows.length} reminder(s)`);
   };
   // C-1 fix: these four all used to fire their toast (and, for bulk ops, clear selection)
@@ -2953,7 +2977,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
       <div className="flex flex-col sm:flex-row flex-wrap gap-2 mb-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('billing.searchPlaceholder', 'Search invoice, customer, phone, vehicle, reg, VIN, job card, advisor…')} className={`${inputCls} pl-9`} />
+          <input aria-label="Search invoices" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('billing.searchPlaceholder', 'Search invoice, customer, phone, vehicle, reg, VIN, job card, advisor…')} className={`${inputCls} pl-9`} />
         </div>
         {/* Dropdown-standardization pass: converted from native <select> to MiniSelect
             — a native <select>'s open popup is OS-rendered and can't be themed to
@@ -3011,7 +3035,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           <table className="w-full text-sm min-w-[960px]">
             <thead className="sticky top-0 z-10" style={{ background: 'var(--surface-1)' }}>
               <tr className="text-[10px] uppercase tracking-wide text-white/45" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
-                <th className="py-2.5 px-3 w-8"><input type="checkbox" checked={paged.length > 0 && paged.every((iv) => selected.has(iv.id))} onChange={(e) => { const n = new Set(selected); paged.forEach((iv) => e.target.checked ? n.add(iv.id) : n.delete(iv.id)); setSelected(n); }} className="accent-[#d4af37]" /></th>
+                <th className="py-2.5 px-3 w-8"><input type="checkbox" aria-label="Select all invoices on this page" checked={paged.length > 0 && paged.every((iv) => selected.has(iv.id))} onChange={(e) => { const n = new Set(selected); paged.forEach((iv) => e.target.checked ? n.add(iv.id) : n.delete(iv.id)); setSelected(n); }} className="accent-[#d4af37]" /></th>
                 {[
                   ['Invoice', 'billing.col.invoice', 'Invoice'],
                   ['Date', 'billing.col.date', 'Date'],
@@ -3033,7 +3057,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
                 const sc = statusColor(st);
                 return (
                   <tr key={iv.id} className="transition hover:bg-white/[0.03]" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.05)' }}>
-                    <td className="py-2.5 px-3"><input type="checkbox" checked={selected.has(iv.id)} onChange={() => toggleSel(iv.id)} className="accent-[#d4af37]" /></td>
+                    <td className="py-2.5 px-3"><input type="checkbox" aria-label={`Select invoice ${iv.invNo || iv.customer || 'draft'}`} checked={selected.has(iv.id)} onChange={() => toggleSel(iv.id)} className="accent-[#d4af37]" /></td>
                     <td className="py-2.5 px-3"><span className="text-[11px] font-bold" style={{ color: iv.isEstimate ? '#a78bfa' : '#d4af37' }}>{iv.invNo}</span></td>
                     <td className="py-2.5 px-3 text-white/60">{iv.date}</td>
                     <td className="py-2.5 px-3"><p className="text-white/85">{iv.customer}</p><p className="text-[10px] text-white/45">{iv.vehicle || iv.phone || '—'}</p></td>
@@ -3078,7 +3102,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
                             { type: 'section', label: t('billing.history', 'History') },
                             { type: 'item', label: t('billing.action.viewTimeline', 'View Timeline'), icon: Clock, onClick: () => setTimelineFor(iv) },
                             iv.phone && { type: 'section', label: t('billing.communication', 'Communication') },
-                            iv.phone && { type: 'item', label: t('billing.action.sendOnWhatsApp', 'Send on WhatsApp'), icon: Send, onClick: () => window.open(`https://wa.me/91${(iv.phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(`Invoice ${iv.invNo} — Total ${inr(tot.grand)}, Balance ${inr(tot.balance)}. Thank you for choosing Sri Baba Balaji Maruti Care.`)}`, '_blank') },
+                            iv.phone && { type: 'item', label: t('billing.action.sendOnWhatsApp', 'Send on WhatsApp'), icon: Send, onClick: () => window.open(`https://wa.me/${waNumber(iv.phone)}?text=${encodeURIComponent(`Invoice ${iv.invNo} — Total ${inr(tot.grand)}, Balance ${inr(tot.balance)}. Thank you for choosing Sri Baba Balaji Maruti Care.`)}`, '_blank') },
                           ]} />
                         )}
                         {canManage && <button onClick={async () => { if (demoMode && !demoCanDelete) { notify.permissionDenied('This action has been disabled by the administrator.'); return; } if (await confirmDialog({ title: `Delete ${iv.invNo}?`, message: 'This cannot be undone.', danger: true, confirmText: 'Delete' })) { try { await onDelete?.(iv); notify.deleted('Invoice deleted'); } catch (e) { /* deleteInvoice's own shared persistence layer already toasted the failure */ } } }} title={demoMode && !demoCanDelete ? t('billing.disabledByAdmin', 'Disabled by administrator') : t('common.delete', 'Delete')} className={`w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 ${demoMode && !demoCanDelete ? 'text-white/45' : 'text-red-400/70 hover:bg-red-500/10'}`}><Trash2 size={12} /></button>}
@@ -3115,7 +3139,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
                   {canManage && <button onClick={() => setEdit(iv)} className="flex-1 py-1.5 rounded-lg text-[11px] font-semibold bg-white/5 border border-white/10 text-white/70 flex items-center justify-center gap-1"><Eye size={12} /> {t('common.view', 'View')}</button>}
                   {canManage && tot.balance > 0 && st !== 'Cancelled' && <button onClick={() => setPayFor(iv)} className="flex-1 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 flex items-center justify-center gap-1"><Wallet size={12} /> {t('billing.action.collect', 'Collect')}</button>}
                   <button onClick={() => downloadPDF(iv, false)} title={t('common.pdf', 'PDF')} className="w-8 py-1.5 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><FileDown size={12} /></button>
-                  {iv.phone && <button onClick={() => window.open(`https://wa.me/91${(iv.phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(`Invoice ${iv.invNo} — Total ${inr(tot.grand)}, Balance ${inr(tot.balance)}.`)}`, '_blank')} title="WhatsApp" className="w-8 py-1.5 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-emerald-400/70"><Send size={12} /></button>}
+                  {iv.phone && <button onClick={() => window.open(`https://wa.me/${waNumber(iv.phone)}?text=${encodeURIComponent(`Invoice ${iv.invNo} — Total ${inr(tot.grand)}, Balance ${inr(tot.balance)}.`)}`, '_blank')} title="WhatsApp" className="w-8 py-1.5 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-emerald-400/70"><Send size={12} /></button>}
                 </div>
               </div>
             );
@@ -3125,12 +3149,12 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
         <div className="flex items-center justify-between px-4 py-3 gap-2 flex-wrap" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-white/45">{t('dynamic.showingRange', `Showing ${filtered.length ? (safePage - 1) * PER + 1 : 0}–${Math.min(safePage * PER, filtered.length)} of ${filtered.length}`, { from: filtered.length ? (safePage - 1) * PER + 1 : 0, to: Math.min(safePage * PER, filtered.length), total: filtered.length, entity: '' })}</span>
-            <select value={PER} onChange={(e) => setPER(Number(e.target.value))} className="h-7 px-1.5 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none">{[10, 25, 50, 100].map((n) => <option key={n} value={n} style={{ background: '#141414' }}>{n} {t('common.perPage', '/ page')}</option>)}</select>
+            <select aria-label="Invoices per page" value={PER} onChange={(e) => setPER(Number(e.target.value))} className="h-7 px-1.5 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none">{[10, 25, 50, 100].map((n) => <option key={n} value={n} style={{ background: '#141414' }}>{n} {t('common.perPage', '/ page')}</option>)}</select>
           </div>
           <div className="flex items-center gap-2">
-            <button disabled={safePage <= 1} onClick={() => setPage((p) => Math.min(p, pageCount) - 1)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronDown size={14} className="rotate-90" /></button>
+            <button disabled={safePage <= 1} onClick={() => setPage((p) => Math.min(p, pageCount) - 1)} aria-label="Previous page" className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronDown size={14} className="rotate-90" aria-hidden="true" /></button>
             <span className="text-xs text-white/60">{safePage} / {pageCount}</span>
-            <button disabled={safePage >= pageCount} onClick={() => setPage((p) => Math.min(p, pageCount) + 1)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronDown size={14} className="-rotate-90" /></button>
+            <button disabled={safePage >= pageCount} onClick={() => setPage((p) => Math.min(p, pageCount) + 1)} aria-label="Next page" className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronDown size={14} className="-rotate-90" aria-hidden="true" /></button>
           </div>
         </div>
       </div>
@@ -3141,7 +3165,7 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
           <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
               <h3 className="text-base font-bold text-white">{timelineFor.invNo} · Timeline</h3>
-              <button onClick={() => setTimelineFor(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button>
+              <button aria-label="Close invoice timeline" onClick={() => setTimelineFor(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button>
             </div>
             <div className="p-5 max-h-[60vh] overflow-y-auto dark-scroll">
               {(timelineFor.history || []).length === 0 ? <p className="text-sm text-white/45 text-center py-6">No history recorded yet.</p> : (

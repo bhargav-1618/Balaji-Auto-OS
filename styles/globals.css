@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Montserrat:wght@400;500;600&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -39,7 +38,7 @@ input[type='number']::-webkit-inner-spin-button {
 body {
   background-color: var(--carbon-900);
   color: #e5e5e5;
-  font-family: 'Montserrat', sans-serif;
+  font-family: var(--font-montserrat), 'Montserrat', sans-serif;
   -webkit-font-smoothing: antialiased;
   /* APPLICATION SHELL: the document itself must never scroll or bounce. The shell is a
      viewport-height, non-scrolling container (banner, header, sidebar, status bar live
@@ -247,8 +246,81 @@ html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after 
 :root[data-theme="light"] .text-white\/40,
 :root[data-theme="light"] .text-white\/45,
 :root[data-theme="light"] .text-white\/50,
-:root[data-theme="light"] .text-white\/55 { color: #6b7280 !important; }
+:root[data-theme="light"] .text-white\/55 { color: #525a68 !important; }
 :root[data-theme="light"] .placeholder-white\/30::placeholder { color: #9ca3af !important; }
+
+/* ---- A11Y-004: WCAG AA (4.5:1) for text in every theme -----------------------------------
+   Measured with axe-core 4.10 over all modules + dialogs in Dark / Warm / Light. The
+   fixes live HERE, at token level, rather than in ~650 call sites.
+
+   Dark family (Dark, Dark+, Balanced, Warm): the app's secondary text is `text-white/45`
+   (657 uses) which rendered 4.3–4.49:1 on its surfaces. Raised to 0.5 alpha (>= 5.0:1 on
+   every surface in the family, incl. the lightest card tint). :where() keeps specificity
+   at one class, so `hover:text-white/60` / `group-hover:*` (two classes) still win and
+   hover/active feedback is unchanged. */
+:where(:root:not([data-theme="light"])) .text-white\/40,
+:where(:root:not([data-theme="light"])) .text-white\/45 { color: rgba(var(--fg-rgb), 0.5); }
+/* dimmed destructive text (`text-red-400/50..70`) dropped to 3.7–3.8:1 on dark surfaces */
+:where(:root:not([data-theme="light"])) .text-red-400\/50,
+:where(:root:not([data-theme="light"])) .text-red-400\/60,
+:where(:root:not([data-theme="light"])) .text-red-400\/70 { color: rgb(248 113 113 / 0.9); }
+
+/* Light theme: the Tailwind "-400/-300" accents and the brand gold were chosen for DARK
+   surfaces (1.4–2.7:1 on the light cards). Re-map each to a darker shade of the SAME hue,
+   as exact utility classes (never [class*=…], which would also match `hover:text-red-400`
+   and permanently recolour elements that only turn red on hover) and as the same colours
+   written inline by the status badges / KPI numbers. Every replacement is >= 4.5:1 on all
+   light surfaces, including the tinted badge backgrounds. */
+:root[data-theme="light"] .text-\[\#d4af37\],
+:root[data-theme="light"] [style*=" color: rgb(212, 175, 55)"],
+:root[data-theme="light"] [style^="color: rgb(212, 175, 55)"] { color: #6f5200 !important; }
+:root[data-theme="light"] .text-emerald-300, :root[data-theme="light"] .text-emerald-400,
+:root[data-theme="light"] [class~="text-emerald-400/70"], :root[data-theme="light"] [class~="text-emerald-400/80"], :root[data-theme="light"] [class~="text-emerald-400/90"],
+:root[data-theme="light"] [class~="text-emerald-300/80"], :root[data-theme="light"] [class~="text-emerald-300/90"], :root[data-theme="light"] [class~="text-emerald-300/95"],
+:root[data-theme="light"] [style*=" color: rgb(52, 211, 153)"], :root[data-theme="light"] [style^="color: rgb(52, 211, 153)"] { color: #046c4e !important; }
+:root[data-theme="light"] .text-red-300, :root[data-theme="light"] .text-red-400,
+:root[data-theme="light"] [class~="text-red-400/50"], :root[data-theme="light"] [class~="text-red-400/60"], :root[data-theme="light"] [class~="text-red-400/70"], :root[data-theme="light"] [class~="text-red-400/80"],
+:root[data-theme="light"] [class~="text-red-300/70"], :root[data-theme="light"] [class~="text-red-300/80"],
+:root[data-theme="light"] [style*=" color: rgb(248, 113, 113)"], :root[data-theme="light"] [style^="color: rgb(248, 113, 113)"] { color: #a81818 !important; }
+:root[data-theme="light"] .text-amber-300, :root[data-theme="light"] .text-amber-400,
+:root[data-theme="light"] [class~="text-amber-300/80"], :root[data-theme="light"] [class~="text-amber-400/70"], :root[data-theme="light"] [class~="text-amber-400/80"],
+:root[data-theme="light"] [style*=" color: rgb(251, 191, 36)"], :root[data-theme="light"] [style^="color: rgb(251, 191, 36)"] { color: #92400e !important; }
+:root[data-theme="light"] .text-blue-300, :root[data-theme="light"] .text-blue-400,
+:root[data-theme="light"] [style*=" color: rgb(96, 165, 250)"], :root[data-theme="light"] [style^="color: rgb(96, 165, 250)"] { color: #1d4ed8 !important; }
+:root[data-theme="light"] .text-violet-300,
+:root[data-theme="light"] [style*=" color: rgb(167, 139, 250)"], :root[data-theme="light"] [style^="color: rgb(167, 139, 250)"] { color: #6d28d9 !important; }
+:root[data-theme="light"] .text-sky-400 { color: #0369a1 !important; }
+:root[data-theme="light"] .text-rose-400 { color: #be123c !important; }
+:root[data-theme="light"] .text-pink-400 { color: #be185d !important; }
+:root[data-theme="light"] [class~="text-cyan-400/70"] { color: #155e75 !important; }
+:root[data-theme="light"] [style*=" color: rgb(156, 163, 175)"], :root[data-theme="light"] [style^="color: rgb(156, 163, 175)"] { color: #525a68 !important; }
+/* inline secondary text written as rgba(var(--fg-rgb), .4–.6) — React keeps the var() form verbatim in the style attribute */
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb),0.4)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb),0.4)"],
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb), 0.4)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb), 0.4)"],
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb),0.45)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb),0.45)"],
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb), 0.45)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb), 0.45)"],
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb),0.5)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb),0.5)"],
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb), 0.5)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb), 0.5)"],
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb),0.55)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb),0.55)"],
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb), 0.55)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb), 0.55)"],
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb),0.6)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb),0.6)"],
+:root[data-theme="light"] [style*=" color: rgba(var(--fg-rgb), 0.6)"],
+:root[data-theme="light"] [style^="color: rgba(var(--fg-rgb), 0.6)"] { color: #4f4c44 !important; }
+/* The Job Card preview is a fixed "paper" document (cream sheet, near-black header) in every
+   theme — its gold header text sits on #161616 and must keep the brand gold. */
+:root[data-theme="light"] .jc-paper [style*=" color: rgb(212, 175, 55)"],
+:root[data-theme="light"] .jc-paper [style^="color: rgb(212, 175, 55)"] { color: #d4af37 !important; }
+/* (anchored with a leading space / start-of-string: WebKit serialises `border-left: 3px solid gold` as
+   `border-left-color: rgb(212, 175, 55)`, which an unanchored "color: rgb(…)" substring would also match) */
 /* Smooth backdrop morph while switching (kept off individual elements to avoid jank). */
 .app-shell-bg { transition: background 260ms ease; }
 

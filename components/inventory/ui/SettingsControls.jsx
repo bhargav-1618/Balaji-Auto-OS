@@ -17,7 +17,7 @@ export function SetSeg({ value, onChange, options }) {
 export function SetSel({ label, value, onChange, options }) {
   return (
     <div><label className="block text-[11px] uppercase tracking-wide text-white/45 mb-1.5">{label}</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white outline-none focus:border-[#d4af37]/60">{options.map((o) => <option key={o.value} value={o.value} style={{ background: 'var(--surface-2)' }}>{o.label}</option>)}</select>
+      <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-3 py-2.5 rounded-xl text-sm bg-white/5 border border-white/10 text-white outline-none focus:border-[#d4af37]/60">{options.map((o) => <option key={o.value} value={o.value} style={{ background: 'var(--surface-2)' }}>{o.label}</option>)}</select>
     </div>
   );
 }

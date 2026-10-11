@@ -68,7 +68,7 @@ export function ConfirmHost() {
               <h3 className="text-base font-bold text-white">{title || (danger ? t('confirm.deleteTitle', 'Delete this item?') : t('confirm.defaultTitle', 'Are you sure?'))}</h3>
               {message && <p className="text-sm text-white/55 mt-1 leading-relaxed">{message}</p>}
             </div>
-            <button onClick={() => done(false)} className="w-7 h-7 rounded-lg flex items-center justify-center text-white/45 hover:bg-white/10 flex-shrink-0"><X size={15} /></button>
+            <button aria-label="Close dialog" onClick={() => done(false)} className="w-7 h-7 rounded-lg flex items-center justify-center text-white/45 hover:bg-white/10 flex-shrink-0"><X size={15} /></button>
           </div>
         </div>
         <div className="flex gap-2 px-5 py-4" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.08)', background: 'var(--surface-2)', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>

@@ -294,7 +294,7 @@ export default function SupplierDirectory({
               Showing {listShown.length} {statusF === 'All' ? '' : `${statusF} `}Supplier{listShown.length === 1 ? '' : 's'}
               {(statusF !== 'All' || listQ) && <button onClick={() => { setStatusF('All'); setListQ(''); }} className="ml-1.5 text-[#d4af37] hover:underline">Clear</button>}
             </p>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="px-1.5 py-0.5 rounded-md text-[10px] bg-white/5 border border-white/10 text-white/70 outline-none flex-shrink-0">
+            <select aria-label="Sort suppliers by" value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="px-1.5 py-0.5 rounded-md text-[10px] bg-white/5 border border-white/10 text-white/70 outline-none flex-shrink-0">
               {[['recent', 'Recently Added'], ['name', 'A–Z'], ['city', 'City'], ['rating', 'Rating'], ['outstanding', 'Outstanding'], ['lastPurchase', 'Last Purchase']].map(([v, l]) => <option key={v} value={v} style={{ background: '#141414' }}>{l}</option>)}
             </select>
           </div>
@@ -395,7 +395,7 @@ export default function SupplierDirectory({
                 {waNum && <a href={`https://wa.me/91${waNum}`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-sm text-white/70"><Phone size={14} /> {phoneOf(selected)} <MessageCircle size={14} className="text-emerald-400" /></a>}
                 {canManage && <button onClick={() => onEdit?.(selected)} className="h-9 px-3 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 transition flex items-center gap-1.5"><Edit3 size={13} /> {t('suppliers.action.editSupplier', 'Edit Supplier')}</button>}
                 <div className="relative">
-                  <button ref={menuRef} onClick={() => setMenuOpen((o) => !o)} aria-haspopup="menu" aria-expanded={menuOpen} className="w-9 h-9 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/70 hover:bg-white/10"><MoreVertical size={16} /></button>
+                  <button aria-label="More supplier actions" ref={menuRef} onClick={() => setMenuOpen((o) => !o)} aria-haspopup="menu" aria-expanded={menuOpen} className="w-9 h-9 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/70 hover:bg-white/10"><MoreVertical size={16} /></button>
                   {menuOpen && (
                     <ActionMenu anchorRef={menuRef} open onClose={() => setMenuOpen(false)} items={menuItems} />
                   )}

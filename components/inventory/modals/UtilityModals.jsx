@@ -30,7 +30,7 @@ export function AlternativeModal({ part, alternatives, onPick, onClose }) {
             <PackageX size={18} className="text-red-400" />
             <h2 className="text-base font-bold text-white">Out of Stock</h2>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60 transition">
+          <button aria-label="Close out of stock" onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60 transition">
             <X size={16} />
           </button>
         </div>
@@ -92,7 +92,7 @@ export function ReorderModal({ target, onPick, onClose }) {
             <MessageCircle size={18} className="text-[#d4af37]" />
             <h2 className="text-base font-bold text-white">{block ? 'Operational Block' : 'Send Purchase Order'}</h2>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60 transition">
+          <button aria-label="Close purchase order" onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60 transition">
             <X size={16} />
           </button>
         </div>
@@ -214,7 +214,7 @@ export function ProductLedgerModal({ part, sales, restocks, stockAdjustments, on
       <div className="w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.06)' }}>
           <div className="flex items-center gap-2"><History size={18} className="text-[#d4af37]" /><h2 className="text-base font-bold text-white">Movement history — {part.name}</h2></div>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
+          <button aria-label="Close movement history" onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
         </div>
         <div className="p-5 max-h-[70vh] overflow-y-auto">
           <p className="text-xs text-white/45 mb-3">Current stock: <span className="text-white/80 font-semibold">{part.stock || 0}</span></p>

@@ -35,7 +35,12 @@ import React, { useCallback, useRef } from 'react';
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
-function Splitter({ onDragStart, orientation = 'vertical', label }) {
+// A focusable separator is an ARIA "window splitter": it must expose its current value and
+// range (aria-valuenow/min/max — axe `aria-required-attr`, QA A11Y-006). The value is the
+// width in px of the pane this handle resizes, clamped into that pane's own [min,max].
+// It tracks the committed width (keyboard steps commit immediately; a pointer drag commits
+// on pointerup — the live drag writes to the DOM directly, see the performance note above).
+function Splitter({ onDragStart, orientation = 'vertical', label, valueNow, valueMin, valueMax }) {
   const onKeyDown = (e) => {
     if (e.key === 'ArrowLeft') { e.preventDefault(); onDragStart(null, -16); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); onDragStart(null, 16); }
@@ -45,6 +50,10 @@ function Splitter({ onDragStart, orientation = 'vertical', label }) {
       role="separator"
       aria-orientation={orientation}
       aria-label={label}
+      aria-valuenow={Math.round(clamp(valueNow, valueMin, valueMax))}
+      aria-valuemin={valueMin}
+      aria-valuemax={valueMax}
+      aria-valuetext={`${Math.round(clamp(valueNow, valueMin, valueMax))} pixels wide`}
       tabIndex={0}
       onPointerDown={onDragStart}
       onKeyDown={onKeyDown}
@@ -189,11 +198,11 @@ export default function ResizablePanes({ left, center, right, className = '' }) 
     >
       <div ref={leftRef} className="pane-left mb-4 xl:mb-0 min-w-0" data-pane="left">{left.content}</div>
 
-      <Splitter onDragStart={beginDrag('left')} label="Resize Supplier Directory" />
+      <Splitter onDragStart={beginDrag('left')} label="Resize Supplier Directory" valueNow={left.width} valueMin={left.min} valueMax={left.max} />
 
       <div className="pane-center xl:flex-1 xl:min-w-0 mb-4 xl:mb-0" data-pane="center">{center.content}</div>
 
-      {!right.hidden && <Splitter onDragStart={beginDrag('right')} label="Resize Purchase Order panel" />}
+      {!right.hidden && <Splitter onDragStart={beginDrag('right')} label="Resize Purchase Order panel" valueNow={right.width} valueMin={right.min} valueMax={right.max} />}
 
       {!right.hidden && (
         <div ref={rightRef} className="pane-right hidden xl:block" data-pane="right">{right.content}</div>

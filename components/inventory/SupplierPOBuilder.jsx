@@ -275,7 +275,11 @@ export default function SupplierPOBuilder({ inventory = [], suppliers = [], rest
     const on = sel[p.id] != null;
     return (
       <div key={p.id} className={`flex items-center gap-2 px-2 py-2 rounded-xl mb-1 transition ${on ? 'bg-emerald-500/10' : 'hover:bg-white/[0.03]'}`}>
-        <button onClick={() => toggle(p)} className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border transition ${on ? 'bg-emerald-500 border-emerald-500' : 'border-white/25'}`}>{on && <Check size={13} className="text-black" />}</button>
+        {/* QA A11Y-002: this was an empty-looking square — a screen reader announced it as just
+            "button", once per part (30 on the Suppliers page). aria-pressed carries the
+            selected state, so the name stays stable ("Add … to purchase order") instead of
+            flipping between two verbs. */}
+        <button type="button" onClick={() => toggle(p)} aria-pressed={on} aria-label={`Add ${p.name} to purchase order`} className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border transition ${on ? 'bg-emerald-500 border-emerald-500' : 'border-white/25'}`}>{on && <Check size={13} className="text-black" aria-hidden="true" />}</button>
         <div className="min-w-0 flex-1">
           <p className="text-sm text-white/90 font-medium truncate">{p.name}</p>
           <p className="text-[10px] text-white/45 truncate">{[p.vehicle, p.category || 'Uncategorised', hideSupplier ? null : supplierOf(p)?.name].filter(Boolean).join(' · ')}</p>
@@ -283,9 +287,9 @@ export default function SupplierPOBuilder({ inventory = [], suppliers = [], rest
         </div>
         {on ? (
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button onClick={() => setQty(p.id, sel[p.id] - 1)} className="w-6 h-6 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/70 hover:bg-white/10"><Minus size={12} /></button>
-            <input value={sel[p.id]} onChange={(e) => setQty(p.id, Number(e.target.value))} className="w-9 text-center text-sm bg-transparent text-white outline-none" />
-            <button onClick={() => setQty(p.id, sel[p.id] + 1)} className="w-6 h-6 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/70 hover:bg-white/10"><Plus size={12} /></button>
+            <button type="button" onClick={() => setQty(p.id, sel[p.id] - 1)} aria-label={`Decrease quantity of ${p.name}`} className="w-6 h-6 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/70 hover:bg-white/10"><Minus size={12} aria-hidden="true" /></button>
+            <input value={sel[p.id]} onChange={(e) => setQty(p.id, Number(e.target.value))} aria-label={`Order quantity of ${p.name}`} className="w-9 text-center text-sm bg-transparent text-white outline-none" />
+            <button type="button" onClick={() => setQty(p.id, sel[p.id] + 1)} aria-label={`Increase quantity of ${p.name}`} className="w-6 h-6 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/70 hover:bg-white/10"><Plus size={12} aria-hidden="true" /></button>
           </div>
         ) : (
           <span className="text-[11px] text-white/45 flex-shrink-0">{inr(p.purchasePrice || 0)}</span>
@@ -299,7 +303,7 @@ export default function SupplierPOBuilder({ inventory = [], suppliers = [], rest
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 flex-shrink-0" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
           <div className="flex items-center gap-2">
-            {reviewing && <button onClick={() => setReviewing(false)} className="w-8 h-8 -ml-1 rounded-lg flex items-center justify-center text-white/60 hover:bg-white/10"><ChevronLeft size={18} /></button>}
+            {reviewing && <button aria-label="Back to order" onClick={() => setReviewing(false)} className="w-8 h-8 -ml-1 rounded-lg flex items-center justify-center text-white/60 hover:bg-white/10"><ChevronLeft size={18} /></button>}
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2"><ClipboardList size={16} className="text-[#d4af37]" /> {reviewing ? 'Review Order' : 'Purchase Order'}</h3>
               {/* No Supplier State Must Remain Clean — this only ever reads

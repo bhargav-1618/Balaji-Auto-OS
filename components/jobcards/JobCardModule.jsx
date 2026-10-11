@@ -49,7 +49,8 @@ import Badge from '../common/Badge';
 import { VEHICLES, FUELS } from '../../lib/vehicleCatalog';
 import notify from '../common/notify';
 import { FILTER_FIELD_CLS } from '../common/fieldStyles';
-import { num, asArray, isIndianMobile, MOBILE_ERROR } from '../../lib/format';
+import { num, asArray, isIndianMobile, mobileInput, MOBILE_ERROR } from '../../lib/format';
+import useLabelledControl from '../common/useLabelledControl';
 import { nextJobCardNumber } from '../../services/jobCardService';
 
 /* ================= constants ================= */
@@ -175,11 +176,12 @@ const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid r
 // guessed pixel value. See Section 1 (Job Card No. / Service Advisor) for the only
 // place in this form that currently needs it.
 function Field({ label, req, error, errorId, sub, children }) {
+  const { id, content } = useLabelledControl(children); // QA A11Y-003: label is tied to its input
   return (
     <div className="min-w-0">
-      <label className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}{req && <span className="text-red-400"> *</span>}</label>
+      <label htmlFor={id} className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}{req && <span className="text-red-400"> *</span>}</label>
       {sub && <div className="mb-1.5">{sub}</div>}
-      {children}
+      {content}
       {error && <p id={errorId} role="alert" className="text-[10px] text-red-400 mt-1">{error}</p>}
     </div>
   );
@@ -204,13 +206,16 @@ function ChipToggle({ on, label, onClick }) {
 }
 
 
-function CustomInspItem({ onAdd }) {
+// `group` names the inspection section this row belongs to — there are several on screen at
+// once, so an unnamed "+" button (QA A11Y-002) was indistinguishable from its siblings.
+function CustomInspItem({ onAdd, group = '' }) {
   const [v, setV] = useState('');
   const add = () => { const t = v.trim(); if (t) { onAdd(t); setV(''); } };
+  const what = group ? `custom finding in ${group}` : 'custom finding';
   return (
     <div className="flex items-center gap-1.5 pt-1">
-      <input value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} placeholder="Add custom finding…" className="flex-1 px-2 py-1 rounded-md text-[11px] bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/40" />
-      <button type="button" onClick={add} className="w-6 h-6 rounded-md flex items-center justify-center text-[#d4af37] bg-white/5 border border-white/10 hover:bg-white/10 flex-shrink-0"><Plus size={12} /></button>
+      <input value={v} aria-label={`New ${what}`} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} placeholder="Add custom finding…" className="flex-1 px-2 py-1 rounded-md text-[11px] bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none focus:border-[#d4af37]/40" />
+      <button type="button" onClick={add} aria-label={`Add ${what}`} className="w-6 h-6 rounded-md flex items-center justify-center text-[#d4af37] bg-white/5 border border-white/10 hover:bg-white/10 flex-shrink-0"><Plus size={12} aria-hidden="true" /></button>
     </div>
   );
 }
@@ -269,7 +274,7 @@ function CustomerSearch({ customers, onFill }) {
   return (
     <div className="relative mb-3" ref={ref}>
       <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
-      <input value={q} onFocus={() => setOpen(true)} onChange={(e) => { setQ(e.target.value); setOpen(true); }} placeholder="Search existing customer by name, phone, vehicle no., VIN…" className={`${inputCls} pl-9`} />
+      <input aria-label="Search existing customers" value={q} onFocus={() => setOpen(true)} onChange={(e) => { setQ(e.target.value); setOpen(true); }} placeholder="Search existing customer by name, phone, vehicle no., VIN…" className={`${inputCls} pl-9`} />
       {open && shown.length > 0 && (
         <DropdownPanel anchorRef={ref} open onClose={() => { setOpen(false); setQ(''); }}
           style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }}>
@@ -989,6 +994,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     try {
       await onPersist?.({
         ...card,
+        phone: card.phone,
+        altPhone: card.altPhone,
         status: asDraft ? DRAFT_STATUS : (card.status === DRAFT_STATUS ? 'Received' : card.status),
         isDraft: asDraft,
         savedAt: Date.now(),
@@ -1556,8 +1563,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
           <CustomerSearch customers={customers} onFill={(c) => { const v = (c.vehicles || [])[0] || {}; set({ customer: c.name || '', phone: c.phone || '', altPhone: c.altPhone || '', address: c.address || '', vehicle: v.vehicle || [v.make, v.model].filter(Boolean).join(' '), make: v.make || '', model: v.model || '', regNo: v.regNo || '', vin: v.vin || '', engineNo: v.engineNo || '', fuel: v.fuel || card.fuel }); toast.success(`Loaded ${c.name}`); }} />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Customer Name" req error={showErr('customer')} errorId="err-customer"><input value={card.customer} onChange={(e) => set({ customer: e.target.value })} onBlur={() => touch('customer')} aria-invalid={!!showErr('customer')} aria-describedby={showErr('customer') ? 'err-customer' : undefined} placeholder="Full name" className={`${inputCls} ${showErr('customer') ? 'border-red-500/70' : ''}`} /></Field>
-            <Field label="Contact Number" req error={card.phone && !isIndianMobile(card.phone) ? MOBILE_ERROR : null}><input value={card.phone} inputMode="numeric" onChange={(e) => set({ phone: e.target.value.replace(/[^\d ]/g, '').slice(0, 13) })} placeholder="10-digit mobile" className={inputCls} /></Field>
-            <Field label="Alternate Number" error={card.altPhone && !isIndianMobile(card.altPhone) ? MOBILE_ERROR : null}><input value={card.altPhone} inputMode="numeric" onChange={(e) => set({ altPhone: e.target.value.replace(/[^\d ]/g, '').slice(0, 13) })} placeholder="Optional" className={inputCls} /></Field>
+            <Field label="Contact Number" req error={card.phone && !isIndianMobile(card.phone) ? MOBILE_ERROR : null}><input value={card.phone} inputMode="numeric" onChange={(e) => set({ phone: mobileInput(e.target.value) })} placeholder="10-digit mobile" className={inputCls} /></Field>
+            <Field label="Alternate Number" error={card.altPhone && !isIndianMobile(card.altPhone) ? MOBILE_ERROR : null}><input value={card.altPhone} inputMode="numeric" onChange={(e) => set({ altPhone: mobileInput(e.target.value) })} placeholder="Optional" className={inputCls} /></Field>
             <Field label="Full Address"><textarea value={card.address} onChange={(e) => set({ address: e.target.value })} rows={2} placeholder="House, street, area, city" className={`${inputCls} resize-none`} /></Field>
           </div>
         </Section>
@@ -1620,7 +1627,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                   {card[key].map((v, i) => (
                     <div key={`${key}-${i}`} className="flex items-center gap-1.5">
                       <span className="text-[11px] text-white/45 w-4 text-right flex-shrink-0">{i + 1}.</span>
-                      <input value={v} onChange={(e) => { const arr = [...card[key]]; arr[i] = e.target.value; set({ [key]: arr }); }} placeholder={key === 'complaints' ? (i === 0 ? 'Customer complaint / request (required)' : 'Customer complaint / request') : 'Technician diagnosis / note'} aria-required={key === 'complaints' && i === 0 ? true : undefined} className={`${inputCls} flex-1`} />
+                      <input aria-label={`${key === 'complaints' ? 'Customer complaint' : 'Diagnosis note'} ${i + 1}`} value={v} onChange={(e) => { const arr = [...card[key]]; arr[i] = e.target.value; set({ [key]: arr }); }} placeholder={key === 'complaints' ? (i === 0 ? 'Customer complaint / request (required)' : 'Customer complaint / request') : 'Technician diagnosis / note'} aria-required={key === 'complaints' && i === 0 ? true : undefined} className={`${inputCls} flex-1`} />
                       {/* Batch 3 Defect 3: delete now behaves identically for every row
                           regardless of origin — typed, "+ Add"ed, or from "Copy previous"
                           (which can legitimately produce a single-row array, e.g. a repeat
@@ -1629,7 +1636,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                           appeared once length > 1). Removing the last row resets to one
                           empty placeholder — same convention as Supplier's Alternate
                           Names/Phone Numbers — rather than vanishing the section entirely. */}
-                      <button type="button" onClick={() => { const next = card[key].filter((_, x) => x !== i); set({ [key]: next.length ? next : [''] }); }} className="text-red-400/50 hover:text-red-400 flex-shrink-0"><Trash2 size={13} /></button>
+                      <button type="button" onClick={() => { const next = card[key].filter((_, x) => x !== i); set({ [key]: next.length ? next : [''] }); }} aria-label={`Remove ${key === 'complaints' ? 'complaint' : 'diagnosis note'} ${i + 1}`} className="text-red-400/50 hover:text-red-400 flex-shrink-0"><Trash2 size={13} aria-hidden="true" /></button>
                     </div>
                   ))}
                 </div>
@@ -1650,7 +1657,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             <div className="flex items-center gap-2">
               <div className="relative">
                 <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-white/45" />
-                <input value={warnQ} onChange={(e) => setWarnQ(e.target.value)} placeholder="Filter…" className="pl-6 pr-2 py-1 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none w-24 focus:w-32 transition-all" />
+                <input aria-label="Filter dashboard warnings" value={warnQ} onChange={(e) => setWarnQ(e.target.value)} placeholder="Filter…" className="pl-6 pr-2 py-1 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white placeholder-white/25 outline-none w-24 focus:w-32 transition-all" />
               </div>
               <button type="button" onClick={() => set({ warnings: [...WARNINGS] })} className="text-[10px] font-semibold text-[#d4af37] hover:underline">Select All</button>
               <button type="button" onClick={() => set({ warnings: [] })} className="text-[10px] font-semibold text-white/45 hover:text-white/70">Clear All</button>
@@ -1659,19 +1666,19 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
           <div className="flex flex-wrap gap-1.5 mb-2">
             {WARNINGS.filter((w) => !warnQ.trim() || w.toLowerCase().includes(warnQ.trim().toLowerCase())).map((w) => <ChipToggle key={w} on={card.warnings.includes(w)} label={w} onClick={() => toggleList('warnings', w)} />)}
           </div>
-          <input value={card.warningsOther} onChange={(e) => set({ warningsOther: e.target.value })} placeholder="Other warning (custom)…" className={`${inputCls} mb-4`} />
+          <input aria-label="Other warning (custom)" value={card.warningsOther} onChange={(e) => set({ warningsOther: e.target.value })} placeholder="Other warning (custom)…" className={`${inputCls} mb-4`} />
 
           <p className="text-[10px] uppercase tracking-wide text-white/45 mb-2">B. Inventory check — items present <span className="normal-case text-white/45">(from your Inventory — updates automatically)</span></p>
           {card.invItems.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-2">
               {card.invItems.map((n) => (
-                <span key={n} className="flex items-center gap-1 pl-2 pr-1 py-1 rounded-lg text-[11px] font-semibold bg-[#d4af37]/12 text-[#d4af37] border border-[#d4af37]/25">{n}<button type="button" onClick={() => toggleList('invItems', n)}><X size={11} /></button></span>
+                <span key={n} className="flex items-center gap-1 pl-2 pr-1 py-1 rounded-lg text-[11px] font-semibold bg-[#d4af37]/12 text-[#d4af37] border border-[#d4af37]/25">{n}<button aria-label={`Remove ${n}`} type="button" onClick={() => toggleList('invItems', n)}><X size={11} /></button></span>
               ))}
             </div>
           )}
           <div className="relative mb-1.5">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
-            <input value={invQ} onChange={(e) => setInvQ(e.target.value)} placeholder="Search inventory items to mark as present…" className={`${inputCls} pl-9`} />
+            <input aria-label="Search inventory items to mark as present" value={invQ} onChange={(e) => setInvQ(e.target.value)} placeholder="Search inventory items to mark as present…" className={`${inputCls} pl-9`} />
           </div>
           {invQ && (
             <div className="max-h-36 overflow-y-auto dark-scroll rounded-xl mb-2" style={{ background: 'var(--surface-2)', border: '1px solid rgba(var(--fg-rgb),0.08)' }}>
@@ -1681,7 +1688,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
               {invNames.length === 0 && <p className="px-3 py-2 text-xs text-white/45">No inventory items match.</p>}
             </div>
           )}
-          <input value={card.invOther} onChange={(e) => set({ invOther: e.target.value })} placeholder="Other item (custom)…" className={inputCls} />
+          <input aria-label="Other item (custom)" value={card.invOther} onChange={(e) => set({ invOther: e.target.value })} placeholder="Other item (custom)…" className={inputCls} />
         </Section>
 
         <Section n={6} title="Damage Notes — Vehicle Body">
@@ -1707,14 +1714,14 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                 <div key={d.part} className="rounded-xl p-2.5" style={{ background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.06)' }}>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] font-semibold text-[#d4af37] truncate">{d.part}</span>
-                    <button type="button" onClick={() => toggleDamage(d.part)} className="text-red-400/50 hover:text-red-400"><X size={12} /></button>
+                    <button aria-label={`Remove ${d.part} damage`} type="button" onClick={() => toggleDamage(d.part)} className="text-red-400/50 hover:text-red-400"><X size={12} /></button>
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
-                    <select value={d.type || ''} onChange={(e) => setDamageField(d.part, { type: e.target.value })} className={`${inputCls} py-2 text-xs`}>
+                    <select aria-label={`Damage type for ${d.part}`} value={d.type || ''} onChange={(e) => setDamageField(d.part, { type: e.target.value })} className={`${inputCls} py-2 text-xs`}>
                       <option value="" style={{ background: '#141414' }}>Damage type…</option>
                       {['Scratch', 'Dent', 'Broken', 'Rust', 'Paint Damage', 'Glass Crack', 'Other'].map((t) => <option key={t} style={{ background: '#141414' }}>{t}</option>)}
                     </select>
-                    <select value={d.severity || ''} onChange={(e) => setDamageField(d.part, { severity: e.target.value })} className={`${inputCls} py-2 text-xs`}>
+                    <select aria-label={`Damage severity for ${d.part}`} value={d.severity || ''} onChange={(e) => setDamageField(d.part, { severity: e.target.value })} className={`${inputCls} py-2 text-xs`}>
                       <option value="" style={{ background: '#141414' }}>Severity…</option>
                       {['Minor', 'Moderate', 'Severe'].map((t) => <option key={t} style={{ background: '#141414' }}>{t}</option>)}
                     </select>
@@ -1724,11 +1731,11 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
               ))}
             </div>
           )}
-          <input value={card.damageOther} onChange={(e) => set({ damageOther: e.target.value, ...(e.target.value.trim() ? { noBodyDamage: false } : {}) })} placeholder="Other damage (custom)…" className={inputCls} />
+          <input aria-label="Other damage (custom)" value={card.damageOther} onChange={(e) => set({ damageOther: e.target.value, ...(e.target.value.trim() ? { noBodyDamage: false } : {}) })} placeholder="Other damage (custom)…" className={inputCls} />
         </Section>
 
         <Section n={7} title={`Multi-Point Inspection (${inspStats.done}/${inspStats.total})`} right={
-          <select value={card.inspectionTemplate || 'Major Service'} onChange={(e) => set({ inspectionTemplate: e.target.value })} className="px-2 py-1 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white outline-none">
+          <select aria-label="Inspection template" value={card.inspectionTemplate || 'Major Service'} onChange={(e) => set({ inspectionTemplate: e.target.value })} className="px-2 py-1 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white outline-none">
             {INSPECTION_TEMPLATE_NAMES.map((t) => <option key={t} style={{ background: '#141414' }}>{t}</option>)}
           </select>
         }>
@@ -1770,11 +1777,11 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                               <label key={key} className="flex items-center gap-2 cursor-pointer select-none py-0.5 group/ci">
                                 <input type="checkbox" checked={!!card.inspection[key]} onChange={() => set({ inspection: { ...card.inspection, [key]: !card.inspection[key] } })} className="accent-[#d4af37] w-3.5 h-3.5 flex-shrink-0" />
                                 <span className="text-xs text-white/70 flex-1">{c} <span className="text-[9px] text-[#d4af37]/60">custom</span></span>
-                                <button type="button" onClick={(e) => { e.preventDefault(); const cc = { ...(card.inspectionCustom || {}) }; cc[group] = (cc[group] || []).filter((x) => x !== c); const ins = { ...card.inspection }; delete ins[key]; set({ inspectionCustom: cc, inspection: ins }); }} className="text-white/45 hover:text-red-400 opacity-0 group-hover/ci:opacity-100"><X size={11} /></button>
+                                <button type="button" onClick={(e) => { e.preventDefault(); const cc = { ...(card.inspectionCustom || {}) }; cc[group] = (cc[group] || []).filter((x) => x !== c); const ins = { ...card.inspection }; delete ins[key]; set({ inspectionCustom: cc, inspection: ins }); }} aria-label={`Remove custom finding ${c}`} className="text-white/45 hover:text-red-400 opacity-0 group-hover/ci:opacity-100 focus-visible:opacity-100"><X size={11} aria-hidden="true" /></button>
                               </label>
                             );
                           })}
-                          <CustomInspItem onAdd={(name) => { const cc = { ...(card.inspectionCustom || {}) }; const list = cc[group] || []; if (!list.some((x) => x.toLowerCase() === name.toLowerCase())) { cc[group] = [...list, name]; set({ inspectionCustom: cc, inspection: { ...card.inspection, [`${group}::${name}`]: true } }); } }} />
+                          <CustomInspItem onAdd={(name) => { const cc = { ...(card.inspectionCustom || {}) }; const list = cc[group] || []; if (!list.some((x) => x.toLowerCase() === name.toLowerCase())) { cc[group] = [...list, name]; set({ inspectionCustom: cc, inspection: { ...card.inspection, [`${group}::${name}`]: true } }); } }} group={group} />
                         </div>
                       </div>
                     );
@@ -1794,7 +1801,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                   {card[key].map((img, i) => (
                     <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden" style={{ border: '1px solid rgba(var(--fg-rgb),0.1)' }}>
                       <img src={img} alt="" className="w-full h-full object-cover" />
-                      <button type="button" onClick={() => set({ [key]: card[key].filter((_, x) => x !== i) })} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
+                      <button aria-label="Remove photo" type="button" onClick={() => set({ [key]: card[key].filter((_, x) => x !== i) })} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
                     </div>
                   ))}
                   <label className="w-16 h-16 rounded-lg flex flex-col items-center justify-center cursor-pointer text-white/45 hover:text-white/70 transition" style={{ border: '1px dashed rgba(var(--fg-rgb),0.2)' }}>
@@ -1813,14 +1820,14 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
               <button key={k} type="button" onClick={() => setNoteTab(k)} className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${noteTab === k ? 'text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]' : 'text-white/55 bg-white/5 border border-white/10 hover:bg-white/10'}`}>{l}</button>
             ))}
           </div>
-          <textarea value={card[noteTab] || ''} onChange={(e) => set({ [noteTab]: e.target.value.slice(0, 500) })} rows={3} placeholder={noteTab === 'customerNote' ? 'Notes shown to the customer / on invoice…' : noteTab === 'technicianNote' ? 'Technician working notes…' : noteTab === 'billingNote' ? 'Notes for billing / accounts…' : 'Internal notes (staff only)…'} className={`${inputCls} resize-none`} />
+          <textarea aria-label={noteTab === 'customerNote' ? 'Customer note' : noteTab === 'technicianNote' ? 'Technician note' : noteTab === 'billingNote' ? 'Billing note' : 'Internal note (staff only)'} value={card[noteTab] || ''} onChange={(e) => set({ [noteTab]: e.target.value.slice(0, 500) })} rows={3} placeholder={noteTab === 'customerNote' ? 'Notes shown to the customer / on invoice…' : noteTab === 'technicianNote' ? 'Technician working notes…' : noteTab === 'billingNote' ? 'Notes for billing / accounts…' : 'Internal notes (staff only)…'} className={`${inputCls} resize-none`} />
           <p className="text-right text-[10px] text-white/45 mt-1">{(card[noteTab] || '').length} / 500</p>
 
           {/* Part 3 — append-only note history. The free-text fields above are unchanged;
               this adds a running log without ever overwriting a previous note. */}
           <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
             <div className="flex items-center gap-2 mb-2">
-              <input value={noteEntry} onChange={(e) => setNoteEntry(e.target.value.slice(0, 300))} onKeyDown={(e) => { if (e.key === 'Enter' && noteEntry.trim()) { e.preventDefault(); const cat = { notes: 'Internal', customerNote: 'Customer', technicianNote: 'Technician', billingNote: 'Billing' }[noteTab] || 'Internal'; set({ notesLog: [...(card.notesLog || []), { at: Date.now(), by: demoMode ? 'Demo User' : (card.advisor || 'Staff'), category: cat, content: noteEntry.trim() }] }); setNoteEntry(''); } }} placeholder="Add a timestamped note & press Enter…" className={`${inputCls} py-2 flex-1`} />
+              <input aria-label="Add a timestamped note" value={noteEntry} onChange={(e) => setNoteEntry(e.target.value.slice(0, 300))} onKeyDown={(e) => { if (e.key === 'Enter' && noteEntry.trim()) { e.preventDefault(); const cat = { notes: 'Internal', customerNote: 'Customer', technicianNote: 'Technician', billingNote: 'Billing' }[noteTab] || 'Internal'; set({ notesLog: [...(card.notesLog || []), { at: Date.now(), by: demoMode ? 'Demo User' : (card.advisor || 'Staff'), category: cat, content: noteEntry.trim() }] }); setNoteEntry(''); } }} placeholder="Add a timestamped note & press Enter…" className={`${inputCls} py-2 flex-1`} />
               <button type="button" onClick={() => { if (!noteEntry.trim()) return; const cat = { notes: 'Internal', customerNote: 'Customer', technicianNote: 'Technician', billingNote: 'Billing' }[noteTab] || 'Internal'; set({ notesLog: [...(card.notesLog || []), { at: Date.now(), by: demoMode ? 'Demo User' : (card.advisor || 'Staff'), category: cat, content: noteEntry.trim() }] }); setNoteEntry(''); }} className="h-9 px-3 rounded-lg text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] flex items-center gap-1"><Plus size={12} /> Add</button>
             </div>
             {(card.notesLog || []).length > 0 && (
@@ -1845,7 +1852,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
           <p className="text-[11px] text-white/45 mb-2">Add parts this job will consume. Saving the card reserves them in Inventory; cancelling or closing the card releases the reservation automatically.</p>
           <div className="relative mb-1.5">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
-            <input value={partQ} onChange={(e) => setPartQ(e.target.value)} placeholder="Search parts by name, SKU, OEM, barcode…" className={`${inputCls} pl-9`} />
+            <input aria-label="Search parts to add to the job card" value={partQ} onChange={(e) => setPartQ(e.target.value)} placeholder="Search parts by name, SKU, OEM, barcode…" className={`${inputCls} pl-9`} />
           </div>
           {partQ && (
             <div className="max-h-64 overflow-y-auto dark-scroll rounded-xl mb-2" style={{ background: 'var(--surface-2)', border: '1px solid rgba(var(--fg-rgb),0.08)' }}>
@@ -1877,7 +1884,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                     <span className="flex-1 text-sm text-white/85 min-w-0 truncate">{p.name}</span>
                     <span className={`text-[10px] ${over ? 'text-red-400' : 'text-white/45'}`}>{avail} avail</span>
                     <input value={p.qty} inputMode="numeric" onChange={(e) => { const q = e.target.value.replace(/\D/g, ''); set({ parts: card.parts.map((x, xi) => (xi === i ? { ...x, qty: q } : x)) }); }} className={`w-14 py-1.5 text-center rounded-lg text-xs bg-white/5 border ${over ? 'border-red-500/50' : 'border-white/10'} text-white outline-none`} />
-                    <button type="button" onClick={() => set({ parts: card.parts.filter((_, xi) => xi !== i) })} className="text-red-400/50 hover:text-red-400"><Trash2 size={13} /></button>
+                    <button aria-label="Remove part" type="button" onClick={() => set({ parts: card.parts.filter((_, xi) => xi !== i) })} className="text-red-400/50 hover:text-red-400"><Trash2 size={13} /></button>
                   </div>
                 );
               })}
@@ -1897,7 +1904,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                   <div className="flex items-center gap-1.5 mb-1.5">
                     <span className="text-[11px] text-white/45 w-4 flex-shrink-0">{i + 1}.</span>
                     <input value={lb.service} onChange={(e) => setLb({ service: e.target.value })} placeholder="Service / labour name" className={`${inputCls} flex-1 py-2`} />
-                    <button type="button" onClick={() => set({ labour: card.labour.filter((x) => x.id !== lb.id) })} className="text-red-400/50 hover:text-red-400 flex-shrink-0"><Trash2 size={13} /></button>
+                    <button type="button" onClick={() => set({ labour: card.labour.filter((x) => x.id !== lb.id) })} aria-label={lb.service ? `Remove labour line ${i + 1}: ${lb.service}` : `Remove labour line ${i + 1}`} className="text-red-400/50 hover:text-red-400 flex-shrink-0"><Trash2 size={13} aria-hidden="true" /></button>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pl-5">
                     <input value={lb.hours} inputMode="decimal" onChange={(e) => setLb({ hours: e.target.value.replace(/[^\d.]/g, '') })} placeholder="Hours" className={`${inputCls} py-2 text-xs`} />
@@ -2054,7 +2061,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
             <div className="flex flex-col sm:flex-row gap-2 mb-2.5">
               <div className="relative flex-1">
                 <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
-                <input value={savedQ} onChange={(e) => setSavedQ(e.target.value)} placeholder="Search job no., customer, phone, vehicle, reg, VIN, advisor…" className={`${inputCls} pl-9 py-2`} />
+                <input aria-label="Search saved job cards" value={savedQ} onChange={(e) => setSavedQ(e.target.value)} placeholder="Search job no., customer, phone, vehicle, reg, VIN, advisor…" className={`${inputCls} pl-9 py-2`} />
               </div>
               {/* 1.3 — was a plain native <select>: the browser's own option-list styling
                   (large per-row padding, no max-height/scroll control) is exactly why it
@@ -2265,7 +2272,9 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
               <button onClick={() => setFullPreview((f) => !f)} title={fullPreview ? 'Back to form' : 'Toggle full preview'} className={`w-8 h-8 rounded-lg items-center justify-center bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 ${fullPreview ? 'flex' : 'hidden xl:flex'}`}>{fullPreview ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button>
             </div>
           </div>
-          <div className="rounded-xl overflow-hidden" style={{ background: '#f5f2ea', color: '#1c1a16', maxHeight: '82vh', overflowY: 'auto' }}>
+          {/* A11Y-007: this box scrolls (maxHeight + overflowY), so a keyboard user must be able to
+              focus it to scroll with the arrow / PageUp / PageDown keys (axe scrollable-region-focusable). */}
+          <div role="region" aria-label="Job card PDF preview" tabIndex={0} className="jc-paper rounded-xl overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37]" style={{ background: '#f5f2ea', color: '#1c1a16', maxHeight: '82vh', overflowY: 'auto' }}>
             {/* header */}
             <div style={{ background: '#161616', padding: '14px 16px', textAlign: 'center' }}>
               <p style={{ color: '#d4af37', fontWeight: 800, fontSize: 15, letterSpacing: '0.06em' }}>{demoMode ? DEMO_SHOP_NAME : previewShop.name}</p>
@@ -2285,7 +2294,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                   <p style={{ fontWeight: 800, fontSize: 9, borderLeft: '3px solid #d4af37', paddingLeft: 6, marginBottom: 5 }}>{title}</p>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}><tbody>
                     {rows.map(([k, v]) => (
-                      <tr key={k}><td style={{ border: '1px solid #cfc9ba', padding: '3px 6px', fontSize: 8, color: '#777', width: '38%' }}>{k}</td><td style={{ border: '1px solid #cfc9ba', padding: '3px 6px', fontSize: 9 }}>{v}</td></tr>
+                      <tr key={k}><td style={{ border: '1px solid #cfc9ba', padding: '3px 6px', fontSize: 8, color: '#5f5f5f', width: '38%' }}>{k}</td><td style={{ border: '1px solid #cfc9ba', padding: '3px 6px', fontSize: 9 }}>{v}</td></tr>
                     ))}
                   </tbody></table>
                 </div>
@@ -2295,8 +2304,8 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                 <div style={{ display: 'flex', gap: 10 }}>
                   {[['Complaint / Request', card.complaints], ['Diagnosis / Notes', card.diagnosis]].map(([t, arr]) => (
                     <div key={t} style={{ flex: 1 }}>
-                      <p style={{ fontSize: 7.5, color: '#888', marginBottom: 3 }}>{t.toUpperCase()}</p>
-                      {arr.filter(Boolean).length ? arr.filter(Boolean).map((c, i) => <p key={i} style={{ fontSize: 8.5, borderBottom: '1px dotted #bbb', padding: '2px 0' }}>{i + 1}. {c}</p>) : <p style={{ fontSize: 8.5, color: '#999' }}>—</p>}
+                      <p style={{ fontSize: 7.5, color: '#666', marginBottom: 3 }}>{t.toUpperCase()}</p>
+                      {arr.filter(Boolean).length ? arr.filter(Boolean).map((c, i) => <p key={i} style={{ fontSize: 8.5, borderBottom: '1px dotted #bbb', padding: '2px 0' }}>{i + 1}. {c}</p>) : <p style={{ fontSize: 8.5, color: '#666' }}>—</p>}
                     </div>
                   ))}
                 </div>
@@ -2309,7 +2318,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
               </div>
               <div style={{ marginBottom: 10 }}>
                 <p style={{ fontWeight: 800, fontSize: 9, borderLeft: '3px solid #d4af37', paddingLeft: 6, marginBottom: 5 }}>7. MULTI-POINT PREMIUM INSPECTION</p>
-                <p style={{ fontSize: 8 }}>Total checked: <b style={{ color: '#0a7c42' }}>{inspStats.done} / {inspStats.total}</b> · Pending: <b style={{ color: '#b8860b' }}>{inspStats.total - inspStats.done}</b></p>
+                <p style={{ fontSize: 8 }}>Total checked: <b style={{ color: '#0a7c42' }}>{inspStats.done} / {inspStats.total}</b> · Pending: <b style={{ color: '#7f5f06' }}>{inspStats.total - inspStats.done}</b></p>
               </div>
               <div style={{ marginBottom: 10 }}>
                 <p style={{ fontWeight: 800, fontSize: 9, borderLeft: '3px solid #d4af37', paddingLeft: 6, marginBottom: 5 }}>9. JOB STATUS</p>
@@ -2320,7 +2329,7 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
                   <div key={s} style={{ width: '44%', textAlign: 'center' }}><div style={{ borderTop: '1.5px solid #444', marginBottom: 3 }} /><p style={{ fontSize: 6.5, color: '#666' }}>{s}</p></div>
                 ))}
               </div>
-              <p style={{ textAlign: 'center', fontSize: 6.5, color: '#999', marginTop: 10 }}>( PLEASE TURN OVER FOR COMPREHENSIVE VEHICLE INSPECTION ) · Page 1 of 2</p>
+              <p style={{ textAlign: 'center', fontSize: 6.5, color: '#666', marginTop: 10 }}>( PLEASE TURN OVER FOR COMPREHENSIVE VEHICLE INSPECTION ) · Page 1 of 2</p>
             </div>
           </div>
         </div>

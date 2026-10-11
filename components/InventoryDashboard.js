@@ -951,7 +951,7 @@ function BulkReorderModal({ parts, onSubmit, onClose }) {
               <h3 className="text-base font-bold text-white flex items-center gap-2"><ShoppingCart size={18} className="text-[#d4af37]" /> Create Purchase Orders</h3>
               <p className="text-[11px] text-white/45 mt-0.5">Grouped by each part&apos;s own supplier â€” one PO created per group.</p>
             </div>
-            <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
+            <button aria-label="Close create purchase orders" onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
           </div>
           <div className="flex-1 overflow-y-auto px-5 py-4">
             <div className="space-y-4">
@@ -1241,7 +1241,7 @@ export function TreeSelect({ tree, value = [], onChange, placeholder = 'Selectâ€
             {value.slice(0, 8).map((leaf) => (
               <span key={leaf} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md text-[11px] font-semibold bg-[#d4af37]/15 text-[#d4af37] border border-[#d4af37]/30">
                 {leaf}
-                <button
+                <button aria-label={`Remove ${leaf}`}
                   type="button"
                   onClick={(e) => { e.stopPropagation(); removeChip(leaf); }}
                   className="hover:text-white"
@@ -1692,7 +1692,7 @@ export function SupplierPicker({ suppliers, row, onChange, onRemove, onSaveSuppl
                 <div className="w-24 flex-shrink-0">
                   <MiniSelect value={p.label} options={CONTACT_LABELS} onPick={(v) => newPhoneChange(i, 'label', v)} width={140} inputCls="px-1.5 py-2.5 rounded-xl text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60" />
                 </div>
-                <button type="button" onClick={() => removeNewPhone(i)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20"><X size={13} /></button>
+                <button aria-label="Remove phone number" type="button" onClick={() => removeNewPhone(i)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20"><X size={13} /></button>
               </div>
             ))}
             <p className="text-[10px] text-white/45">Select the radio to set the preferred number for reorders. Saved with the part.</p>
@@ -1729,7 +1729,7 @@ export function SupplierPicker({ suppliers, row, onChange, onRemove, onSaveSuppl
                     <div className="w-24 flex-shrink-0">
                       <MiniSelect value={p.label} options={CONTACT_LABELS} onPick={(v) => updateDraftPhone(i, 'label', v)} width={140} inputCls="px-1.5 py-2.5 rounded-xl text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60" />
                     </div>
-                    <button type="button" onClick={() => removeDraftPhone(i)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20"><X size={13} /></button>
+                    <button aria-label="Remove phone number" type="button" onClick={() => removeDraftPhone(i)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20"><X size={13} /></button>
                   </div>
                 ))}
               </div>
@@ -2375,7 +2375,7 @@ function PartModal({ part, inventory, suppliers = [], saving, onSave, onClose, o
                 <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden bg-white" style={{ border: (form.coverImage || 0) === idx ? '2px solid #d4af37' : '1px solid rgba(212,175,55,0.3)' }}>
                   <img src={img} alt="" className="w-full h-full object-contain" />
                   <button type="button" onClick={() => setCover(idx)} title="Set cover" className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center" style={{ color: (form.coverImage || 0) === idx ? '#d4af37' : '#fff' }}><Star size={9} fill={(form.coverImage || 0) === idx ? '#d4af37' : 'none'} /></button>
-                  <button type="button" onClick={() => removeImage(idx)} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={9} /></button>
+                  <button aria-label="Remove image" type="button" onClick={() => removeImage(idx)} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={9} /></button>
                   {(form.coverImage || 0) === idx && <span className="absolute bottom-0 inset-x-0 text-[6px] font-bold text-center text-black py-0.5" style={{ background: '#d4af37' }}>COVER</span>}
                 </div>
               ))}
@@ -3063,7 +3063,7 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
                     placeholder="e.g. Krishna Spares / Krishna Bros"
                     className={`${fieldInput} flex-1`}
                   />
-                  <button type="button" onClick={() => removeAltName(idx)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20 transition">
+                  <button aria-label="Remove alternate name" type="button" onClick={() => removeAltName(idx)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20 transition">
                     <X size={14} />
                   </button>
                 </div>
@@ -3095,7 +3095,7 @@ function SupplierModal({ supplier, saving, onSave, onClose, asPage = false, demo
                   <div className="w-28 flex-shrink-0">
                     <MiniSelect value={c.label} options={CONTACT_LABELS} onPick={(v) => updateContact(idx, 'label', v)} width={140} inputCls="px-2 py-2.5 rounded-xl text-xs outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 transition" />
                   </div>
-                  <button type="button" onClick={() => removeContact(idx)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20 transition">
+                  <button aria-label="Remove contact" type="button" onClick={() => removeContact(idx)} className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center bg-red-500/10 border border-red-500/25 text-red-400 hover:bg-red-500/20 transition">
                     <X size={14} />
                   </button>
                 </div>
@@ -3404,7 +3404,7 @@ function ImportModal({ existingSkus, onClose, onImported }) {
         <ModalBoundaryContext.Provider value={importModalRef}>
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-base font-bold text-white">Import parts from Excel / CSV</h3>
-          <button onClick={onClose} className="text-white/45 hover:text-white"><X size={18} /></button>
+          <button aria-label="Close import" onClick={onClose} className="text-white/45 hover:text-white"><X size={18} /></button>
         </div>
 
         {stage === 'upload' && (
@@ -3574,7 +3574,7 @@ function QuickPickModal({ mode, inventory, purchaseOrders = [], onPick, onPickPO
             {mode === 'sell' ? <ShoppingCart size={16} className="text-[#d4af37]" /> : <PackagePlus size={16} className="text-[#d4af37]" />}
             <div><h3 className="text-sm font-bold text-white">{title}</h3><p className="text-[11px] text-white/45">{hint}</p></div>
           </div>
-          <button onClick={onClose} className="text-white/45 hover:text-white"><X size={16} /></button>
+          <button aria-label="Close dialog" onClick={onClose} className="text-white/45 hover:text-white"><X size={16} /></button>
         </div>
         {pendingPOs.length > 0 && (
           <div className="p-3 pb-0">
@@ -9785,7 +9785,7 @@ export default function InventoryDashboard() {
                 className="w-full pl-9 pr-9 py-2.5 rounded-xl text-sm outline-none bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-[#d4af37]/50 transition"
               />
               {search && (
-                <button
+                <button aria-label="Clear search"
                   onClick={() => setSearch('')}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-white/45 hover:text-white/60"
                 >
@@ -10250,6 +10250,7 @@ export default function InventoryDashboard() {
                 <div className="flex items-center gap-2 text-xs text-white/45">
                   <span>Rows:</span>
                   <select
+                    aria-label="Rows per page"
                     value={invPerPage}
                     onChange={(e) => setInvPerPage(Number(e.target.value))}
                     className="bg-white/5 border border-white/15 rounded-lg px-2 py-1 text-white/80 focus:outline-none focus:border-[#d4af37]/50"
@@ -10900,7 +10901,7 @@ export default function InventoryDashboard() {
             <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
                 <h3 className="text-base font-bold text-white flex items-center gap-2"><RefreshCw size={16} className="text-[#d4af37]" /> Reorder part</h3>
-                <button onClick={() => setReorderDialog(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
+                <button aria-label="Close reorder dialog" onClick={() => setReorderDialog(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
               </div>
               <div className="p-5 space-y-3">
                 {d.existing && (
@@ -11013,7 +11014,7 @@ export default function InventoryDashboard() {
               <span className="relative">
                 <it.icon size={20} style={{ color: active ? '#d4af37' : 'rgba(var(--fg-rgb),0.5)' }} />
                 {it.badge > 0 && (
-                  <span className="absolute -top-1.5 -right-2 min-w-[15px] h-[15px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">{it.badge > 9 ? '9+' : it.badge}</span>
+                  <span className="absolute -top-1.5 -right-2 min-w-[15px] h-[15px] px-1 rounded-full bg-red-600 text-[9px] font-bold flex items-center justify-center" style={{ color: '#fff' }}>{it.badge > 9 ? '9+' : it.badge}</span>
                 )}
               </span>
               <span className="text-[10px] font-medium" style={{ color: active ? '#d4af37' : 'rgba(var(--fg-rgb),0.45)' }}>{it.label}</span>

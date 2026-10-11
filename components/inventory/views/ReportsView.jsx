@@ -137,13 +137,13 @@ function ReportTable({ head, rows, exportName, exportHead, q, csv, demoMode, dem
         <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-white/45">Showing {(page - 1) * per + 1}–{Math.min(page * per, sorted.length)} of {sorted.length.toLocaleString('en-IN')}</span>
-            <select value={per} onChange={(e) => setPer(Number(e.target.value))} className="h-7 px-1.5 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none">{[25, 50, 100].map((n) => <option key={n} value={n} style={{ background: '#141414' }}>{n} / page</option>)}</select>
+            <select aria-label="Rows per page" value={per} onChange={(e) => setPer(Number(e.target.value))} className="h-7 px-1.5 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none">{[25, 50, 100].map((n) => <option key={n} value={n} style={{ background: '#141414' }}>{n} / page</option>)}</select>
           </div>
           <div className="flex items-center gap-2">
             <button disabled={page <= 1} onClick={() => setPage(1)} className="h-7 px-2 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white/60 disabled:opacity-30">« First</button>
-            <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronLeft size={14} /></button>
+            <button aria-label="Previous page" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronLeft size={14} /></button>
             <span className="text-[11px] text-white/60">Page {page} / {pages}</span>
-            <button disabled={page >= pages} onClick={() => setPage((p) => p + 1)} className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronRight size={14} /></button>
+            <button aria-label="Next page" disabled={page >= pages} onClick={() => setPage((p) => p + 1)} className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronRight size={14} /></button>
             <button disabled={page >= pages} onClick={() => setPage(pages)} className="h-7 px-2 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white/60 disabled:opacity-30">Last »</button>
           </div>
         </div>
@@ -341,7 +341,7 @@ function ReportsView(props) {
     return (
       <div className="flex items-center gap-4">
         <div className="w-24 h-24 rounded-full flex-shrink-0 relative" style={{ background: `conic-gradient(${stops})` }} aria-hidden="true">
-          <div className="absolute inset-[30%] rounded-full flex items-center justify-center" style={{ background: '#141414' }}><span className="text-xs font-bold text-white/70 tabular-nums">{total}</span></div>
+          <div className="absolute inset-[30%] rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}><span className="text-xs font-bold text-white/70 tabular-nums">{total}</span></div>
         </div>
         <div className="flex-1 space-y-1">
           {data.map((d, i) => <div key={d.label + i} className="flex items-center gap-2 text-[11px]"><span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: d.color }} /><span className="text-white/60 flex-1 truncate">{d.label}</span><span className="text-white/70 tabular-nums">{d.value}</span></div>)}

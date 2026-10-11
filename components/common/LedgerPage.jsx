@@ -233,7 +233,7 @@ export default function LedgerPage({ title, icon, cards, items, typeOptions, sor
       {cards && <StatStrip cards={cards} />}
       <div className="flex flex-wrap gap-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('common.search', 'Search') + '…'} className={`${fld} flex-1 min-w-[140px]`} />
-        <select value={range} onChange={(e) => setRange(e.target.value)} className={fld}>
+        <select aria-label="Date range" value={range} onChange={(e) => setRange(e.target.value)} className={fld}>
           <option value="all" className="bg-[#111]">{t('ledger.range.allTime', 'All time')}</option>
           <option value="today" className="bg-[#111]">{t('billing.filter.today', 'Today')}</option>
           <option value="yesterday" className="bg-[#111]">{t('ledger.range.yesterday', 'Yesterday')}</option>
@@ -250,13 +250,13 @@ export default function LedgerPage({ title, icon, cards, items, typeOptions, sor
           </>
         )}
         {typeOptions && (
-          <select value={type} onChange={(e) => setType(e.target.value)} className={fld}>
+          <select aria-label="Filter by type" value={type} onChange={(e) => setType(e.target.value)} className={fld}>
             <option value="all" className="bg-[#111]">{t('ledger.allTypes', 'All types')}</option>
             {typeOptions.map((ty) => <option key={ty} value={ty} className="bg-[#111]">{ty}</option>)}
           </select>
         )}
         {sortOptions && (
-          <select value={sort} onChange={(e) => setSort(e.target.value)} className={fld}>
+          <select aria-label="Sort by" value={sort} onChange={(e) => setSort(e.target.value)} className={fld}>
             {sortOptions.map((s) => <option key={s} value={s} className="bg-[#111]">{s}</option>)}
           </select>
         )}
@@ -279,7 +279,7 @@ export default function LedgerPage({ title, icon, cards, items, typeOptions, sor
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-3">
             <div className="flex items-center gap-2 text-xs text-white/45">
               <span>{t('ledger.rows', 'Rows')}:</span>
-              <select value={perPage} onChange={(e) => setPerPage(Number(e.target.value))} className="bg-white/5 border border-white/15 rounded-lg px-2 py-1 text-white/80 focus:outline-none focus:border-[#d4af37]/50">
+              <select aria-label="Rows per page" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))} className="bg-white/5 border border-white/15 rounded-lg px-2 py-1 text-white/80 focus:outline-none focus:border-[#d4af37]/50">
                 {[10, 25, 50, 100].map((n) => <option key={n} value={n} style={{ background: 'var(--surface-2)' }}>{n}</option>)}
               </select>
               <span className="ml-1">{t('dynamic.showingRange', `${filtered.length === 0 ? 0 : (page - 1) * PER + 1}–${Math.min(page * PER, filtered.length)} of ${filtered.length}`, { from: filtered.length === 0 ? 0 : (page - 1) * PER + 1, to: Math.min(page * PER, filtered.length), total: filtered.length, entity: '' })}</span>

@@ -104,7 +104,7 @@ export function CheckoutModal({ part, onConfirm, onClose, isAdmin = false, asPag
             <h2 className="text-base font-bold text-white">Checkout — Sell Item</h2>
           </div>
           {!asPage && (
-          <button
+          <button aria-label="Close checkout"
             onClick={onClose}
             className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60 transition"
           >
@@ -393,7 +393,7 @@ export function StockAdjustModal({ part, history = [], onConfirm, onClose, asPag
         <ModalBoundaryContext.Provider value={modalRef}>
           <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.06)' }}>
             <div className="flex items-center gap-2"><PackageX size={18} className="text-amber-400" /><h2 className="text-base font-bold text-white">Adjust stock — {part.name}</h2></div>
-            <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
+            <button aria-label="Close stock adjustment" onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
           </div>
           <div className="p-5 space-y-4">{inner}</div>
         </ModalBoundaryContext.Provider>
@@ -440,7 +440,7 @@ export function BulkAdjustModal({ parts, onSubmit, onClose }) {
               <h3 className="text-base font-bold text-white flex items-center gap-2"><PackageX size={18} className="text-amber-400" /> Bulk Adjust Stock</h3>
               <p className="text-[11px] text-white/45 mt-0.5">Each part keeps its own reason — nothing here is applied to the whole batch at once.</p>
             </div>
-            <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
+            <button aria-label="Close bulk adjust stock" onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
           </div>
           <div className="flex-1 overflow-y-auto px-5 py-4">
             <div className="space-y-3">
@@ -453,7 +453,7 @@ export function BulkAdjustModal({ parts, onSubmit, onClose }) {
                       <span className="text-sm font-semibold text-white truncate">{r.part.name}</span>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <span className="text-[11px] text-white/45">In stock: {r.part.stock || 0}</span>
-                        <button onClick={() => removeRow(r.part.id)} className="w-6 h-6 rounded-lg flex items-center justify-center text-white/45 hover:text-red-400 hover:bg-red-500/10 transition"><X size={12} /></button>
+                        <button aria-label={`Remove ${r.part.name} from bulk adjustment`} onClick={() => removeRow(r.part.id)} className="w-6 h-6 rounded-lg flex items-center justify-center text-white/45 hover:text-red-400 hover:bg-red-500/10 transition"><X size={12} /></button>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -565,7 +565,7 @@ export function BulkReceiveModal({ inventory, suppliers = [], onSubmit, onClose 
         <ModalBoundaryContext.Provider value={modalRef}>
           <div className="flex-shrink-0 flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
             <h3 className="text-base font-bold text-white flex items-center gap-2"><Boxes size={18} className="text-[#d4af37]" /> Receive Shipment</h3>
-            <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
+            <button aria-label="Close receive shipment" onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 text-white/60"><X size={16} /></button>
           </div>
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -643,7 +643,7 @@ export function BulkReceiveModal({ inventory, suppliers = [], onSubmit, onClose 
                             <input type="number" min="0" step="0.01" value={l.unitCost} onChange={(e) => updateLine(l.part.id, { unitCost: e.target.value })} className="w-full px-2 py-1.5 rounded-lg text-sm text-right outline-none bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60" />
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <button onClick={() => removeLine(l.part.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-white/45 hover:text-red-400 hover:bg-red-500/10 transition"><Trash2 size={13} /></button>
+                            <button aria-label={`Remove ${l.part.name}`} onClick={() => removeLine(l.part.id)} className="w-7 h-7 rounded-lg flex items-center justify-center text-white/45 hover:text-red-400 hover:bg-red-500/10 transition"><Trash2 size={13} /></button>
                           </td>
                         </tr>
                       );

@@ -16,7 +16,7 @@ import { FILTER_FIELD_CLS } from '../common/fieldStyles';
 import { getLocalCapacityStatus } from '../../services/localCapacityService';
 import { SEMANTIC } from '../../constants/ui';
 import { useTranslation } from '../../lib/i18n';
-import { asArray, isIndianMobile, MOBILE_ERROR } from '../../lib/format';
+import { asArray, isIndianMobile, mobileInput, MOBILE_ERROR, waNumber } from '../../lib/format';
 
 const inputCls = FILTER_FIELD_CLS;
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
@@ -239,7 +239,7 @@ export default function RemindersModule({ customers = [], invoices = [], jobCard
       <div className="flex flex-col sm:flex-row gap-2 mb-3">
         <div className="relative flex-1">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('reminders.searchPlaceholder', 'Search reminders by customer, detail, type…')} className={`${inputCls} pl-9`} />
+          <input aria-label="Search reminders" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('reminders.searchPlaceholder', 'Search reminders by customer, detail, type…')} className={`${inputCls} pl-9`} />
         </div>
         {/* Dropdown-standardization pass: converted from native <select> to MiniSelect
             — a native <select>'s open popup is OS-rendered and can't be themed to
@@ -279,8 +279,8 @@ export default function RemindersModule({ customers = [], invoices = [], jobCard
               meta={`${[r.customer, r.detail].filter(Boolean).join(' · ')}${r.effectiveDue ? ` · due ${r.effectiveDue}` : ''}`}
               muted={r.isDone}
               actions={[
-                r.phone && { icon: MessageCircle, title: 'WhatsApp', href: `https://wa.me/91${(r.phone || '').replace(/\D/g, '')}`, target: '_blank', rel: 'noreferrer', className: 'bg-white/5 border border-white/10 text-emerald-400/80 hover:bg-white/10' },
-                r.phone && { icon: PhoneCall, title: 'Call', href: `tel:+91${(r.phone || '').replace(/\D/g, '')}` },
+                r.phone && { icon: MessageCircle, title: 'WhatsApp', href: `https://wa.me/${waNumber(r.phone)}`, target: '_blank', rel: 'noreferrer', className: 'bg-white/5 border border-white/10 text-emerald-400/80 hover:bg-white/10' },
+                r.phone && { icon: PhoneCall, title: 'Call', href: `tel:+${waNumber(r.phone)}` },
                 !r.isDone
                   ? { icon: Check, title: 'Mark complete', onClick: () => complete(r), className: 'bg-emerald-500/12 border border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/20' }
                   : { icon: Clock, title: 'Reopen', onClick: () => reopen(r) },
@@ -312,16 +312,18 @@ function AddReminderModal({ customers, onAdd, onClose }) {
   // <main>'s z-10 and loses to the mobile bottom-nav (z-[80]) — on a phone the
   // sheet's Cancel / Add Reminder buttons ended up hidden behind the nav bar.
   // Same fix already used for CustomerWizard, LedgerPage and the Job Card drawer.
+  // QA VAL-001/VAL-003: shared mobile rule (lib/format.js); the field stays optional.
+  const phoneErr = f.phone && !isIndianMobile(f.phone) ? MOBILE_ERROR : null;
   if (typeof document === 'undefined') return null;
   return createPortal(
     <div className="fixed inset-0 z-[130] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(3px)' }} onClick={onClose}>
       <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
           <h3 className="text-base font-bold text-white">Add Reminder</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button>
+          <button aria-label="Close add reminder" onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button>
         </div>
         <div className="p-5 space-y-3">
-          <input value={f.title} onChange={set('title')} placeholder="Title" className={inputCls} />
+          <input aria-label="Reminder title" value={f.title} onChange={set('title')} placeholder="Title" className={inputCls} />
           <div className="grid grid-cols-2 gap-2">
             {/* Universal dropdown architecture review — native <select> is a browser-owned
                 popup, immune to this app's theming/containment. */}
@@ -335,12 +337,13 @@ function AddReminderModal({ customers, onAdd, onClose }) {
               inputCls={inputCls}
             />
           </div>
-          <input value={f.detail} onChange={set('detail')} placeholder="Detail / note" className={inputCls} />
+          <input aria-label="Reminder detail" value={f.detail} onChange={set('detail')} placeholder="Detail / note" className={inputCls} />
           <div className="grid grid-cols-2 gap-2">
-            <input value={f.customer} onChange={set('customer')} placeholder="Customer (optional)" className={inputCls} />
-            <input value={f.phone} onChange={(e) => setF((s) => ({ ...s, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} placeholder="Phone (optional)" className={`${inputCls} ${f.phone && !isIndianMobile(f.phone) ? 'border-red-500/60' : ''}`} />
+            <input aria-label="Customer name (optional)" value={f.customer} onChange={set('customer')} placeholder="Customer (optional)" className={inputCls} />
+            <input value={f.phone} inputMode="numeric" aria-label="Customer mobile number (optional)" onChange={(e) => setF((s) => ({ ...s, phone: mobileInput(e.target.value) }))} placeholder="Phone (optional)" className={`${inputCls} ${f.phone && !isIndianMobile(f.phone) ? 'border-red-500/60' : ''}`} />
           </div>
-          <div><label className="text-[11px] text-white/45">Due date</label><input type="date" value={f.due} onChange={set('due')} className={inputCls} style={{ colorScheme: 'dark' }} /></div>
+          {phoneErr && <p className="text-[10px] text-red-400 -mt-1" role="alert">{phoneErr}</p>}
+          <div><label className="text-[11px] text-white/45">Due date</label><input aria-label="Due date" type="date" value={f.due} onChange={set('due')} className={inputCls} style={{ colorScheme: 'dark' }} /></div>
         </div>
         <div className="flex gap-2 px-5 py-4" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.08)', background: 'var(--surface-2)', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
           <button onClick={onClose} className="flex-1 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white/80">Cancel</button>
