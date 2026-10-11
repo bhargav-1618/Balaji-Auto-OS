@@ -139,7 +139,7 @@ function AuditLogPanel({ auditLog, demoMode, actorEmail, capacityRefreshTick = 0
       />
       <div className="flex flex-col sm:flex-row gap-2 mb-3">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search part, user, action…" className={`${fld} flex-1`} />
-        <select value={filter} onChange={(e) => setFilter(e.target.value)} className={fld}>
+        <select aria-label="Filter audit log by type" value={filter} onChange={(e) => setFilter(e.target.value)} className={fld}>
           {AUDIT_FILTERS.map((f) => <option key={f.key} value={f.key} className="bg-[#111]">{f.label}</option>)}
         </select>
       </div>
@@ -542,7 +542,7 @@ function AnalyticsView({ inventory, sales = [], rollups = [], restocks = [], aud
         title="Monthly Profit Trend"
         icon={TrendingUp}
         right={
-          <select value={range} onChange={(e) => setRange(e.target.value)} className="px-2.5 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 outline-none">
+          <select aria-label="Profit trend period" value={range} onChange={(e) => setRange(e.target.value)} className="px-2.5 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 outline-none">
             <option value="30d" className="bg-[#111]">Last 30 Days</option>
             <option value="3m" className="bg-[#111]">Last 3 Months</option>
             <option value="6m" className="bg-[#111]">Last 6 Months</option>
@@ -607,7 +607,7 @@ function AnalyticsView({ inventory, sales = [], rollups = [], restocks = [], aud
         right={
           <div className="flex items-center gap-2">
             <ASearch value={ppSearch} onChange={setPpSearch} placeholder="Search parts…" />
-            <select value={ppSort} onChange={(e) => setPpSort(e.target.value)} className="px-2 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 outline-none">
+            <select aria-label="Sort parts by" value={ppSort} onChange={(e) => setPpSort(e.target.value)} className="px-2 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 outline-none">
               <option value="profit" className="bg-[#111]">Total Profit</option>
               <option value="margin" className="bg-[#111]">Profit Margin %</option>
               <option value="revenue" className="bg-[#111]">Revenue</option>
@@ -874,7 +874,7 @@ function AnalyticsView({ inventory, sales = [], rollups = [], restocks = [], aud
         right={
           <div className="flex items-center gap-2 flex-wrap">
             <ASearch value={dsSearch} onChange={setDsSearch} placeholder="Search…" />
-            <select value={dsAge} onChange={(e) => setDsAge(+e.target.value)} className="px-2 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 outline-none">
+            <select aria-label="Dead stock minimum age" value={dsAge} onChange={(e) => setDsAge(+e.target.value)} className="px-2 py-1.5 rounded-lg text-xs bg-white/5 border border-white/10 text-white focus:border-[#d4af37]/60 outline-none">
               <option value={0} className="bg-[#111]">All ages</option>
               <option value={30} className="bg-[#111]">30+ days</option>
               <option value={60} className="bg-[#111]">60+ days</option>

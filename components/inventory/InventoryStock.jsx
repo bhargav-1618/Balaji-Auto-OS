@@ -235,7 +235,7 @@ export default function InventoryStock({
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/45" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search part, SKU, supplier, reference…" className={`${fld} w-full pl-8`} />
           </div>
-          <select value={range} onChange={(e) => setRange(e.target.value)} className={fld}>
+          <select aria-label="Date range" value={range} onChange={(e) => setRange(e.target.value)} className={fld}>
             <option value="all" className="bg-[#111]">All time</option>
             <option value="today" className="bg-[#111]">Today</option>
             <option value="yesterday" className="bg-[#111]">Yesterday</option>

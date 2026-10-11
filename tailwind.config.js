@@ -26,8 +26,8 @@ module.exports = {
         },
       },
       fontFamily: {
-        cinzel: ['Cinzel', 'serif'],
-        montserrat: ['Montserrat', 'sans-serif'],
+        cinzel: ['var(--font-cinzel)', 'Cinzel', 'serif'],
+        montserrat: ['var(--font-montserrat)', 'Montserrat', 'sans-serif'],
       },
       animation: {
         'pulse-red': 'pulse-red 1.5s ease-in-out infinite',

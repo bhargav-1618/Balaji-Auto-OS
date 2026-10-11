@@ -50,7 +50,11 @@ for (const n of ['123', '1234567890', '5234567890', '0123456789', '987654321',
 ok('mobileInput strips +91 and caps at 10', mobileInput('+91 9876543210') === '9876543210');
 ok('mobileInput leaves a plain 10-digit number untouched', mobileInput('9876543210') === '9876543210');
 ok('mobileInput drops the country code from a 12-digit paste', mobileInput('919876543210') === '9876543210');
-ok('mobileInput truncates over-long input to 10', mobileInput('98765432109999') === '9876543210');
+// QA DATA-001: an over-long paste used to be silently cut to its first 10 digits — a DIFFERENT, valid-looking
+// number would then be saved. It is now kept (capped at 15) so isIndianMobile rejects it and the user sees the error.
+ok('mobileInput does NOT silently cut an over-long paste to a different 10 digits (DATA-001)', mobileInput('98765432109999') === '98765432109999' && isIndianMobile(mobileInput('98765432109999')) === false);
+ok('mobileInput drops the trunk 0 of an 11-digit paste (09876543210 -> 9876543210)', mobileInput('09876543210') === '9876543210');
+ok('isIndianMobile rejects a repeated-digit number (9999999999) — QA VAL-003', isIndianMobile('9999999999') === false && isIndianMobile('9876543210') === true);
 
 // ── EMAIL: valid real addresses (no whitelist — arbitrary domains allowed) ─
 for (const e of ['customer@gmail.com', 'john.doe@gmail.com', 'name+service@gmail.com',

@@ -434,7 +434,7 @@ function POCreateForm({ suppliers, inventory, formatINR, onClose, onSubmit }) {
       <ModalBoundaryContext.Provider value={modalRef}>
         <div className="sticky top-0 flex items-center justify-between px-5 py-4" style={{ background: 'var(--surface-3)', borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
           <h3 className="text-base font-bold text-white">New purchase order</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
+          <button aria-label="Close new purchase order" onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-4">
           {poPending && (
@@ -468,7 +468,7 @@ function POCreateForm({ suppliers, inventory, formatINR, onClose, onSubmit }) {
                 groups={partGroups || undefined}
                 options={partGroups ? undefined : flatPartOptions}
               /></div>
-              <button onClick={addLine} disabled={!partPick} className="h-[42px] px-4 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-95 disabled:opacity-40 flex items-center gap-1"><Plus size={15} /></button>
+              <button aria-label="Add part to purchase order" onClick={addLine} disabled={!partPick} className="h-[42px] px-4 rounded-xl text-sm font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e] active:scale-95 disabled:opacity-40 flex items-center gap-1"><Plus size={15} /></button>
             </div>
           </div>
 
@@ -486,7 +486,7 @@ function POCreateForm({ suppliers, inventory, formatINR, onClose, onSubmit }) {
                   <input type="number" min="1" value={l.qty} onChange={(e) => setLine(l.partId, 'qty', e.target.value)} className="w-full px-2 py-1.5 rounded-lg text-sm text-center bg-white/5 border border-white/10 text-white" title="Qty" />
                   <input type="number" min="0" value={l.unitCost} onChange={(e) => setLine(l.partId, 'unitCost', e.target.value)} className="w-full px-2 py-1.5 rounded-lg text-sm text-center bg-white/5 border border-white/10 text-white" title="Unit cost" />
                   <span className="text-sm text-white/70 text-right tabular-nums">{inr(num(l.qty) * num(l.unitCost))}</span>
-                  <button onClick={() => removeLine(l.partId)} className="w-7 h-7 rounded-lg flex items-center justify-center text-white/45 hover:text-red-400 hover:bg-red-500/10 justify-self-end"><Trash2 size={13} /></button>
+                  <button aria-label="Remove line" onClick={() => removeLine(l.partId)} className="w-7 h-7 rounded-lg flex items-center justify-center text-white/45 hover:text-red-400 hover:bg-red-500/10 justify-self-end"><Trash2 size={13} /></button>
                 </div>
               ))}
               <div className="flex justify-end text-sm font-semibold text-white/80 pt-1">Total: <span className="text-emerald-400 ml-2">{inr(total)}</span></div>
@@ -602,7 +602,7 @@ function ReceivePOForm({ po, inventory, formatINR, onClose, onSubmit }) {
             <h3 className="text-base font-bold text-white">Receive {po.poNumber}</h3>
             <p className="text-[11px] text-white/45 mt-0.5">{po.supplierName}</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
+          <button aria-label="Close receive shipment" onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-3">
           {receivePending && (

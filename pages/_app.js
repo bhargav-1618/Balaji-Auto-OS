@@ -2,6 +2,7 @@
 import { useEffect } from 'react';
 import Head from 'next/head';
 import { Toaster } from 'react-hot-toast';
+import { Cinzel, Montserrat } from 'next/font/google';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -19,6 +20,15 @@ function LocalizedApp({ children }) {
   return <LanguageProvider demoMode={demoMode}>{children}</LanguageProvider>;
 }
 
+// PERF-001: the two brand faces are self-hosted by next/font (downloaded at build time, served
+// from this origin, preloaded, font-display: swap). The old setup pulled a Google Fonts
+// stylesheet in through BOTH a CSS @import and a <link>, which blocked first paint on a
+// third-party round-trip. next/font renames the family (e.g. "__Montserrat_a1b2c3"), so the
+// real name is published as CSS variables on :root below — a plain global rule rather than a
+// wrapper class so portalled UI (modals, toasts on document.body) inherits it too.
+const cinzel = Cinzel({ subsets: ['latin'], weight: ['400', '600', '700'], display: 'swap' });
+const montserrat = Montserrat({ subsets: ['latin'], weight: ['400', '500', '600'], display: 'swap' });
+
 export default function App({ Component, pageProps }) {
   // ISSUE 4: one global focus trap covers all 38 overlays. See lib/focusTrap.js.
   useEffect(() => installGlobalFocusTrap(), []);
@@ -31,6 +41,12 @@ export default function App({ Component, pageProps }) {
         .register('/sw.js')
         .catch((err) => console.error('SW registration failed:', err));
     };
+    // PERF-001 follow-on: this effect used to run BEFORE `load` only because the blocking Google
+    // Fonts stylesheet held `load` back. With the fonts self-hosted, `load` can already have
+    // fired by the time React's passive effect runs, and a listener added then never fires —
+    // the worker would silently never register (no offline shell). Register straight away when
+    // the document is already complete, otherwise wait for `load` as before.
+    if (document.readyState === 'complete') { onLoad(); return undefined; }
     window.addEventListener('load', onLoad);
     return () => window.removeEventListener('load', onLoad);
   }, []);
@@ -47,6 +63,9 @@ export default function App({ Component, pageProps }) {
         <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
         <meta name="mobile-web-app-capable" content="yes" />
       </Head>
+      <style jsx global>{`
+        :root { --font-cinzel: ${cinzel.style.fontFamily}; --font-montserrat: ${montserrat.style.fontFamily}; }
+      `}</style>
       <Component {...pageProps} />
       {/*
         Universal Notification Architecture — the ONE notification surface for the
@@ -79,7 +98,7 @@ export default function App({ Component, pageProps }) {
             color: '#e5e5e5',
             border: '1px solid rgba(212,175,55,0.25)',
             borderRadius: '12px',
-            fontFamily: 'Montserrat, sans-serif',
+            fontFamily: 'var(--font-montserrat), Montserrat, sans-serif',
             fontSize: '13px',
             fontWeight: 500,
             // Issue 17: keep long error text inside the toast — wrap, cap width,

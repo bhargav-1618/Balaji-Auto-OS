@@ -150,7 +150,7 @@ export default function AlertsView({ alerts, readIds, archivedIds, onMarkRead, o
       </div>
       <div className="flex flex-wrap gap-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('alerts.searchPlaceholder', 'Search alerts by title, detail, module…')} className={`${fld} flex-1 min-w-[140px]`} />
-        <select value={cat} onChange={(e) => setCat(e.target.value)} className={fld}>
+        <select aria-label="Filter alerts by category" value={cat} onChange={(e) => setCat(e.target.value)} className={fld}>
           {[['all', t('common.all', 'All')], ['unread', t('common.unread', 'Unread')], ['read', t('alerts.category.acknowledged', 'Acknowledged')], ['critical', t('alerts.category.critical', 'Critical')], ['inventory', t('alerts.category.inventory', 'Inventory')], ['customer', t('alerts.category.customer', 'Customer')], ['vehicle', t('alerts.category.vehicle', 'Vehicle')], ['billing', t('alerts.category.billing', 'Billing')], ['supplier', t('alerts.category.supplier', 'Supplier')]].map(([v, l]) => <option key={v} value={v} className="bg-[#111]">{l}</option>)}
         </select>
       </div>
@@ -203,7 +203,7 @@ export default function AlertsView({ alerts, readIds, archivedIds, onMarkRead, o
           <div className="w-full sm:max-w-md h-full overflow-y-auto dark-scroll" style={{ background: 'var(--surface-1)', borderLeft: '1px solid rgba(212,175,55,0.2)' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between p-5" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
               <div className="min-w-0"><div className="flex items-center gap-2"><h3 className="text-base font-bold text-white">{drawer.title}</h3><span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: `${sevColor[drawer.sev] || '#888'}22`, color: sevColor[drawer.sev] || '#888' }}>{drawer.sev}</span></div><p className="text-[11px] text-white/45 mt-1">{drawer.sub}</p></div>
-              <button onClick={() => setDrawer(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10 flex-shrink-0"><X size={17} /></button>
+              <button aria-label="Close panel" onClick={() => setDrawer(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10 flex-shrink-0"><X size={17} /></button>
             </div>
             <div className="p-5 space-y-4">
               <div className="grid grid-cols-2 gap-2 text-[11px]">

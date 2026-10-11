@@ -8,7 +8,7 @@ import React from 'react';
 // exactly (every other BootSplash call site is unaffected).
 export default function BootSplash({ label = 'Loading your workshop…', timedOut = false, onRetry = null }) {
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'radial-gradient(120% 120% at 50% 0%, #141110 0%, #0a0a0a 60%)', fontFamily: 'Montserrat, system-ui, sans-serif' }}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'radial-gradient(120% 120% at 50% 0%, #141110 0%, #0a0a0a 60%)', fontFamily: 'var(--font-montserrat), Montserrat, system-ui, sans-serif' }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
         <div style={{ width: 76, height: 76, borderRadius: 18, overflow: 'hidden', background: 'linear-gradient(135deg,#e8c84a,#aa801e)', boxShadow: '0 8px 40px rgba(212,175,55,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} className="boot-logo">
           <img src="/icons/icon-512.png" alt="Sri Baba Balaji Maruti Care" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />

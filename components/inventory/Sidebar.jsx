@@ -140,7 +140,13 @@ function Sidebar({ activeTab, setActiveTab, collapsed, setCollapsed, mobileOpen,
                 </button>
               )}
               {collapsed && group.header && <div className="mx-3 my-2 h-px" style={{ background: 'rgba(var(--fg-rgb),0.07)' }} />}
-              <div className="grid transition-all duration-200 ease-out" style={{ gridTemplateRows: open ? '1fr' : '0fr' }}>
+              {/* A11Y-005: 0fr + overflow-hidden only hides a collapsed group visually — its buttons stayed in the
+                  tab order, so focus vanished onto invisible items. `inert` + visibility:hidden remove them from the
+                  tab order AND the accessibility tree. The visibility delay is spelled out (not left to
+                  transition-all, which engines time differently): hidden only AFTER the 200ms collapse animation,
+                  visible immediately on expand. `inert` needs no timing at all — WebKit applies the inherited
+                  visibility to the item buttons (which carry their own transition-all) up to ~400ms late. */}
+              <div className="grid" inert={open ? undefined : ''} style={{ gridTemplateRows: open ? '1fr' : '0fr', visibility: open ? 'visible' : 'hidden', transition: `grid-template-rows 200ms ease-out, visibility 0s linear ${open ? '0s' : '200ms'}` }}>
                 <div className="overflow-hidden"><div className="space-y-0.5 pt-0.5">{items.map((it) => renderItem(it))}</div></div>
               </div>
             </div>

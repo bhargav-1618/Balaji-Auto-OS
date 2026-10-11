@@ -20,7 +20,7 @@
   overflow-x: hidden;
   background: var(--char-0);
   color: #f4f1ea;
-  font-family: Inter, Montserrat, system-ui, sans-serif;
+  font-family: Inter, var(--font-montserrat), Montserrat, system-ui, sans-serif;
 }
 
 /* ── ENVIRONMENT: the photograph ──────────────────────────────────────────

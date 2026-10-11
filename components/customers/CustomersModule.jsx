@@ -18,6 +18,7 @@ import DetailHero from '../common/DetailHero';
 import { appScrollTo, appScrollY } from '../../lib/appScroll';
 import VehicleMakeModelSelect from '../common/VehicleMakeModelSelect';
 import { num, asArray, isIndianMobile, isValidEmail, mobileInput, MOBILE_ERROR, EMAIL_ERROR } from '../../lib/format';
+import useLabelledControl from '../common/useLabelledControl';
 import { SEMANTIC } from '../../constants/ui';
 import { writeSheet, stamp } from '../../lib/exportSheet';
 import { exportReportPDF } from '../../lib/pdfTheme';
@@ -194,10 +195,11 @@ function Avatar({ name, size = 9 }) {
   return <span className="rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style={{ background: 'rgba(212,175,55,0.15)', color: '#d4af37', width: size * 4, height: size * 4 }}>{(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase()}</span>;
 }
 function Field({ label, req, error, children, className = '' }) {
+  const { id, content } = useLabelledControl(children); // QA A11Y-003: label is tied to its input
   return (
     <div className={`min-w-0 ${className}`}>
-      <label className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}{req && <span className="text-red-400"> *</span>}</label>
-      {children}
+      <label htmlFor={id} className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}{req && <span className="text-red-400"> *</span>}</label>
+      {content}
       {error && <p className="text-[10px] text-red-400 mt-1">{error}</p>}
     </div>
   );
@@ -212,10 +214,11 @@ function Field({ label, req, error, children, className = '' }) {
 // duplicates). Conflating the two made every duplicate hint read as "you cannot
 // save this," even the ones (email, name) that are legitimately allowed to.
 function F({ label, req, error, warn, children, className = '' }) {
+  const { id, content } = useLabelledControl(children); // QA A11Y-003: label is tied to its input
   return (
     <div className={`min-w-0 ${className}`}>
-      <label className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}{req && <span className="text-red-400"> *</span>}</label>
-      {children}
+      <label htmlFor={id} className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}{req && <span className="text-red-400"> *</span>}</label>
+      {content}
       {error && <p className="text-[10px] text-red-400 mt-1">{error}</p>}
       {!error && warn && <p className="text-[10px] mt-1" style={{ color: '#fbbf24' }}>{warn}</p>}
     </div>
@@ -628,6 +631,10 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
         // free-text fallback input, which has no such guard of its own.
         state: cleanText(f.state),
         gst: f.gst.toUpperCase(),
+        // Persist the canonical 10 digits (a legacy "+91 98765 43210" is tidied on its next
+        // save). An invalid number never reaches here — validate() has already stopped it.
+        phone: f.phone,
+        altPhone: f.altPhone,
         address: composedAddr,
         vehicles: cleanVehicles,
         defaultVehicleId: cleanVehicles.some((v) => v.id === f.defaultVehicleId) ? f.defaultVehicleId : '',
@@ -669,7 +676,7 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
 
   const phone91 = (val, onCh, ph, opts = {}) => (
     <div className="flex gap-2"><span className="flex items-center px-3 rounded-xl text-sm text-white/60 bg-white/5 border border-white/10 flex-shrink-0">+91</span>
-      <input ref={opts.inputRef} value={val} inputMode="numeric" onChange={(e) => onCh(mobileInput(e.target.value))} placeholder={ph} className={`${inputCls} ${opts.hasError ? 'border-red-500/70' : ''}`} /></div>
+      <input ref={opts.inputRef} value={val} inputMode="numeric" aria-label={opts.label} onChange={(e) => onCh(mobileInput(e.target.value))} placeholder={ph} className={`${inputCls} ${opts.hasError ? 'border-red-500/70' : ''}`} /></div>
   );
 
   // Defect #49 (reopened again) — the #49 fix below (h-[100dvh]/max-h-[calc(100dvh-2rem)])
@@ -771,8 +778,8 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
                         the app. Same 17 types, no removals. */}
                     <MiniSelect value={f.type} placeholder="Select customer type" options={TYPES} onPick={(t) => set({ type: t })} />
                   </F>
-                  <F label="Primary Mobile" req error={phoneRequiredErr || phoneErr || (dupPhone ? 'Already exists' : null)}>{phone91(f.phone, (v) => set({ phone: v }), 'Enter 10 digit number', { inputRef: phoneInputRef, hasError: !!(phoneRequiredErr || phoneErr || dupPhone) })}</F>
-                  <F label="Alternate Mobile" error={altPhoneErr}>{phone91(f.altPhone, (v) => set({ altPhone: v }), 'Enter 10 digit number', { hasError: !!altPhoneErr })}</F>
+                  <F label="Primary Mobile" req error={phoneRequiredErr || phoneErr || (dupPhone ? 'Already exists' : null)}>{phone91(f.phone, (v) => set({ phone: v }), 'Enter 10 digit number', { inputRef: phoneInputRef, hasError: !!(phoneRequiredErr || phoneErr || dupPhone), label: 'Primary mobile number' })}</F>
+                  <F label="Alternate Mobile" error={altPhoneErr}>{phone91(f.altPhone, (v) => set({ altPhone: v }), 'Enter 10 digit number', { hasError: !!altPhoneErr, label: 'Alternate mobile number' })}</F>
                   <F label="Email" error={emailErr} warn={!emailErr && dupEmail ? 'Already used by another customer — allowed (e.g. shared family/company inbox), just double-check' : null}><input value={f.email} onChange={(e) => set({ email: sanitizeSingleLine(e.target.value).trim() })} placeholder="Enter email address" className={inputCls} /></F>
                   <F label="Occupation"><input value={f.occupation} onChange={(e) => set({ occupation: sanitizeSingleLine(e.target.value) })} placeholder="Enter occupation" className={inputCls} /></F>
                   <F label="Reference By"><input value={f.referenceBy} onChange={(e) => set({ referenceBy: sanitizeSingleLine(e.target.value) })} placeholder="Select or enter reference" className={inputCls} /></F>
@@ -903,7 +910,7 @@ function CustomerWizard({ initial, existing, canManage, onSave, onClose, demoMod
                           <div key={pi} className="relative w-16 h-16 rounded-lg overflow-hidden group" style={{ border: (v.coverPhoto || 0) === pi ? '2px solid #d4af37' : '1px solid rgba(var(--fg-rgb),0.1)' }}>
                             <img src={p} alt="" className="w-full h-full object-cover" />
                             <button type="button" onClick={() => setVeh(v.id, { coverPhoto: pi })} title="Set as cover" className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center" style={{ color: (v.coverPhoto || 0) === pi ? '#d4af37' : '#fff' }}><Star size={9} fill={(v.coverPhoto || 0) === pi ? '#d4af37' : 'none'} /></button>
-                            <button type="button" onClick={() => setVeh(v.id, { photos: v.photos.filter((_, x) => x !== pi), coverPhoto: 0 })} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={9} /></button>
+                            <button aria-label="Remove photo" type="button" onClick={() => setVeh(v.id, { photos: v.photos.filter((_, x) => x !== pi), coverPhoto: 0 })} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={9} /></button>
                             {(v.coverPhoto || 0) === pi && <span className="absolute bottom-0 inset-x-0 text-[7px] font-bold text-center text-black py-0.5" style={{ background: '#d4af37' }}>COVER</span>}
                           </div>
                         ))}
@@ -1016,7 +1023,7 @@ function VehicleModal({ initial, onSave, onClose }) {
       <ModalBoundaryContext.Provider value={modalRef}>
         <div className="flex items-center justify-between px-5 py-3.5 flex-shrink-0" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
           <h3 className="text-base font-bold text-white">{initial.regNo ? 'Edit Vehicle' : 'Add Vehicle'}</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button>
+          <button aria-label="Close vehicle form" onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:bg-white/10"><X size={17} /></button>
         </div>
         {/* Reordered into the same logical dependency chain as the Customer Wizard's
             vehicle step (was: Registration, Fuel, Make, Model, Variant — Fuel came before
@@ -1773,7 +1780,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
         <div className="mb-2.5">
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('customers.searchPlaceholder', 'Search by Customer Name, Phone Number, Email, Customer ID or Vehicle Registration')} className={`${inputCls} pl-9 w-full`} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('customers.searchPlaceholder', 'Search by Customer Name, Phone Number, Email, Customer ID or Vehicle Registration')} className={`${inputCls} pl-9 w-full`} aria-label="Search customers" />
           </div>
         </div>
         {/* PARENT-DRIVEN layout — same mechanism as Vehicles' toolbar
@@ -1944,9 +1951,9 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
                   <span className="text-[10px] text-white/45">{(c.vehicles || []).length} {t('customers.vehicleCount', (c.vehicles || []).length === 1 ? 'vehicle' : 'vehicles')} · {billsOf(c)} {t('customers.bills', billsOf(c) === 1 ? 'bill' : 'bills')} · {inr(c.totalSpent)}</span>
                   {num(c.outstanding) > 0 && <span className="text-[10px] text-red-400 font-semibold">{t('customers.due', 'Due')} {inr(c.outstanding)}</span>}
                   <div className="ml-auto flex gap-1.5" onClick={(e) => e.stopPropagation()}>
-                    {canManage && <button onClick={() => openCustomerEditor(c)} disabled={c.id === selId && lease.status === 'held'} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-40 disabled:cursor-not-allowed">{c.id === selId && lease.status === 'held' ? <Lock size={13} /> : <Edit3 size={13} />}</button>}
-                    {canManage && <button onClick={() => onCreateInvoice?.(c)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><Receipt size={13} /></button>}
-                    {c.phone && <button onClick={() => window.open(`https://wa.me/91${c.phone}`, '_blank')} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-emerald-400/70"><MessageCircle size={13} /></button>}
+                    {canManage && <button aria-label="Edit customer" onClick={() => openCustomerEditor(c)} disabled={c.id === selId && lease.status === 'held'} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-40 disabled:cursor-not-allowed">{c.id === selId && lease.status === 'held' ? <Lock size={13} /> : <Edit3 size={13} />}</button>}
+                    {canManage && <button aria-label="Create invoice" onClick={() => onCreateInvoice?.(c)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><Receipt size={13} /></button>}
+                    {c.phone && <button aria-label="Send WhatsApp message" onClick={() => window.open(`https://wa.me/91${c.phone}`, '_blank')} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-emerald-400/70"><MessageCircle size={13} /></button>}
                     {/* Archive/Delete (and the other secondary actions) were only ever
                         reachable from the desktop table's "⋮" menu — the mobile card had
                         no equivalent, so on a phone there was no way to archive or delete
@@ -1992,7 +1999,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
               <button disabled={safePage <= 1} onClick={() => setPage((p) => Math.min(p, pageCount) - 1)} aria-label="Previous page" className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronLeft size={14} /></button>
               <span className="text-xs text-white/60">{safePage} / {pageCount}</span>
               <button disabled={safePage >= pageCount} onClick={() => setPage((p) => Math.min(p, pageCount) + 1)} aria-label="Next page" className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronRight size={14} /></button>
-              <select value={perPage} onChange={(e) => setPerPage(Number(e.target.value))} className="h-8 px-2 rounded-lg text-xs bg-white/5 border border-white/10 text-white/70 outline-none">{[10, 25, 50, 100].map((n) => <option key={n} value={n} style={{ background: '#141414' }}>{n} {t('common.perPage', '/ page')}</option>)}</select>
+              <select aria-label="Customers per page" value={perPage} onChange={(e) => setPerPage(Number(e.target.value))} className="h-8 px-2 rounded-lg text-xs bg-white/5 border border-white/10 text-white/70 outline-none">{[10, 25, 50, 100].map((n) => <option key={n} value={n} style={{ background: '#141414' }}>{n} {t('common.perPage', '/ page')}</option>)}</select>
             </div>
           </div>
         </div>
@@ -2120,8 +2127,8 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
                           <span className="text-[11px] font-bold px-2 py-0.5 rounded-md" style={{ background: 'rgba(212,175,55,0.12)', color: '#d4af37' }}>{v.regNo}</span>
                           {canManage && (
                             <div className="flex gap-1 ml-auto">
-                              <button onClick={() => setEditVeh(v)} className="w-6 h-6 rounded-md flex items-center justify-center text-white/45 hover:bg-white/10"><Edit3 size={11} /></button>
-                              <button onClick={async () => { if (demoMode) { notify.info('Demo Mode — This action is disabled. Demo data resets automatically after reload.'); return; } if (await confirmDialog({ title: `Remove ${v.regNo}?`, message: 'This vehicle will be removed from the customer.', danger: true, confirmText: 'Remove' })) setCustomers((prev) => prev.map((c) => (c.id === selected.id ? { ...c, vehicles: c.vehicles.filter((x) => x.id !== v.id) } : c))); }} className="w-6 h-6 rounded-md flex items-center justify-center text-red-400/60 hover:bg-red-500/10"><Trash2 size={11} /></button>
+                              <button aria-label="Edit vehicle" onClick={() => setEditVeh(v)} className="w-6 h-6 rounded-md flex items-center justify-center text-white/45 hover:bg-white/10"><Edit3 size={11} /></button>
+                              <button aria-label="Delete vehicle" onClick={async () => { if (demoMode) { notify.info('Demo Mode — This action is disabled. Demo data resets automatically after reload.'); return; } if (await confirmDialog({ title: `Remove ${v.regNo}?`, message: 'This vehicle will be removed from the customer.', danger: true, confirmText: 'Remove' })) setCustomers((prev) => prev.map((c) => (c.id === selected.id ? { ...c, vehicles: c.vehicles.filter((x) => x.id !== v.id) } : c))); }} className="w-6 h-6 rounded-md flex items-center justify-center text-red-400/60 hover:bg-red-500/10"><Trash2 size={11} /></button>
                             </div>
                           )}
                         </div>
@@ -2254,7 +2261,7 @@ export default function CustomersModule({ demoMode = false, demoCanDelete = fals
                               <Upload size={11} /> {doc ? 'Replace' : 'Upload'}
                               <input type="file" accept="image/*" capture="environment" className="hidden" disabled={docBusy} onChange={(e) => { const file = e.target.files[0]; uploadDocument(type, file); e.target.value = ''; }} />
                             </label>
-                            {doc && <button onClick={() => removeDocument(type)} className="w-7 h-7 rounded-lg flex items-center justify-center text-red-400/60 hover:bg-red-500/10 flex-shrink-0"><Trash2 size={12} /></button>}
+                            {doc && <button aria-label="Remove document" onClick={() => removeDocument(type)} className="w-7 h-7 rounded-lg flex items-center justify-center text-red-400/60 hover:bg-red-500/10 flex-shrink-0"><Trash2 size={12} /></button>}
                           </div>
                         )}
                       </div>

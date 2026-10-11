@@ -13,10 +13,10 @@ export default function NotFound() {
           minHeight: '100dvh', display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24,
           background: '#0d0d0d', color: '#e5e5e5', textAlign: 'center',
-          fontFamily: 'Montserrat, system-ui, sans-serif',
+          fontFamily: 'var(--font-montserrat), Montserrat, system-ui, sans-serif',
         }}
       >
-        <p style={{ fontSize: 56, fontWeight: 700, color: '#d4af37', margin: 0, fontFamily: 'Cinzel, serif' }}>404</p>
+        <p style={{ fontSize: 56, fontWeight: 700, color: '#d4af37', margin: 0, fontFamily: 'var(--font-cinzel), Cinzel, serif' }}>404</p>
         <h1 style={{ fontSize: 18, margin: 0, fontWeight: 600 }}>This page doesn’t exist</h1>
         <p style={{ fontSize: 13, color: 'rgba(229,229,229,0.55)', margin: 0, maxWidth: 380 }}>
           The link may be out of date. Everything in the workshop app lives on the dashboard.

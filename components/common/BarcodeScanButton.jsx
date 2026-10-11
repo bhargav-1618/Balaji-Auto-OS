@@ -34,7 +34,7 @@ export default function BarcodeScanButton({ onDetect, className, label = 'Scan B
           <div className="w-full max-w-sm rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
               <h3 className="text-sm font-bold text-white flex items-center gap-2"><ScanLine size={15} className="text-[#d4af37]" /> Scan Barcode</h3>
-              <button onClick={handleClose} className="text-white/45 hover:text-white"><X size={16} /></button>
+              <button aria-label="Close barcode scanner" onClick={handleClose} className="text-white/45 hover:text-white"><X size={16} /></button>
             </div>
             <div className="relative aspect-square bg-black">
               <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />

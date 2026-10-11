@@ -38,7 +38,8 @@ import {
   Copy, Archive, MoreVertical, IndianRupee, Clock, Printer, MapPin,
 } from 'lucide-react';
 import { variantsFor, FUELS, TRANSMISSIONS, BODY_TYPES, DRIVE_TYPES, OWNERSHIP_TYPES } from '../../lib/vehicleCatalog';
-import { num, asArray, isIndianMobile, mobileInput, MOBILE_ERROR } from '../../lib/format';
+import { num, asArray, isIndianMobile, mobileInput, MOBILE_ERROR, sanitizeMobileInput, toCanonicalMobile } from '../../lib/format';
+import useLabelledControl from '../common/useLabelledControl';
 
 const inputCls = FILTER_FIELD_CLS;
 const cardStyle = { background: 'rgba(var(--fg-rgb),0.03)', border: '1px solid rgba(var(--fg-rgb),0.07)' };
@@ -158,7 +159,8 @@ function Cascade({ make, model, variant, onChange }) {
   );
 }
 function WField({ label, req, error, children, className = '' }) {
-  return <div className={`min-w-0 ${className}`}><label className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}{req && <span className="text-red-400"> *</span>}</label>{children}{error && <p className="text-[10px] text-red-400 mt-1">{error}</p>}</div>;
+  const { id, content } = useLabelledControl(children); // QA A11Y-003: label is tied to its input
+  return <div className={`min-w-0 ${className}`}><label htmlFor={id} className="block text-[10px] uppercase tracking-wide text-white/45 mb-1.5">{label}{req && <span className="text-red-400"> *</span>}</label>{content}{error && <p className="text-[10px] text-red-400 mt-1">{error}</p>}</div>;
 }
 
 const emptyVehicle = () => ({
@@ -323,6 +325,7 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
   const dupVin = f.vin && existingVehicles.some((v) => v.id !== f.id && v.vin && normId(v.vin) === normId(f.vin));
   const dupEngine = f.engineNo && existingVehicles.some((v) => v.id !== f.id && v.engineNo && normId(v.engineNo) === normId(f.engineNo));
   const odoErr = initial.odometer && num(f.odometer) < num(initial.odometer) ? `Odometer cannot be below previous (${initial.odometer} km)` : null;
+  // QA DATA-001: this field used the same cut-to-10-digits copy as the customer forms.
 
   const validate = () => {
     if (!f.regNo.trim()) { setStep(0); return 'Registration number is required'; }
@@ -344,7 +347,7 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
     savingRef.current = true; // H-7: only a real save attempt clears the draft on unmount
     setSaving(true);
     try {
-      await onSave({ ...f, regNo: f.regNo.toUpperCase(), model: f.model, vehicle: combinedModel(f) });
+      await onSave({ ...f, regNo: f.regNo.toUpperCase(), model: f.model, vehicle: combinedModel(f), agentPhone: toCanonicalMobile(f.agentPhone) });
     } finally {
       saveLockRef.current = false;
       // On success the parent has already unmounted us (setEdit(null)) before this
@@ -493,7 +496,7 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
                           {custShown.map((c, i) => <button key={c.id} type="button" onMouseEnter={() => setCustHi(i)} onClick={() => { set({ customerId: c.id }); setCustOpen(false); setCustQ(''); }} className={`w-full text-left px-3 py-2 ${i === custHi ? 'bg-white/10' : 'hover:bg-white/5'}`}><p className="text-sm text-white/85">{c.name}</p><p className="text-[10px] text-white/45">{c.code} · {c.phone}</p></button>)}
                           {custShown.length === 0 && <p className="px-3 py-3 text-xs text-white/45">No customers found.</p>}
                         </div>
-                        {onQuickCustomer && <button type="button" onClick={() => { setQuickCust({ name: /^\d+$/.test(custQ.trim()) ? '' : custQ.trim(), phone: /^\d+$/.test(custQ.trim()) ? custQ.trim() : '' }); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-bold text-[#d4af37] hover:bg-white/5" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.07)', flex: '0 0 auto' }}><Plus size={13} /> Create New Customer</button>}
+                        {onQuickCustomer && <button type="button" onClick={() => { setQuickCust({ name: /^\d+$/.test(custQ.trim()) ? '' : custQ.trim(), phone: /^\d+$/.test(custQ.trim()) ? sanitizeMobileInput(custQ.trim()) : '' }); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-bold text-[#d4af37] hover:bg-white/5" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.07)', flex: '0 0 auto' }}><Plus size={13} /> Create New Customer</button>}
                       </DropdownPanel>
                     )}
                   </div>
@@ -506,7 +509,8 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
                       <label className="block text-[10px] uppercase tracking-wide text-white/45 mb-1">Name *</label>
                       <input autoFocus value={quickCust.name} onChange={(e) => setQuickCust((s) => ({ ...s, name: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') submitQuickCust(); }} placeholder="Customer name" className={`${inputCls} mb-3`} />
                       <label className="block text-[10px] uppercase tracking-wide text-white/45 mb-1">Phone</label>
-                      <input value={quickCust.phone} onChange={(e) => setQuickCust((s) => ({ ...s, phone: e.target.value.replace(/[^\d+\-\s]/g, '') }))} onKeyDown={(e) => { if (e.key === 'Enter') submitQuickCust(); }} placeholder="Phone number" className={`${inputCls} mb-4`} />
+                      <input value={quickCust.phone} inputMode="numeric" aria-label="Customer mobile number" aria-invalid={!!(quickCust.phone && !isIndianMobile(quickCust.phone) ? MOBILE_ERROR : null)} onChange={(e) => setQuickCust((s) => ({ ...s, phone: sanitizeMobileInput(e.target.value) }))} onKeyDown={(e) => { if (e.key === 'Enter') submitQuickCust(); }} placeholder="10-digit mobile (optional)" className={`${inputCls} ${(quickCust.phone && !isIndianMobile(quickCust.phone) ? MOBILE_ERROR : null) ? 'border-red-500/70 mb-1' : 'mb-4'}`} />
+                      {(quickCust.phone && !isIndianMobile(quickCust.phone) ? MOBILE_ERROR : null) && <p className="text-[10px] text-red-400 mb-3" role="alert">{(quickCust.phone && !isIndianMobile(quickCust.phone) ? MOBILE_ERROR : null)}</p>}
                       <div className="grid grid-cols-2 gap-2">
                         <button type="button" onClick={() => setQuickCust(null)} className="h-10 rounded-xl text-xs font-bold bg-white/5 border border-white/10 text-white/80">Cancel</button>
                         <button type="button" onClick={submitQuickCust} className="h-10 rounded-xl text-xs font-bold text-black bg-gradient-to-r from-[#d4af37] to-[#aa801e]">Add &amp; Select</button>
@@ -544,7 +548,7 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
                     <div key={pi} className="relative w-20 h-20 rounded-lg overflow-hidden" style={{ border: (f.coverPhoto || 0) === pi ? '2px solid #d4af37' : '1px solid rgba(var(--fg-rgb),0.1)' }}>
                       <img src={p} alt="" className="w-full h-full object-cover" />
                       <button type="button" onClick={() => set({ coverPhoto: pi })} title="Cover" className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-black/70 flex items-center justify-center" style={{ color: (f.coverPhoto || 0) === pi ? '#d4af37' : '#fff' }}><Star size={10} fill={(f.coverPhoto || 0) === pi ? '#d4af37' : 'none'} /></button>
-                      <button type="button" onClick={() => set({ photos: f.photos.filter((_, x) => x !== pi), coverPhoto: 0 })} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
+                      <button aria-label="Remove photo" type="button" onClick={() => set({ photos: f.photos.filter((_, x) => x !== pi), coverPhoto: 0 })} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
                       {(f.coverPhoto || 0) === pi && <span className="absolute bottom-0 inset-x-0 text-[7px] font-bold text-center text-black py-0.5" style={{ background: '#d4af37' }}>COVER</span>}
                     </div>
                   ))}
@@ -567,7 +571,7 @@ function VehicleWizard({ initial, customers = [], existingVehicles = [], onSave,
                       <span className="text-white/80 truncate flex items-center gap-2"><FileText size={13} className="text-white/45" /> {d.name}</span>
                       <div className="flex gap-2 flex-shrink-0">
                         <a href={d.data} download={d.name} className="text-white/50 hover:text-white"><FileDown size={13} /></a>
-                        <button type="button" onClick={() => set({ documents: f.documents.filter((_, x) => x !== di) })} className="text-red-400/60 hover:text-red-400"><Trash2 size={13} /></button>
+                        <button aria-label="Remove document" type="button" onClick={() => set({ documents: f.documents.filter((_, x) => x !== di) })} className="text-red-400/60 hover:text-red-400"><Trash2 size={13} /></button>
                       </div>
                     </div>
                   ))}
@@ -1239,7 +1243,7 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
         <div className="mb-2.5">
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/45" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('vehicles.searchPlaceholder', 'Search by Registration, Vehicle, Owner, VIN, Chassis, Engine…')} className={`${inputCls} pl-9 w-full`} />
+            <input aria-label="Search vehicles" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('vehicles.searchPlaceholder', 'Search by Registration, Vehicle, Owner, VIN, Chassis, Engine…')} className={`${inputCls} pl-9 w-full`} />
           </div>
         </div>
         {/* PARENT-DRIVEN layout: outer row is `flex` with the filter cluster set to
@@ -1413,8 +1417,8 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
                     {/* PH24 — singular/plural: "1 visit", not "1 visits" (matches the app's own `x === 1 ? …` idiom, e.g. the customer card's vehicle count) */}
                     <span className="text-[10px] text-white/45">{visitsOf(r)} {t('customers.col.visits', visitsOf(r) === 1 ? 'visit' : 'visits').toLowerCase()} · {inr(revenueOf(r))}</span>
                     <div className="ml-auto flex gap-1.5" onClick={(e) => e.stopPropagation()}>
-                      {canManage && <button onClick={() => openEdit(r)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><Edit3 size={13} /></button>}
-                      <button onClick={() => onCreateInvoice?.({ id: r.ownerId, name: r.owner, phone: r.ownerPhone, vehicles: [r] })} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><IndianRupee size={13} /></button>
+                      {canManage && <button aria-label="Edit vehicle" onClick={() => openEdit(r)} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><Edit3 size={13} /></button>}
+                      <button aria-label="Create invoice" onClick={() => onCreateInvoice?.({ id: r.ownerId, name: r.owner, phone: r.ownerPhone, vehicles: [r] })} className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60"><IndianRupee size={13} /></button>
                     </div>
                   </div>
                 </div>
@@ -1425,7 +1429,7 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3" style={{ borderTop: '1px solid rgba(var(--fg-rgb),0.06)' }}>
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-white/45">{t('dynamic.showingRange', `Showing ${filtered.length ? (safePage - 1) * perPage + 1 : 0}–${Math.min(safePage * perPage, filtered.length)} of ${filtered.length}`, { from: filtered.length ? (safePage - 1) * perPage + 1 : 0, to: Math.min(safePage * perPage, filtered.length), total: filtered.length, entity: '' })}</span>
-              <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }} className="h-7 px-1.5 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none">{[10, 25, 50, 100].map((n) => <option key={n} value={n} style={{ background: '#141414' }}>{n} {t('common.perPage', '/ page')}</option>)}</select>
+              <select aria-label="Vehicles per page" value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }} className="h-7 px-1.5 rounded-lg text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none">{[10, 25, 50, 100].map((n) => <option key={n} value={n} style={{ background: '#141414' }}>{n} {t('common.perPage', '/ page')}</option>)}</select>
             </div>
             <div className="flex items-center gap-2">
               <button disabled={safePage <= 1} onClick={() => setPage((p) => Math.min(p, pageCount) - 1)} aria-label="Previous page" className="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-white/60 disabled:opacity-30"><ChevronLeft size={14} /></button>
@@ -1622,7 +1626,7 @@ export default function VehiclesModule({ reminderDays = DEFAULT_REMINDER_DAYS, d
           <div className="w-full max-w-md max-h-[85vh] flex flex-col rounded-2xl overflow-hidden" style={{ background: 'var(--surface-1)', border: '1px solid rgba(212,175,55,0.25)' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-3.5 flex-shrink-0" style={{ borderBottom: '1px solid rgba(var(--fg-rgb),0.08)' }}>
               <h4 className="text-sm font-bold text-white">Full History · {historyFor.regNo}</h4>
-              <button type="button" onClick={() => setHistoryFor(null)} className="text-white/45 hover:text-white"><X size={18} /></button>
+              <button aria-label="Close vehicle history" type="button" onClick={() => setHistoryFor(null)} className="text-white/45 hover:text-white"><X size={18} /></button>
             </div>
             <div className="flex-1 overflow-y-auto dark-scroll p-5 space-y-2">
               {[...(historyFor.history || [])].reverse().map((h, i) => (

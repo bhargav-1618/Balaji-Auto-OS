@@ -62,6 +62,68 @@ export const toNum = (v) => {
 export const p2 = (v) => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
 
 /**
+ * INPUT LIMITS — QA VAL-004.
+ *
+ * A quantity of 1,000,000,000 at a rate of ₹1,000,000 produced a grand total of
+ * ₹1,180,000,000,000,000 with no warning. And past ~1e154 the product overflows to
+ * Infinity, which the arithmetic below turns into NaN. No product rule existed, so these
+ * ceilings are deliberately generous — far above anything a workshop bills, low enough to
+ * catch a slipped key or a pasted number:
+ *
+ *   quantity / hours per line   1,00,000
+ *   rate / flat charge          ₹1,00,00,000   (1 crore)
+ *   line amount (qty × rate)    ₹10,00,00,000  (10 crore, before discount)
+ *   invoice grand total         ₹100,00,00,000 (100 crore)
+ *
+ * They are enforced at input (a value over the limit is REFUSED with a visible message —
+ * never silently clamped, which would change the bill without telling anyone) and again at
+ * save (drafts restored from storage and job-card imports never pass through the inputs).
+ * The money arithmetic itself is untouched; these functions only decide whether a value is
+ * allowed to reach it.
+ */
+export const INVOICE_LIMITS = Object.freeze({
+  MAX_QTY: 100000,
+  MAX_RATE: 10000000,
+  MAX_LINE_AMOUNT: 100000000,
+  MAX_INVOICE_TOTAL: 1000000000,
+});
+
+const inLakhs = (n) => n.toLocaleString('en-IN');
+
+/**
+ * Would setting `field` ('qty' | 'rate') to `nextValue` on `line` break a limit?
+ * Returns the message to show the user, or null when the value is acceptable.
+ * Non-numeric input is not a limit problem (the field's own character filter handles it);
+ * Infinity / over-long digit strings ARE, because they overflow the arithmetic.
+ */
+export function fieldLimitError(field, nextValue, line = {}) {
+  const v = Number(nextValue);
+  if (Number.isNaN(v)) return null;
+  const { MAX_QTY, MAX_RATE, MAX_LINE_AMOUNT } = INVOICE_LIMITS;
+  if (field === 'qty') {
+    if (!Number.isFinite(v) || v > MAX_QTY) return `Quantity can’t exceed ${inLakhs(MAX_QTY)}.`;
+    if (v * toNum(line.rate) > MAX_LINE_AMOUNT) return `Line amount (quantity × rate) can’t exceed ₹${inLakhs(MAX_LINE_AMOUNT)}.`;
+  } else if (field === 'rate') {
+    if (!Number.isFinite(v) || v > MAX_RATE) return `Rate can’t exceed ₹${inLakhs(MAX_RATE)}.`;
+    if (toNum(line.qty) * v > MAX_LINE_AMOUNT) return `Line amount (quantity × rate) can’t exceed ₹${inLakhs(MAX_LINE_AMOUNT)}.`;
+  }
+  return null;
+}
+
+/** First limit a whole line breaks (for the save-time guard), or null. */
+export function lineLimitError(line) {
+  return fieldLimitError('qty', line?.qty, { rate: line?.rate }) || fieldLimitError('rate', line?.rate, { qty: line?.qty });
+}
+
+/** Is a computed grand total safe to persist? (finite, and within the invoice ceiling). */
+export function totalLimitError(grand) {
+  if (!Number.isFinite(grand) || grand > INVOICE_LIMITS.MAX_INVOICE_TOTAL) {
+    return `Invoice total can’t exceed ₹${inLakhs(INVOICE_LIMITS.MAX_INVOICE_TOTAL)}. Check the quantities and rates.`;
+  }
+  return null;
+}
+
+/**
  * Totals for an invoice, DERIVED FROM ITS LINE ITEMS.
  *
  * THE canonical invoice-money implementation (Refactor Phase 5 — Stage 1 spec §7).
