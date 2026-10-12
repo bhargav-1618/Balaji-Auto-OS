@@ -31,13 +31,37 @@ console.log('\nPERF-001 — no render-blocking third-party font stylesheet\n');
 const doc = read('pages/_document.js'), css = read('styles/globals.css'), app = read('pages/_app.js');
 ok('_document.js no longer links the Google Fonts stylesheet or preconnects to it', !/fonts\.googleapis\.com|fonts\.gstatic\.com/.test(doc));
 ok('globals.css no longer @imports it (an @import is render-blocking AND chained behind the CSS)', !/@import\s+url\(['"]?https?:/.test(css));
-ok('no source file anywhere pulls fonts from fonts.googleapis.com any more',
-  [...walk(path.join(ROOT, 'components')), ...walk(path.join(ROOT, 'pages')), ...walk(path.join(ROOT, 'styles'))].every((f) => !/fonts\.googleapis\.com/.test(fs.readFileSync(f, 'utf8'))));
-ok('_app.js self-hosts Cinzel + Montserrat via next/font/google', /import \{ Cinzel, Montserrat \} from 'next\/font\/google';/.test(app));
-ok('both faces keep the weights the UI uses (Cinzel 400/600/700, Montserrat 400/500/600) and font-display: swap',
-  /Cinzel\(\{ subsets: \['latin'\], weight: \['400', '600', '700'\], display: 'swap' \}\)/.test(app) && /Montserrat\(\{ subsets: \['latin'\], weight: \['400', '500', '600'\], display: 'swap' \}\)/.test(app));
-ok('the real (hashed) family names are published as --font-cinzel / --font-montserrat on :root (global, so portals inherit)',
-  /<style jsx global>\{`\s*:root \{ --font-cinzel: \$\{cinzel\.style\.fontFamily\}; --font-montserrat: \$\{montserrat\.style\.fontFamily\}; \}\s*`\}<\/style>/.test(app));
+const stripComments = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+ok('no source file anywhere loads fonts from fonts.googleapis.com / fonts.gstatic.com (comments aside)',
+  [...walk(path.join(ROOT, 'components')), ...walk(path.join(ROOT, 'pages')), ...walk(path.join(ROOT, 'styles')), ...walk(path.join(ROOT, 'lib'))].every((f) => !/fonts\.(googleapis|gstatic)\.com/.test(stripComments(fs.readFileSync(f, 'utf8')))));
+
+console.log('\nPERF-001 follow-up — fonts are read from the repo, so a build needs no network\n');
+// A CI build failed intermittently inside next/font/google ("An error occurred in next/font") because it
+// DOWNLOADED the fonts from Google at build time. next/font/local reads committed files instead.
+ok('NOTHING imports next/font/google (it makes the production build depend on Google being reachable)',
+  [...walk(path.join(ROOT, 'components')), ...walk(path.join(ROOT, 'pages')), ...walk(path.join(ROOT, 'lib')), ...walk(path.join(ROOT, 'context'))].every((f) => !/next\/font\/google/.test(stripComments(fs.readFileSync(f, 'utf8')))));
+ok('_app.js loads the brand faces with next/font/local', /import localFont from 'next\/font\/local';/.test(app) && (app.match(/= localFont\(\{/g) || []).length === 4);
+const FILES = ['cinzel-latin', 'cinzel-latin-ext', 'montserrat-latin', 'montserrat-latin-ext'];
+ok('all four font files are committed under styles/fonts and are real WOFF2 files (wOF2 signature, sane size)',
+  FILES.every((n) => { const p = path.join(ROOT, 'styles/fonts', n + '.woff2'); if (!fs.existsSync(p)) return false; const b = fs.readFileSync(p); return b.slice(0, 4).toString('latin1') === 'wOF2' && b.length > 5000 && b.length < 200000; }));
+ok('.gitattributes marks woff/woff2 as binary (the repo normalises line endings on every file, which would corrupt a font)', /^\*\.woff2 binary$/m.test(read('.gitattributes')) && /^\*\.woff binary$/m.test(read('.gitattributes')));
+ok('every source path in _app.js points at a font file that exists', [...app.matchAll(/path: '(\.\.\/styles\/fonts\/[^']+)'/g)].length === 4 && [...app.matchAll(/path: '(\.\.\/styles\/fonts\/[^']+)'/g)].every((m) => fs.existsSync(path.join(ROOT, 'pages', m[1]))));
+ok('the SIL Open Font License texts ship with the fonts (the licence requires it)', ['OFL-Cinzel.txt', 'OFL-Montserrat.txt'].every((n) => /SIL OPEN FONT LICENSE Version 1\.1/.test(fs.readFileSync(path.join(ROOT, 'styles/fonts', n), 'utf8'))));
+ok('weights: Cinzel variable axis 400-900 and Montserrat 100-900 cover every weight the UI uses (400/500/600/700), font-display: swap',
+  (app.match(/weight: '400 900'/g) || []).length === 2 && (app.match(/weight: '100 900'/g) || []).length === 2 && (app.match(/display: 'swap'/g) || []).length === 4);
+ok('each family has a latin AND a latin-ext face with the right unicode-range (declarations)', (app.match(/prop: 'unicode-range'/g) || []).length === 4);
+const rangeOf = (name) => { const m = app.match(new RegExp("cinzel-latin-ext|" + name + "[\\s\\S]{0,260}?unicode-range', value: '([^']+)'")); return m ? m[1] : ''; };
+const inRange = (range, cp) => range.split(',').some((r) => { const [lo, hi] = r.trim().replace(/U\+/g, '').split('-').map((x) => parseInt(x, 16)); return cp >= lo && cp <= (hi ?? lo); });
+const extRange = (app.match(/montserrat-latin-ext\.woff2[\s\S]{0,260}?unicode-range', value: '([^']+)'/) || [])[1] || '';
+const latinRange = (app.match(/montserrat-latin\.woff2[\s\S]{0,260}?unicode-range', value: '([^']+)'/) || [])[1] || '';
+ok('THE RUPEE SIGN (U+20B9) is served by the latin-ext face and is NOT in the latin face — this app prints it everywhere', inRange(extRange, 0x20B9) && !inRange(latinRange, 0x20B9));
+ok('plain English text, digits, "€" and curly quotes stay in the latin face', [0x41, 0x7A, 0x30, 0x39, 0x20AC, 0x2019, 0x201C].every((cp) => inRange(latinRange, cp)));
+ok('the large latin-ext files are NOT preloaded (only fetched when a ₹ / accented letter is on screen)', (stripComments(app).match(/preload: false/g) || []).length === 2);
+ok('adjustFontFallback is off, otherwise a metric-adjusted system font would sit between the two faces and steal the ₹ from latin-ext', (app.match(/adjustFontFallback: false/g) || []).length === 4);
+ok('the family names are published as --font-cinzel / --font-montserrat on :root as a two-face stack (global, so portals inherit)',
+  /const FONT_CINZEL = \`\$\{cinzelLatin\.style\.fontFamily\}, \$\{cinzelExt\.style\.fontFamily\}\`;/.test(app)
+  && /const FONT_MONTSERRAT = \`\$\{montserratLatin\.style\.fontFamily\}, \$\{montserratExt\.style\.fontFamily\}\`;/.test(app)
+  && /<style jsx global>\{\`\s*:root \{ --font-cinzel: \$\{FONT_CINZEL\}; --font-montserrat: \$\{FONT_MONTSERRAT\}; \}\s*\`\}<\/style>/.test(app));
 ok('body font uses the variable with the plain name as a fallback', /font-family: var\(--font-montserrat\), 'Montserrat', sans-serif;/.test(css));
 const tw = read('tailwind.config.js');
 ok('Tailwind font-cinzel / font-montserrat resolve through the variables', /cinzel: \['var\(--font-cinzel\)', 'Cinzel', 'serif'\]/.test(tw) && /montserrat: \['var\(--font-montserrat\)', 'Montserrat', 'sans-serif'\]/.test(tw));
