@@ -2,7 +2,7 @@
 import { useEffect } from 'react';
 import Head from 'next/head';
 import { Toaster } from 'react-hot-toast';
-import { Cinzel, Montserrat } from 'next/font/google';
+import localFont from 'next/font/local';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -20,14 +20,52 @@ function LocalizedApp({ children }) {
   return <LanguageProvider demoMode={demoMode}>{children}</LanguageProvider>;
 }
 
-// PERF-001: the two brand faces are self-hosted by next/font (downloaded at build time, served
-// from this origin, preloaded, font-display: swap). The old setup pulled a Google Fonts
-// stylesheet in through BOTH a CSS @import and a <link>, which blocked first paint on a
-// third-party round-trip. next/font renames the family (e.g. "__Montserrat_a1b2c3"), so the
-// real name is published as CSS variables on :root below — a plain global rule rather than a
-// wrapper class so portalled UI (modals, toasts on document.body) inherits it too.
-const cinzel = Cinzel({ subsets: ['latin'], weight: ['400', '600', '700'], display: 'swap' });
-const montserrat = Montserrat({ subsets: ['latin'], weight: ['400', '500', '600'], display: 'swap' });
+// PERF-001: the two brand faces are self-hosted — and since the "fonts from Google at build time"
+// variant made the production BUILD depend on fonts.googleapis.com being reachable (a CI build
+// failed intermittently with "An error occurred in next/font"), the font files now live in this
+// repo (styles/fonts, SIL Open Font License texts alongside) and next/font/local only reads them.
+// The build needs no network, nothing is fetched at runtime from a third party, and the output
+// is byte-identical from build to build.
+//
+// Each family is a variable font shipped as the same two subsets Google served, with the same
+// unicode-range: "latin", and "latin-ext" (which holds the rupee sign U+20B9 — this app prints it
+// everywhere). Two faces per family are exposed as ONE font stack below: the browser picks a
+// glyph from the first face that has it, so ₹ falls through to the latin-ext file, which is only
+// downloaded when such a character is actually on screen (preload: false).
+// next/font renames each family (e.g. "__Montserrat_a1b2c3"), so the real names are published as
+// CSS variables on :root below — a plain global rule rather than a wrapper class so portalled UI
+// (modals, toasts on document.body) inherits them too.
+// (adjustFontFallback is off: it would insert a metric-adjusted system font BETWEEN the two faces
+// and steal the rupee glyph from the latin-ext file.)
+// NOTE: next/font requires these option objects to be inline literals — they cannot be shared.
+const cinzelLatin = localFont({
+  src: [{ path: '../styles/fonts/cinzel-latin.woff2', weight: '400 900', style: 'normal' }],
+  display: 'swap',
+  adjustFontFallback: false,
+  declarations: [{ prop: 'unicode-range', value: 'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD' }],
+});
+const cinzelExt = localFont({
+  src: [{ path: '../styles/fonts/cinzel-latin-ext.woff2', weight: '400 900', style: 'normal' }],
+  display: 'swap',
+  preload: false,
+  adjustFontFallback: false,
+  declarations: [{ prop: 'unicode-range', value: 'U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF' }],
+});
+const montserratLatin = localFont({
+  src: [{ path: '../styles/fonts/montserrat-latin.woff2', weight: '100 900', style: 'normal' }],
+  display: 'swap',
+  adjustFontFallback: false,
+  declarations: [{ prop: 'unicode-range', value: 'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD' }],
+});
+const montserratExt = localFont({
+  src: [{ path: '../styles/fonts/montserrat-latin-ext.woff2', weight: '100 900', style: 'normal' }],
+  display: 'swap',
+  preload: false,
+  adjustFontFallback: false,
+  declarations: [{ prop: 'unicode-range', value: 'U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF' }],
+});
+const FONT_CINZEL = `${cinzelLatin.style.fontFamily}, ${cinzelExt.style.fontFamily}`;
+const FONT_MONTSERRAT = `${montserratLatin.style.fontFamily}, ${montserratExt.style.fontFamily}`;
 
 export default function App({ Component, pageProps }) {
   // ISSUE 4: one global focus trap covers all 38 overlays. See lib/focusTrap.js.
@@ -64,7 +102,7 @@ export default function App({ Component, pageProps }) {
         <meta name="mobile-web-app-capable" content="yes" />
       </Head>
       <style jsx global>{`
-        :root { --font-cinzel: ${cinzel.style.fontFamily}; --font-montserrat: ${montserrat.style.fontFamily}; }
+        :root { --font-cinzel: ${FONT_CINZEL}; --font-montserrat: ${FONT_MONTSERRAT}; }
       `}</style>
       <Component {...pageProps} />
       {/*
