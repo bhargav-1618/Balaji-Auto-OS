@@ -60,9 +60,19 @@ offending field (or set `requireVerifiedEmail` to `false`), and sign in again.
   Firebase SDK. The per-person permissions in Settings (cost prices, exports) hide things in the UI; they
   are **not** enforced by the rules. Only deletes, role changes, backups/reset and app settings are
   admin-only on the server side.
-* **The public `/verify` page does not verify anything.** It displays whatever is in the link, so a link
-  can be forged. Do not treat it as proof that an invoice is genuine. Making it trustworthy needs a design
-  decision (a signed token, or a minimal public verification record).
+* **`/verify` and the QR codes on PDFs.** New customer-copy invoice and job-card PDFs carry a QR link of
+  the form `/verify?id=<32 random hex>` and nothing else. The id points at a small record
+  (`verifications/<id>`: document number, date, amount, status — no name, vehicle or phone) that signed-in
+  staff create when the PDF is generated, so a link cannot be edited to claim a different invoice or
+  "Paid" status. Nobody can list or scrape these records; they can only be fetched by their exact id.
+  * **Needs the rules published.** Until you publish the current `firestore.rules`, new PDFs fall back to the
+    old self-describing link. That still works but `/verify` shows it as **"NOT VERIFIED"**.
+  * **Old printed QR codes** keep working and are shown as **"NOT VERIFIED"** (anyone can type such a link).
+  * **Status is "as of" the last update.** The record is refreshed whenever the invoice or job card is saved
+    in the app, and when a PDF is generated, and the page states the date. A change made some other way
+    (for example directly in the Console) is not reflected until the next save.
+  * **Revoking one:** delete the document in Firebase Console → Firestore → `verifications`.
+    (Admins can also delete from the app's rules.) The link then shows "couldn't find this document".
 * **No server-side rate limiting.** There is no server. Sign-in throttling is Firebase's own. Consider
   enabling **Firebase App Check** to limit abuse of your API key and quota.
 * **The CSP allows inline scripts** (`'unsafe-inline'`), required by the current Next.js setup. A

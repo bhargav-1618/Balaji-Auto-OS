@@ -14,6 +14,7 @@ import toast from '../../lib/toast';
 import { appScrollTo } from '../../lib/appScroll';
 import { confirmDialog } from '../common/ConfirmDialog';
 import { buildQrPayload, makeQrDataUrl, QR_PT } from '../../lib/pdfQr';
+import { issueVerificationId } from '../../lib/verificationClient';
 import { PDF_PAGE, PDF_GOLD, SHOP, liveShop, drawPdfHeader, drawPdfPageNumber, drawSectionTitle, drawSignatureBlock, drawChipList, drawPhotoGrid, PDF_SPACING } from '../../lib/pdfTheme';
 import {
   ClipboardList, FileDown, Check, X, Plus, Search, ChevronDown, Camera,
@@ -1036,7 +1037,13 @@ export default function JobCardModule({ demoMode = false, demoCanDelete = false,
     // REQUIRE a quiet zone of >= 2 modules of white around the symbol, and without it
     // many refuse to lock on at all — and it was drawn at only 44pt, far too small
     // for the module count. Shared helper handles payload validity + sizing.
+    // SEC-04: random-id link to a minimal server-side record (see lib/verification.js); null =>
+    // legacy link, shown as "not verified". Never blocks the PDF.
+    const verifyId = await issueVerificationId({
+      kind: 'jobcard', ref: card.id || card.jobNo, docNo: card.jobNo, date: card.date || card.createdAt, status: card.status,
+    }, { demoMode });
     const qrPayload = buildQrPayload({
+      verifyId,
       kind: 'jobcard',
       docNo: card.jobNo,
       shopName: SHOP.name,

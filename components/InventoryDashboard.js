@@ -59,6 +59,7 @@ import { computeAlerts } from '../services/analyticsService';
 import { safeLower, formatINR, digitsOnly, tenDigits, normalizePhone, isIndianMobile, isValidEmail, phoneInput, mobileInput, waNumber, tsToDate, MOBILE_ERROR, EMAIL_ERROR } from '../lib/format';
 import { buildPO, poCreateDoc, poAdvanceDoc, poReceiveDoc, poCancelDoc, nextPOStatus } from '../services/purchaseOrderService';
 import { toNum, invoiceTotals, invoiceStatus } from '../services/billingService';
+import { syncVerificationRecord } from '../lib/verificationClient';
 import {
   catMatches, remapCatFields, renameCategoryDocs, deleteCategoryDocs,
   nonNegInt, nonNegNum, sanitizeStock,
@@ -5313,6 +5314,19 @@ export default function InventoryDashboard() {
     }), TX_TIMEOUT_MS, 'This invoice');
   };
 
+  // SEC-04: after a successful save, refresh the public /verify record IF a customer QR was ever
+  // issued for this invoice (status / amount may have changed: paid, cancelled, refunded...).
+  // Fire-and-forget and fully guarded — it can never fail or delay the save itself.
+  const persistInvoiceSynced = async (iv) => {
+    const saved = await persistInvoice(iv);
+    try {
+      const rec = saved || iv;
+      if (rec && rec.id && rec.invNo && !demoMode) {
+        syncVerificationRecord({ kind: 'invoice', ref: rec.id, docNo: rec.invNo, date: rec.date, total: invoiceTotals(rec).grand, status: invoiceStatus(rec) }, { demoMode });
+      }
+    } catch { /* verification is best-effort */ }
+    return saved;
+  };
   const persistInvoice = async (iv) => {
     txn(3, 'persistInvoice called', { invNo: iv.invNo, status: iv.status, lines: (iv.lines || []).length, payments: (iv.payments || []).length, demoMode });
 
@@ -5752,6 +5766,17 @@ export default function InventoryDashboard() {
     await applyReserveDelta(reserveDelta(baseline, null), relOpId);
     reserveBaselineRef.current.delete(jobNo);
     clearOpId(relScope);
+  };
+  // SEC-04: same best-effort public-record refresh as persistInvoice (see there).
+  const persistJobCardSynced = async (card) => {
+    const saved = await persistJobCard(card);
+    try {
+      const rec = (saved && saved.jobNo) ? saved : card;
+      if (rec && rec.jobNo && !demoMode) {
+        syncVerificationRecord({ kind: 'jobcard', ref: rec.id || rec.jobNo, docNo: rec.jobNo, date: rec.date || rec.createdAt, status: rec.status }, { demoMode });
+      }
+    } catch { /* verification is best-effort */ }
+    return saved;
   };
   const persistJobCard = async (card) => {
     const prev = jobCardsRef.current;
@@ -10313,7 +10338,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'jobcards' && (
-          <JobCardModule demoMode={demoMode} demoCanDelete={demoCan('deleteJobCards')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} inventory={inventory} customers={customers} invoices={invoices} onPersist={persistJobCard} onDelete={deleteJobCard} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('jobCards')} onDirtyChange={handleModuleDirtyChange} onRegisterVehicle={(custId, veh) => { const nv = { id: `v_${Date.now()}`, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === custId ? { ...c, vehicles: [...(c.vehicles || []), nv] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: nv.regNo || nv.id, detail: `${nv.regNo || ''} ${nv.model || ''}`.trim() })); }} savedCards={jobCards}
+          <JobCardModule demoMode={demoMode} demoCanDelete={demoCan('deleteJobCards')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} inventory={inventory} customers={customers} invoices={invoices} onPersist={persistJobCardSynced} onDelete={deleteJobCard} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('jobCards')} onDirtyChange={handleModuleDirtyChange} onRegisterVehicle={(custId, veh) => { const nv = { id: `v_${Date.now()}`, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === custId ? { ...c, vehicles: [...(c.vehicles || []), nv] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: nv.regNo || nv.id, detail: `${nv.regNo || ''} ${nv.model || ''}`.trim() })); }} savedCards={jobCards}
             onOpenCustomer={(c) => { try { window.open(`/?open=customer:${encodeURIComponent(c.code || c.id || '')}#customers`, '_blank'); } catch { setActiveTab('customers'); } }}
             onOpenVehicle={(reg) => { try { window.open(`/?open=vehicles:${encodeURIComponent(reg || '')}#vehicles`, '_blank'); } catch { setActiveTab('vehicles'); setSearch(reg || ''); } }}
             onOpenInvoice={(iv) => { try { window.open(`/?open=invoice:${encodeURIComponent(iv.invNo || '')}#billing`, '_blank'); } catch { setActiveTab('billing'); setSearch(iv.invNo || ''); } }}
@@ -10346,7 +10371,7 @@ export default function InventoryDashboard() {
         )}
 
         {activeTab === 'billing' && (
-          <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoice} onDelete={deleteInvoice} onCollectPayment={demoMode ? undefined : collectInvoicePayment} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onDirtyChange={handleModuleDirtyChange}
+          <BillingModule demoMode={demoMode} demoCanDelete={demoCan('deleteInvoices')} demoCanEditPricing={demoCan('editPricing')} demoCanExport={demoCan('exportExcel')} canManage={canManageData || demoMode} isAdmin={isAdmin || demoAdmin} invoices={invoices} customers={customers} inventory={inventory} jobCards={jobCards} onPersist={persistInvoiceSynced} onDelete={deleteInvoice} onCollectPayment={demoMode ? undefined : collectInvoicePayment} actorEmail={capacityActorEmail} onCapacityCleanup={() => refreshCapacityCollection('invoices')} onDirtyChange={handleModuleDirtyChange}
             onQuickCustomer={(data) => { if (data?.phone && !isIndianMobile(data.phone)) { toast.error(MOBILE_ERROR); return null; } if (data?.email && !isValidEmail(data.email)) { toast.error(EMAIL_ERROR); return null; } const id = `c_${Date.now()}`; const c = { id, createdAt: Date.now(), ...withCustomerDefaults({ ...data, phone: data?.phone ? mobileInput(data.phone) : '' }, customers) }; setCustomers((prev) => [...prev, c]).then(() => pushAudit({ action: 'Customer Created', entity: 'Customer', entityId: c.code || c.id, detail: `${c.code || ''} · ${c.name || ''}` })); return c; }}
             onQuickVehicle={(customerId, veh) => { const id = `v_${Date.now()}`; const v = { id, ...withVehicleDefaults(veh) }; setCustomers((prev) => prev.map((c) => (c.id === customerId ? { ...c, vehicles: [...(c.vehicles || []), v] } : c))).then(() => pushAudit({ action: 'Vehicle Created', entity: 'Vehicle', entityId: v.regNo || v.id, detail: `${v.regNo || ''} ${v.model || ''}`.trim() })); return v; }}
             initialStatusFilter={pendingBillingStatusFilter}

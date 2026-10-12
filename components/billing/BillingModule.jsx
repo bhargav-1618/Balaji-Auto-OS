@@ -8,6 +8,7 @@ import toast from '../../lib/toast';
 import { confirmDialog } from '../common/ConfirmDialog';
 import { lockBody, unlockBody } from '../Modal';
 import { buildQrPayload, makeQrDataUrl, QR_PT } from '../../lib/pdfQr';
+import { issueVerificationId } from '../../lib/verificationClient';
 import { PDF_PAGE, PDF_RULE, SHOP, maskShop, liveShop, drawPdfHeader, drawPdfPageNumber, truncW } from '../../lib/pdfTheme';
 import { renderWorkshopInvoicePdf } from '../../lib/workshopInvoicePdf';
 import { tsToDate, localDateStr, displayDate , num, asArray, isIndianMobile, isValidEmail, MOBILE_ERROR, EMAIL_ERROR, mobileInput, normalizePhone, waNumber } from '../../lib/format';
@@ -2590,7 +2591,15 @@ export default function BillingModule({ demoMode = false, demoCanDelete = false,
     // to scan) rendered at high resolution and drawn LARGE on the page. The old one
     // encoded ~81 chars into a 50pt square = 1.35pt per module, which no phone could
     // resolve -> "No usable data found".
+    // SEC-04: the customer copy's QR points at a server-side verification record (random id,
+    // minimal public fields) instead of carrying the details in the URL. null => the link falls
+    // back to the legacy form, which /verify labels "not verified" (demo mode, offline, rules
+    // not published yet) — this can never block or break the PDF.
+    const verifyId = isWorkshop ? null : await issueVerificationId({
+      kind: 'invoice', ref: iv.id, docNo: iv.invNo, date: iv.date, total: t.grand, status: deriveStatus(iv),
+    }, { demoMode });
     const qrPayload = isWorkshop ? internalLink() : buildQrPayload({
+      verifyId,
       kind: 'invoice',
       docNo: iv.invNo,
       shopName: shop.name,
